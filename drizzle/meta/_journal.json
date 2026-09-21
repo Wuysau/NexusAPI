@@ -1,0 +1,146 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1789018848270,
+      "tag": "0000_left_nekra",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1789035857414,
+      "tag": "0001_greedy_shape",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789090395199,
+      "tag": "0002_auth_secret_plane",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789096855480,
+      "tag": "0003_worker_outbox_retry",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789096855482,
+      "tag": "0004_commercial_plans_payments",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789117338281,
+      "tag": "0005_big_gauntlet",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789119258176,
+      "tag": "0006_opposite_nightshade",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789432584432,
+      "tag": "0007_legacy_migration_provenance",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789435000000,
+      "tag": "0008_immutable_project_facts",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789435000001,
+      "tag": "0009_project_fact_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1789522701516,
+      "tag": "0010_immutable_attempt_attribution",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1789524269563,
+      "tag": "0011_frozen_pricing_provenance",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1789526779201,
+      "tag": "0012_usage_analytics_event_lookup",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1789527573317,
+      "tag": "0013_quota_observation_provenance",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1789725054791,
+      "tag": "0014_subscription_observer",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1789869697993,
+      "tag": "0015_account_observations",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1789878607091,
+      "tag": "0016_session_metadata",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1789882665428,
+      "tag": "0017_organization_model_configurations",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1789884394552,
+      "tag": "0018_observer_runtime",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1789971797254,
+      "tag": "0019_unpriced_byok_attempts",
+      "breakpoints": true
+    }
+  ]
+}

@@ -1,0 +1,66 @@
+{
+  "_comment": "Test fixtures conforming to packages/contracts/schemas/price-record.schema.json (NexusPriceRecordV1). NOT production data. Runtime prices come from approved provider_price_versions rows.",
+  "records": [
+    {
+      "schema_version": 1,
+      "provider": "openai",
+      "model_id": "gpt-4o",
+      "currency": "USD",
+      "status": "active",
+      "effective_from": "2026-01-01T00:00:00.000Z",
+      "effective_to": null,
+      "components": [
+        { "kind": "input", "unit": "per_million_tokens", "amount": "2.50", "conditions": {} },
+        { "kind": "cached_input", "unit": "per_million_tokens", "amount": "1.25", "conditions": {} },
+        { "kind": "output", "unit": "per_million_tokens", "amount": "10.00", "conditions": {} }
+      ],
+      "source": {
+        "url": "https://openai.com/api/pricing",
+        "retrieved_at": "2026-01-01T00:00:00.000Z",
+        "content_sha256": "121a0344ab0785bc8f7d5c720e0d71d6a5f996edd001483c1bf659c1085f9a5c"
+      },
+      "approved_by": "user-fixture-approver",
+      "approved_at": "2026-01-01T00:05:00.000Z"
+    },
+    {
+      "schema_version": 1,
+      "provider": "anthropic",
+      "model_id": "claude-sonnet-4-20250514",
+      "currency": "USD",
+      "status": "pending_approval",
+      "effective_from": "2026-02-01T00:00:00.000Z",
+      "effective_to": null,
+      "components": [
+        { "kind": "input", "unit": "per_million_tokens", "amount": "3.00", "conditions": {} },
+        { "kind": "output", "unit": "per_million_tokens", "amount": "15.00", "conditions": {} }
+      ],
+      "source": {
+        "url": "https://www.anthropic.com/pricing",
+        "retrieved_at": "2026-01-15T00:00:00.000Z",
+        "content_sha256": "cbc6a80bcc0168d7e1ea70b648ba6a919930c895f1a24907ce30329652b538b0"
+      },
+      "approved_by": null,
+      "approved_at": null
+    },
+    {
+      "schema_version": 1,
+      "provider": "deepseek",
+      "model_id": "deepseek-chat",
+      "currency": "CNY",
+      "status": "validated",
+      "effective_from": "2026-03-01T00:00:00.000Z",
+      "effective_to": null,
+      "components": [
+        { "kind": "input", "unit": "per_million_tokens", "amount": "2.00", "conditions": { "region": "cn" } },
+        { "kind": "output", "unit": "per_million_tokens", "amount": "8.00", "conditions": { "region": "cn" } }
+      ],
+      "source": {
+        "url": "https://api-docs.deepseek.com/quick_start/pricing",
+        "retrieved_at": "2026-02-15T00:00:00.000Z",
+        "content_sha256": "7f98f83ee5fbeffa98e00a85fa37a2ffb182d39c752c8097ebe19e3a548856e5"
+      },
+      "approved_by": null,
+      "approved_at": null
+    }
+  ]
+}

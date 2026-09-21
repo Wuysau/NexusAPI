@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+# Migration SQL is content-addressed: `scripts/db-migrate.mjs` verifies the
+# SHA-256 of `drizzle/0005_big_gauntlet.sql` byte-for-byte and
+# `tests/integration/canonical-migrations.test.ts` records the same digest in
+# `drizzle.__drizzle_migrations`. Git's `core.autocrlf` rewriting LF to CRLF on
+# checkout changes those bytes and breaks the compatibility check on Windows.
+# Keep migration SQL exactly as committed on every platform.
+*.sql -text

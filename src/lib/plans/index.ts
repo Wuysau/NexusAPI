@@ -1,0 +1,33 @@
+export {
+  ENTITLEMENT_KEYS,
+  PlanError,
+  createPlan,
+  publishPlanVersion,
+  listPublishedPlanVersions,
+  getPlanVersion,
+  listEntitlements,
+  getActiveSubscription,
+  getEntitlements,
+  getEntitlement,
+  requireEntitlement,
+  scheduleSubscriptionChange,
+  periodEndFor,
+  type EntitlementKey,
+  type EntitlementRecord,
+  type PlanErrorCode,
+  type PlanRecord,
+  type PlanVersionRecord,
+  type PublishPlanVersionInput,
+  type ScheduleSubscriptionInput,
+  type SubscriptionRecord,
+} from './service'
+
+export {
+  MANAGED_CREDITS_FLAG,
+  COMPLIANCE_FIELDS,
+  ManagedCreditsError,
+  managedCreditsStatus,
+  assertManagedCreditsEnabled,
+  type ComplianceField,
+  type ManagedCreditsStatus,
+} from './managed-credits'

@@ -1,0 +1,104 @@
+{
+  "note": "A complete gateway bundle signed by the real TypeScript construction (canonicalJson from src/lib/catalog/snapshot.ts + HMAC-SHA256 over the scrypt-derived keyring). The Go gateway must accept exactly this envelope.",
+  "passphrase": "test-passphrase-for-nexus",
+  "expectedTenant": "tenant-vector",
+  "now": "2026-09-11T00:01:00.000Z",
+  "canonical": "{\"channels\":[{\"auth_scheme\":\"bearer\",\"base_url\":\"https://api.openai.com/v1\",\"capabilities\":[\"text\",\"streaming\",\"tool_calling\"],\"credential_fingerprint\":\"ffffffffffffffffffffffffffffffff\",\"credential_mode\":\"managed\",\"credential_ref\":\"cred_1\",\"data_residency\":\"global\",\"enabled\":true,\"id\":\"chan_openai_main\",\"models\":[\"gpt-4o\"],\"priority\":0,\"provider\":\"openai\",\"region\":\"global\",\"weight\":10}],\"expires_at\":\"2026-09-11T00:05:00.000Z\",\"generated_at\":\"2026-09-11T00:00:00.000Z\",\"kind\":\"gateway_bundle\",\"limits\":{\"byok_continue_when_stale\":false,\"max_concurrent\":64,\"requests_per_minute\":300,\"tokens_per_minute\":500000},\"schema_version\":1,\"sequence_number\":7,\"snapshot\":{\"catalog_version\":{\"checksum\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"id\":\"cat_1\",\"version\":3},\"generated_at\":\"2026-09-11T00:00:00.000Z\",\"kind\":\"gateway_snapshot\",\"price_versions\":[{\"components\":[{\"amount\":\"2.50\",\"conditions\":{},\"kind\":\"input\",\"unit\":\"per_million_tokens\"},{\"amount\":\"10.00\",\"conditions\":{},\"kind\":\"output\",\"unit\":\"per_million_tokens\"}],\"currency\":\"USD\",\"effective_from\":\"2026-09-01T00:00:00.000Z\",\"effective_to\":null,\"id\":\"pv_openai_gpt-4o\",\"model_id\":\"gpt-4o\",\"provider\":\"openai\",\"region\":\"global\",\"service_tier\":\"standard\",\"unit\":\"per_million_tokens\"}],\"routing_policies\":[{\"checksum\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"credential_mode\":\"managed\",\"id\":\"rp_1\",\"model_routes\":[{\"modelId\":\"gpt-4o\",\"weight\":1}],\"version\":2}],\"schema_version\":1,\"sequence_number\":7,\"tenant_id\":\"tenant-vector\"},\"tenant_id\":\"tenant-vector\"}",
+  "signature": "7a3342abc9db1595e7c7ae92850ae211e13c9214e6a552fff58c479f778e8efb",
+  "signingKeyId": "hmac-sha256:v1",
+  "envelope": {
+    "bundle": {
+      "schema_version": 1,
+      "kind": "gateway_bundle",
+      "tenant_id": "tenant-vector",
+      "sequence_number": 7,
+      "generated_at": "2026-09-11T00:00:00.000Z",
+      "expires_at": "2026-09-11T00:05:00.000Z",
+      "snapshot": {
+        "schema_version": 1,
+        "kind": "gateway_snapshot",
+        "tenant_id": "tenant-vector",
+        "sequence_number": 7,
+        "catalog_version": {
+          "id": "cat_1",
+          "version": 3,
+          "checksum": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "price_versions": [
+          {
+            "id": "pv_openai_gpt-4o",
+            "provider": "openai",
+            "model_id": "gpt-4o",
+            "currency": "USD",
+            "region": "global",
+            "service_tier": "standard",
+            "unit": "per_million_tokens",
+            "effective_from": "2026-09-01T00:00:00.000Z",
+            "effective_to": null,
+            "components": [
+              {
+                "kind": "input",
+                "unit": "per_million_tokens",
+                "amount": "2.50",
+                "conditions": {}
+              },
+              {
+                "kind": "output",
+                "unit": "per_million_tokens",
+                "amount": "10.00",
+                "conditions": {}
+              }
+            ]
+          }
+        ],
+        "routing_policies": [
+          {
+            "id": "rp_1",
+            "version": 2,
+            "checksum": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "credential_mode": "managed",
+            "model_routes": [
+              {
+                "modelId": "gpt-4o",
+                "weight": 1
+              }
+            ]
+          }
+        ],
+        "generated_at": "2026-09-11T00:00:00.000Z"
+      },
+      "channels": [
+        {
+          "id": "chan_openai_main",
+          "provider": "openai",
+          "base_url": "https://api.openai.com/v1",
+          "auth_scheme": "bearer",
+          "models": [
+            "gpt-4o"
+          ],
+          "region": "global",
+          "data_residency": "global",
+          "credential_mode": "managed",
+          "credential_ref": "cred_1",
+          "credential_fingerprint": "ffffffffffffffffffffffffffffffff",
+          "weight": 10,
+          "priority": 0,
+          "capabilities": [
+            "text",
+            "streaming",
+            "tool_calling"
+          ],
+          "enabled": true
+        }
+      ],
+      "limits": {
+        "requests_per_minute": 300,
+        "tokens_per_minute": 500000,
+        "max_concurrent": 64,
+        "byok_continue_when_stale": false
+      }
+    },
+    "signature": "7a3342abc9db1595e7c7ae92850ae211e13c9214e6a552fff58c479f778e8efb",
+    "signing_key_id": "hmac-sha256:v1"
+  }
+}

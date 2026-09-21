@@ -1,0 +1,182 @@
+package main
+
+// Circuit breaker, isolated per (channel, model).
+//
+// GATEWAY_SPEC: "熔断器按 provider account + model 隔离". A channel that is
+// failing for one model must not be taken out for the models it still serves,
+// and one bad tenant's traffic must not open a breaker for everyone.
+//
+// The breaker also tracks an exponentially weighted latency estimate, which the
+// router uses as the soft latency signal.
+
+import (
+	"sync"
+	"time"
+)
+
+type BreakerState string
+
+const (
+	BreakerClosed   BreakerState = "closed"
+	BreakerOpen     BreakerState = "open"
+	BreakerHalfOpen BreakerState = "half_open"
+)
+
+type breakerEntry struct {
+	state               BreakerState
+	consecutiveFailures int
+	openedAt            time.Time
+	// latencyEwmaMs is the smoothed observed latency used for soft scoring.
+	latencyEwmaMs float64
+	samples       int
+	lastFailure   time.Time
+}
+
+// BreakerConfig tunes the state machine.
+type BreakerConfig struct {
+	// FailureThreshold is the number of consecutive failures that opens it.
+	FailureThreshold int
+	// OpenDuration is how long it stays open before a half-open probe.
+	OpenDuration time.Duration
+	// HalfOpenProbes is how many concurrent probes are admitted while half-open.
+	HalfOpenProbes int
+	// LatencyAlpha is the EWMA smoothing factor (0..1).
+	LatencyAlpha float64
+}
+
+func DefaultBreakerConfig() BreakerConfig {
+	return BreakerConfig{FailureThreshold: 5, OpenDuration: 30 * time.Second, HalfOpenProbes: 1, LatencyAlpha: 0.2}
+}
+
+// BreakerKey names a breaker. Channel is the provider account; model scopes it.
+func BreakerKey(channelID, model string) string { return channelID + "|" + model }
+
+type Breaker struct {
+	cfg BreakerConfig
+	now func() time.Time
+
+	mu      sync.Mutex
+	entries map[string]*breakerEntry
+	probes  map[string]int
+}
+
+func NewBreaker(cfg BreakerConfig) *Breaker {
+	if cfg.FailureThreshold < 1 {
+		cfg.FailureThreshold = 1
+	}
+	if cfg.OpenDuration <= 0 {
+		cfg.OpenDuration = 30 * time.Second
+	}
+	if cfg.HalfOpenProbes < 1 {
+		cfg.HalfOpenProbes = 1
+	}
+	if cfg.LatencyAlpha <= 0 || cfg.LatencyAlpha > 1 {
+		cfg.LatencyAlpha = 0.2
+	}
+	return &Breaker{cfg: cfg, now: time.Now, entries: make(map[string]*breakerEntry), probes: make(map[string]int)}
+}
+
+// SetClock overrides the clock. Test-only.
+func (b *Breaker) SetClock(now func() time.Time) { b.now = now }
+
+func (b *Breaker) entryLocked(key string) *breakerEntry {
+	e, ok := b.entries[key]
+	if !ok {
+		e = &breakerEntry{state: BreakerClosed}
+		b.entries[key] = e
+	}
+	return e
+}
+
+// Allow reports whether a request may use this channel/model right now, and
+// moves an open breaker to half-open once the cooldown has elapsed.
+func (b *Breaker) Allow(key string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	e := b.entryLocked(key)
+	switch e.state {
+	case BreakerClosed:
+		return true
+	case BreakerOpen:
+		if b.now().Sub(e.openedAt) >= b.cfg.OpenDuration {
+			e.state = BreakerHalfOpen
+			b.probes[key] = 0
+			return b.admitProbeLocked(key)
+		}
+		return false
+	case BreakerHalfOpen:
+		return b.admitProbeLocked(key)
+	default:
+		return true
+	}
+}
+
+func (b *Breaker) admitProbeLocked(key string) bool {
+	if b.probes[key] >= b.cfg.HalfOpenProbes {
+		return false
+	}
+	b.probes[key]++
+	return true
+}
+
+// RecordSuccess closes the breaker and folds the latency into the EWMA.
+func (b *Breaker) RecordSuccess(key string, latency time.Duration) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	e := b.entryLocked(key)
+	e.state = BreakerClosed
+	e.consecutiveFailures = 0
+	b.probes[key] = 0
+	e.latencyEwmaMs = ewma(e.latencyEwmaMs, float64(latency.Milliseconds()), b.cfg.LatencyAlpha, e.samples)
+	e.samples++
+}
+
+// RecordFailure counts a failure and opens the breaker at the threshold.
+func (b *Breaker) RecordFailure(key string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	e := b.entryLocked(key)
+	e.consecutiveFailures++
+	e.lastFailure = b.now()
+	if e.state == BreakerHalfOpen || e.consecutiveFailures >= b.cfg.FailureThreshold {
+		e.state = BreakerOpen
+		e.openedAt = b.now()
+		b.probes[key] = 0
+	}
+}
+
+// State reports the current state (observability + tests).
+func (b *Breaker) State(key string) BreakerState {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.entryLocked(key).state
+}
+
+// LatencyMs returns the smoothed latency, or 0 when there is no sample yet.
+func (b *Breaker) LatencyMs(key string) float64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	e, ok := b.entries[key]
+	if !ok || e.samples == 0 {
+		return 0
+	}
+	return e.latencyEwmaMs
+}
+
+// Snapshot reports every tracked breaker for /healthz-style introspection.
+func (b *Breaker) Snapshot() map[string]BreakerState {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make(map[string]BreakerState, len(b.entries))
+	for k, e := range b.entries {
+		out[k] = e.state
+	}
+	return out
+}
+
+func ewma(previous, sample, alpha float64, samples int) float64 {
+	if samples == 0 {
+		return sample
+	}
+	return alpha*sample + (1-alpha)*previous
+}

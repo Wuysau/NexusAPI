@@ -1,0 +1,46 @@
+# Generated cross-language fixtures: their exact bytes are the test vector
+# (canonical JSON form is asserted byte-for-byte against the Go verifier).
+services/gateway/testdata/
+
+# Build/deps
+.claude/worktrees/
+node_modules/
+.next/
+out/
+build/
+dist/
+
+# Generated
+drizzle/
+package-lock.json
+*.tsbuildinfo
+.test-artifacts/
+
+# Pre-migration gateway/server/catalog — replaced via expand/migrate/contract, not churned
+src/app/v1/
+src/app/layout.tsx
+src/app/globals.css
+src/lib/server.ts
+src/lib/catalog.ts
+
+# Harness is the user's normative spec — do not reformat
+nexus-architecture-harness/
+
+# Go source is formatted by gofmt, not prettier
+services/
+
+# Docs
+*.md
+*.mdx
+
+# SDD workspace
+.superpowers/
+
+# Local harness settings (operator-owned, not product source)
+.claude/settings.json
+.claude/settings.local.json
+
+# Private browser and runtime files
+.playwright-mcp/
+output/
+nexus-observer.json

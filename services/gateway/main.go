@@ -1,0 +1,194 @@
+package main
+
+// nexus-gateway — the standalone Go data plane (ADR-0001).
+//
+// It talks to the control plane only through the signed snapshot and the thin
+// configuration API; budget authorization has its own private service. Provider
+// decryption uses Vault plus operator registry authority, never Control Plane.
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"nexus/gateway/provider"
+)
+
+func main() {
+	if err := run(); err != nil {
+		slog.Error("gateway exited with error", "err", err.Error())
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	logger := newLogger(os.Getenv("GATEWAY_LOG_LEVEL"))
+
+	env, err := LoadEnv(os.Getenv)
+	if err != nil {
+		return err
+	}
+	limits := LoadLimits(os.Getenv)
+	snapshotCfg := LoadSnapshotConfig(os.Getenv)
+
+	keyring, err := BuildKeyringFromEnv(env)
+	if err != nil {
+		return fmt.Errorf("keyring: %w", err)
+	}
+
+	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	var credentials CredentialResolver
+	if env.LocalCredentialDir != "" && env.Environment != "production" {
+		resolver, e := NewLocalCredentialResolver(env.LocalCredentialDir)
+		if e != nil {
+			return fmt.Errorf("local secret plane: %w", e)
+		}
+		credentials = resolver
+	} else if env.KMSProvider == "vault" {
+		resolver, e := NewVaultCredentialResolver(env.Vault)
+		if e != nil {
+			return fmt.Errorf("secret plane: %w", e)
+		}
+		credentials = resolver
+	} else if env.Environment != "production" {
+		credentials = NewHTTPCredentialResolver(env.ControlPlaneURL, env.InternalToken, nil)
+	} else {
+		return errSecretPolicy
+	}
+
+	// Snapshot cache: verify every bundle before it can serve a request.
+	source := &HTTPSnapshotSource{
+		BaseURL: env.ControlPlaneURL,
+		Token:   env.InternalToken,
+		Client:  &http.Client{Timeout: snapshotCfg.FetchTimeout},
+	}
+	snapshots := NewSnapshotCache(source, keyring, snapshotCfg, logger)
+
+	store, err := NewPostgresStore(rootCtx, env.DatabaseURL, logger)
+	if err != nil {
+		return fmt.Errorf("outbox store: %w", err)
+	}
+	if err := store.Ping(rootCtx); err != nil {
+		logger.Warn("database not reachable at startup; terminal writes will fail closed", "err", err.Error())
+	}
+
+	limiter, err := NewLimiter(env.RedisURL, logger)
+	if err != nil {
+		return fmt.Errorf("limiter: %w", err)
+	}
+	limiter.AcquireConcurrency("__startup__", 1) // size the guard before traffic
+	concurrencyGuardSize(limiter, limits.MaxConcurrent)
+
+	registry, err := provider.NewBuiltinRegistry()
+	if err != nil {
+		return fmt.Errorf("provider registry: %w", err)
+	}
+	breaker := NewBreaker(DefaultBreakerConfig())
+	router := NewRouter(registry, breaker, DefaultScoreWeights())
+
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			MaxIdleConns:        512,
+			MaxIdleConnsPerHost: 128,
+			IdleConnTimeout:     90 * time.Second,
+			ForceAttemptHTTP2:   true,
+		},
+	}
+
+	proxy := NewProxy(ProxyDeps{
+		EnableUsageV2: env.LocalCredentialDir != "" && env.Environment != "production",
+		Env:           env,
+		Limits:        limits,
+		Snapshots:     snapshots,
+		Authn:         NewAuthenticator(snapshots),
+		Registry:      registry,
+		Breaker:       breaker,
+		Router:        router,
+		Limiter:       limiter,
+		Store:         store,
+		Credentials:   credentials,
+		Managed:       NewHTTPReserver(env.BudgetServiceURL, env.BudgetServiceToken, httpClient),
+		Byok:          NoopReserver{},
+		Logger:        logger,
+		HTTPClient:    httpClient,
+		MaxAttempts:   2,
+	})
+
+	// Warm the platform snapshot before accepting traffic so the first request
+	// does not pay for the fetch, and so /readyz is truthful.
+	warmCtx, cancelWarm := context.WithTimeout(rootCtx, snapshotCfg.FetchTimeout)
+	if _, err := snapshots.Get(warmCtx, ""); err != nil {
+		logger.Warn("platform snapshot unavailable at startup; /readyz will report not ready", "err", err.Error())
+	}
+	cancelWarm()
+
+	go snapshots.RunRefresher(rootCtx)
+	defer store.Close()
+	defer func() { _ = limiter.Close() }()
+
+	shutdownTelemetry := SetupTelemetry(os.Getenv("GATEWAY_OTEL_DISABLED") == "true", logger)
+	defer func() { _ = shutdownTelemetry(context.Background()) }()
+
+	handler := NewHTTPRouter(proxy, snapshots, limiter, store, RouteOptions{
+		EnableResponses:  os.Getenv("GATEWAY_ENABLE_RESPONSES") == "true",
+		EnableEmbeddings: os.Getenv("GATEWAY_ENABLE_EMBEDDINGS") == "true",
+	})
+	server := NewServer(env.Addr, handler, limits.MaxHeaderBytes, logger)
+
+	errCh := make(chan error, 1)
+	go func() {
+		logger.Info("nexus-gateway listening",
+			"addr", env.Addr,
+			"env", env.Environment,
+			"adapters", registry.Versions(),
+			"snapshot_refresh", snapshotCfg.RefreshInterval.String(),
+			"snapshot_max_age", snapshotCfg.MaxAge.String(),
+		)
+		errCh <- server.ListenAndServe()
+	}()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-rootCtx.Done():
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("graceful shutdown: %w", err)
+	}
+	logger.Info("nexus-gateway stopped")
+	return nil
+}
+
+// concurrencyGuardSize sizes the process-wide semaphore. The guard is private
+// to the limiter, so this is done through a tiny adapter rather than exporting
+// the internals.
+func concurrencyGuardSize(limiter *Limiter, max int) {
+	if limiter == nil || limiter.conc == nil {
+		return
+	}
+	limiter.conc.SetGlobalCap(max)
+}
+
+func newLogger(level string) *slog.Logger {
+	var slogLevel slog.Level
+	switch level {
+	case "debug":
+		slogLevel = slog.LevelDebug
+	case "warn":
+		slogLevel = slog.LevelWarn
+	case "error":
+		slogLevel = slog.LevelError
+	default:
+		slogLevel = slog.LevelInfo
+	}
+	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slogLevel}))
+}

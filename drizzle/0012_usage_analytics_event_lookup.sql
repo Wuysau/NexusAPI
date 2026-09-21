@@ -1,0 +1,1 @@
+CREATE INDEX "usage_events_request_latest_idx" ON "usage_events" USING btree ("tenant_id","request_id","created_at" DESC NULLS LAST,"id" DESC NULLS LAST);

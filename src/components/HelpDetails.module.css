@@ -1,0 +1,49 @@
+.help {
+  color: var(--text-secondary, #64748b);
+  font-size: 12px;
+  line-height: 1.7;
+  min-width: 0;
+}
+.help > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 32px;
+  cursor: pointer;
+  list-style: none;
+  border-radius: 5px;
+}
+.help > summary::-webkit-details-marker {
+  display: none;
+}
+.help > summary:hover {
+  color: var(--text-primary, #243449);
+}
+.help > summary:focus-visible {
+  outline: 2px solid var(--primary, #287f70);
+  outline-offset: 3px;
+}
+.help > summary svg {
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+.help[open] > summary svg {
+  transform: rotate(180deg);
+}
+.body {
+  padding: 8px 0 8px 20px;
+  overflow-wrap: anywhere;
+}
+.body > :first-child {
+  margin-top: 0;
+}
+.body > :last-child {
+  margin-bottom: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .help > summary svg {
+    transition: none;
+  }
+}

@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/contracts/usage-analytics-query.schema.json",
+  "title": "Usage analytics URL query (before normalized defaults)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "scope": {
+      "type": "string",
+      "enum": ["organization", "tenant"],
+      "default": "organization"
+    },
+    "organizationId": {
+      "$ref": "#/$defs/id"
+    },
+    "projectId": {
+      "$ref": "#/$defs/id"
+    },
+    "providerId": {
+      "$ref": "#/$defs/id"
+    },
+    "provider": {
+      "$ref": "#/$defs/id",
+      "description": "Legacy provider code alias; all omits this filter"
+    },
+    "model": {
+      "$ref": "#/$defs/id"
+    },
+    "apiKeyId": {
+      "$ref": "#/$defs/id"
+    },
+    "connectionId": {
+      "$ref": "#/$defs/id"
+    },
+    "executionMode": {
+      "type": "string",
+      "enum": ["managed", "byok", "unknown", "interactive"]
+    },
+    "groupBy": {
+      "type": "string",
+      "enum": [
+        "project",
+        "provider",
+        "model",
+        "apiKey",
+        "connection",
+        "executionMode",
+        "usageSource",
+        "subscription",
+        "day"
+      ],
+      "default": "project"
+    },
+    "from": {
+      "description": "Inclusive RFC3339 instant with explicit timezone offset",
+      "type": "string",
+      "format": "date-time",
+      "default": "1970-01-01T00:00:00.000Z"
+    },
+    "to": {
+      "description": "Exclusive instant, bounded by asOf; inclusive UI end dates use next local midnight",
+      "type": "string",
+      "format": "date-time"
+    },
+    "asOf": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "limit": {
+      "type": "string",
+      "pattern": "^[0-9]+$",
+      "x-minimum": 1,
+      "x-maximum": 200,
+      "default": "100"
+    },
+    "offset": {
+      "type": "string",
+      "pattern": "^[0-9]+$",
+      "x-minimum": 0,
+      "x-maximum": 9007199254740791,
+      "default": "0"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["all", "success", "error"],
+      "default": "all"
+    },
+    "q": {
+      "type": "string",
+      "maxLength": 200,
+      "x-trim": true
+    },
+    "cursor": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "x-encoding": "unpadded-base64url-utf8-json-object"
+    },
+    "usageSource": {
+      "type": "string",
+      "enum": ["all", "gateway", "codex_local"]
+    },
+    "authority": {
+      "type": "string",
+      "enum": ["authoritative", "client_observed"]
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^\\s\\u0000-\\u001f\\u007f-\\u009f]+$"
+    }
+  },
+  "x-relations": [
+    "reject duplicate URL keys",
+    "from <= to <= asOf <= now",
+    "default asOf is now; default to is asOf",
+    "timestamps normalize to ISO UTC and must have exact calendar dates"
+  ]
+}

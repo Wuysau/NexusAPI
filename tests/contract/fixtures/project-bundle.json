@@ -1,0 +1,118 @@
+{
+  "note": "Additive Project attribution signed with the production TypeScript canonical encoder; old bundle-vector remains N-1.",
+  "passphrase": "test-passphrase-for-nexus",
+  "expectedTenant": "tenant-vector",
+  "now": "2026-09-11T00:01:00.000Z",
+  "canonical": "{\"channels\":[{\"auth_scheme\":\"bearer\",\"base_url\":\"https://api.openai.com/v1\",\"capabilities\":[\"text\",\"streaming\",\"tool_calling\"],\"connection_id\":\"connection-vector\",\"credential_fingerprint\":\"ffffffffffffffffffffffffffffffff\",\"credential_mode\":\"managed\",\"credential_ref\":\"cred_1\",\"data_residency\":\"global\",\"enabled\":true,\"id\":\"chan_openai_main\",\"models\":[\"gpt-4o\"],\"priority\":0,\"provider\":\"openai\",\"provider_id\":\"provider-vector\",\"region\":\"global\",\"weight\":10}],\"expires_at\":\"2026-09-11T00:05:00.000Z\",\"generated_at\":\"2026-09-11T00:00:00.000Z\",\"keys\":[{\"attribution_status\":\"attributed\",\"enabled\":true,\"expires_at\":null,\"fingerprint\":\"fixture-fingerprint\",\"hash_sha256\":\"66e7c82b49bb291dd09c8e020448311c4a7bb96aeb5c5db769f66812b13a50b5\",\"key_id\":\"key-project-vector\",\"key_kind\":\"shared\",\"organization_id\":\"org-vector\",\"principal_id\":null,\"project_id\":\"project-vector\",\"project_name\":\"Historical A\",\"revoked_at\":null,\"scopes\":[\"*\"],\"tenant_id\":\"tenant-vector\"}],\"kind\":\"gateway_bundle\",\"limits\":{\"byok_continue_when_stale\":false,\"max_concurrent\":64,\"requests_per_minute\":300,\"tokens_per_minute\":500000},\"schema_version\":1,\"sequence_number\":7,\"snapshot\":{\"catalog_version\":{\"checksum\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"id\":\"cat_1\",\"version\":3},\"generated_at\":\"2026-09-11T00:00:00.000Z\",\"kind\":\"gateway_snapshot\",\"price_versions\":[{\"components\":[{\"amount\":\"2.50\",\"conditions\":{},\"kind\":\"input\",\"unit\":\"per_million_tokens\"},{\"amount\":\"10.00\",\"conditions\":{},\"kind\":\"output\",\"unit\":\"per_million_tokens\"}],\"currency\":\"USD\",\"effective_from\":\"2026-09-01T00:00:00.000Z\",\"effective_to\":null,\"id\":\"pv_openai_gpt-4o\",\"model_id\":\"gpt-4o\",\"provider\":\"openai\",\"region\":\"global\",\"service_tier\":\"standard\",\"unit\":\"per_million_tokens\"}],\"routing_policies\":[{\"checksum\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"credential_mode\":\"managed\",\"id\":\"rp_1\",\"model_routes\":[{\"modelId\":\"gpt-4o\",\"weight\":1}],\"version\":2}],\"schema_version\":1,\"sequence_number\":7,\"tenant_id\":\"tenant-vector\"},\"tenant_id\":\"tenant-vector\"}",
+  "signature": "146a6152143b6cbcc8a877255232d7e891c2da15c16ee5fccd97d8097d618c6c",
+  "signingKeyId": "hmac-sha256:v1",
+  "envelope": {
+    "bundle": {
+      "schema_version": 1,
+      "kind": "gateway_bundle",
+      "tenant_id": "tenant-vector",
+      "sequence_number": 7,
+      "generated_at": "2026-09-11T00:00:00.000Z",
+      "expires_at": "2026-09-11T00:05:00.000Z",
+      "snapshot": {
+        "schema_version": 1,
+        "kind": "gateway_snapshot",
+        "tenant_id": "tenant-vector",
+        "sequence_number": 7,
+        "catalog_version": {
+          "id": "cat_1",
+          "version": 3,
+          "checksum": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "price_versions": [
+          {
+            "id": "pv_openai_gpt-4o",
+            "provider": "openai",
+            "model_id": "gpt-4o",
+            "currency": "USD",
+            "region": "global",
+            "service_tier": "standard",
+            "unit": "per_million_tokens",
+            "effective_from": "2026-09-01T00:00:00.000Z",
+            "effective_to": null,
+            "components": [
+              {
+                "kind": "input",
+                "unit": "per_million_tokens",
+                "amount": "2.50",
+                "conditions": {}
+              },
+              {
+                "kind": "output",
+                "unit": "per_million_tokens",
+                "amount": "10.00",
+                "conditions": {}
+              }
+            ]
+          }
+        ],
+        "routing_policies": [
+          {
+            "id": "rp_1",
+            "version": 2,
+            "checksum": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "credential_mode": "managed",
+            "model_routes": [
+              {
+                "modelId": "gpt-4o",
+                "weight": 1
+              }
+            ]
+          }
+        ],
+        "generated_at": "2026-09-11T00:00:00.000Z"
+      },
+      "channels": [
+        {
+          "id": "chan_openai_main",
+          "provider": "openai",
+          "base_url": "https://api.openai.com/v1",
+          "auth_scheme": "bearer",
+          "models": ["gpt-4o"],
+          "region": "global",
+          "data_residency": "global",
+          "credential_mode": "managed",
+          "credential_ref": "cred_1",
+          "credential_fingerprint": "ffffffffffffffffffffffffffffffff",
+          "weight": 10,
+          "priority": 0,
+          "capabilities": ["text", "streaming", "tool_calling"],
+          "enabled": true,
+          "connection_id": "connection-vector",
+          "provider_id": "provider-vector"
+        }
+      ],
+      "limits": {
+        "requests_per_minute": 300,
+        "tokens_per_minute": 500000,
+        "max_concurrent": 64,
+        "byok_continue_when_stale": false
+      },
+      "keys": [
+        {
+          "key_id": "key-project-vector",
+          "tenant_id": "tenant-vector",
+          "organization_id": "org-vector",
+          "hash_sha256": "66e7c82b49bb291dd09c8e020448311c4a7bb96aeb5c5db769f66812b13a50b5",
+          "fingerprint": "fixture-fingerprint",
+          "scopes": ["*"],
+          "enabled": true,
+          "expires_at": null,
+          "revoked_at": null,
+          "project_id": "project-vector",
+          "project_name": "Historical A",
+          "key_kind": "shared",
+          "principal_id": null,
+          "attribution_status": "attributed"
+        }
+      ]
+    },
+    "signature": "146a6152143b6cbcc8a877255232d7e891c2da15c16ee5fccd97d8097d618c6c",
+    "signing_key_id": "hmac-sha256:v1"
+  }
+}

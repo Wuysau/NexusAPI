@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verification:
+    name: Build, tests and security
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+      DATABASE_URL: postgresql://postgres:convergence-fixture@127.0.0.1:55439/convergence_ci15
+      CI_E2E_DATABASE_URL: postgresql://postgres:convergence-fixture@127.0.0.1:55439/convergence_e2e15
+      GATEWAY_BUDGET_INTEGRATION_DATABASE_URL: postgresql://postgres:convergence-fixture@127.0.0.1:55439/convergence_gateway27
+      GATEWAY_CHECK_DOCKER: '1'
+      REDIS_URL: redis://127.0.0.1:56381/0
+      UPSTREAM_ENCRYPTION_KEY: ci-development-only-wrapping-fixture
+      SNAPSHOT_SIGNING_KEY: ci-independent-snapshot-signing-fixture
+      ADMIN_TOKEN: ci-control-admin-fixture-token
+      GATEWAY_INTERNAL_TOKEN: ci-control-workload-fixture-token
+      BUDGET_SERVICE_TOKEN: convergence-budget-gateway-fixture-token
+      NEXT_TELEMETRY_DISABLED: '1'
+      DEV_ADMIN_PASSWORD: ci-owner-test-fixture-password
+      DEV_VIEWER_PASSWORD: ci-viewer-test-fixture-password
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: convergence_ci15
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: convergence-fixture
+        ports:
+          - 55439:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d convergence_ci15"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 56381:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache-dependency-path: services/gateway/go.sum
+      - name: Install
+        run: node scripts/ci-gate.mjs install
+      - name: Inspect changed source files
+        run: node scripts/ci-gate.mjs plan
+      - name: Validate CI
+        run: node scripts/ci-gate.mjs ci
+      - name: Format
+        run: node scripts/ci-gate.mjs format
+      - name: Lint
+        run: node scripts/ci-gate.mjs lint
+      - name: Typecheck
+        run: node scripts/ci-gate.mjs typecheck
+      - name: Unit
+        run: node scripts/ci-gate.mjs unit
+      - name: Contract and architecture fitness
+        run: node scripts/ci-gate.mjs contract
+      - name: Deliberately invalid formatting and Docker inputs fail
+        run: node scripts/ci-gate.mjs negative
+      - name: Canonical bootstrap of disposable databases
+        run: node scripts/ci-fixtures.mjs
+      - name: Real migrations and rollback fixtures
+        run: node scripts/ci-gate.mjs migration
+      - name: Integration
+        run: node scripts/ci-gate.mjs integration
+      - name: Security threat-model tests
+        run: node scripts/ci-gate.mjs security-tests
+      - name: Production dependency audit
+        run: node scripts/ci-gate.mjs security
+      - name: Secret scan
+        run: node scripts/ci-gate.mjs secrets
+      - name: Control Plane build
+        run: node scripts/ci-gate.mjs build
+      - name: Worker and Budget builds
+        run: node scripts/ci-gate.mjs services
+      - name: Compose configuration and missing-environment refusals
+        run: node scripts/ci-gate.mjs compose
+      - name: Go fmt vet race lint and actual Budget Worker provider fixtures
+        run: node scripts/ci-gate.mjs go
+      - name: Four production image builds
+        run: node scripts/ci-gate.mjs images
+      - name: Real Vault TLS AppRole Agent enrollment and Gateway isolation
+        run: node scripts/ci-gate.mjs secret-plane
+      - name: Install browser and system dependencies
+        run: node node_modules/playwright/cli.js install --with-deps chromium
+      - name: E2E against isolated migrated database
+        run: node scripts/ci-gate.mjs e2e
+      - name: Required CycloneDX SBOM
+        run: node scripts/ci-gate.mjs sbom
+      - name: Upload revision-bound redacted evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-${{ github.sha }}-${{ github.run_attempt }}
+          path: .test-artifacts/ci/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14

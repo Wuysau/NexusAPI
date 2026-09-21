@@ -1,0 +1,20 @@
+CREATE TABLE "observer_runtime" (
+	"tenant_id" text NOT NULL,
+	"organization_id" text NOT NULL,
+	"instance_id" text NOT NULL,
+	"state" text NOT NULL,
+	"enabled" boolean NOT NULL,
+	"interval_seconds" integer NOT NULL,
+	"heartbeat_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"last_sync_started_at" timestamp with time zone,
+	"last_sync_completed_at" timestamp with time zone,
+	"last_successful_sync_at" timestamp with time zone,
+	"last_error" text,
+	"next_sync_at" timestamp with time zone,
+	"last_new_sessions" integer DEFAULT 0 NOT NULL,
+	"last_new_events" integer DEFAULT 0 NOT NULL,
+	"last_unassigned_events" integer DEFAULT 0 NOT NULL,
+	"last_result" jsonb DEFAULT '{}'::jsonb NOT NULL,
+	"requested_at" timestamp with time zone,
+	CONSTRAINT "observer_runtime_tenant_id_organization_id_instance_id_pk" PRIMARY KEY("tenant_id","organization_id","instance_id")
+);

@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.example.invalid/schemas/connector-capability-v1.json",
+  "title": "Nexus owned-access connector capability",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "connector_id",
+    "version",
+    "provider",
+    "auth_mode",
+    "execution_mode",
+    "supported_operations",
+    "required_scopes",
+    "credential_reference_type",
+    "heartbeat",
+    "revocation_state"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "connector_id": { "type": "string", "minLength": 1 },
+    "version": { "type": "string", "minLength": 1 },
+    "provider": { "type": "string", "minLength": 1 },
+    "auth_mode": {
+      "enum": ["api_key", "oauth_subscription", "native_login", "external_endpoint"]
+    },
+    "execution_mode": {
+      "enum": ["direct_api", "local_sidecar", "customer_vpc_runner", "external_endpoint"]
+    },
+    "supported_operations": {
+      "type": "array",
+      "items": { "enum": ["chat", "embeddings", "models", "quota", "health"] },
+      "uniqueItems": true
+    },
+    "required_scopes": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "credential_reference_type": {
+      "enum": ["opaque_ref", "fingerprint", "customer_secret_manager"]
+    },
+    "heartbeat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["observed_at", "expires_at"],
+      "properties": {
+        "observed_at": { "type": "string", "format": "date-time" },
+        "expires_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "revocation_state": {
+      "enum": ["active", "revoked", "expired", "missing"]
+    }
+  }
+}

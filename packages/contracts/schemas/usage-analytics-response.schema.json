@@ -1,0 +1,224 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/contracts/usage-analytics-response.schema.json",
+  "title": "Exact authorized usage analytics",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["asOf", "from", "to", "groupBy", "totals", "groups", "totalGroups", "limit", "offset", "nextOffset"],
+  "properties": {
+    "asOf": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "from": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "to": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "groupBy": {
+      "type": "string",
+      "enum": [
+        "project",
+        "provider",
+        "model",
+        "apiKey",
+        "connection",
+        "executionMode",
+        "usageSource",
+        "subscription",
+        "day"
+      ]
+    },
+    "totals": {
+      "$ref": "#/$defs/metrics"
+    },
+    "groups": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/group"
+      }
+    },
+    "totalGroups": {
+      "$ref": "#/$defs/count"
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 200
+    },
+    "offset": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740791
+    },
+    "nextOffset": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "maximum": 9007199254740791
+    }
+  },
+  "$defs": {
+    "count": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)$"
+    },
+    "nullableCount": {
+      "type": ["string", "null"],
+      "pattern": "^(0|[1-9][0-9]*)$"
+    },
+    "money": {
+      "type": "string",
+      "pattern": "^(0|-?[1-9][0-9]*)$"
+    },
+    "nullableMoney": {
+      "type": ["string", "null"],
+      "pattern": "^(0|-?[1-9][0-9]*)$"
+    },
+    "tokenMetric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["knownSum", "unknownRequests", "total"],
+      "properties": {
+        "knownSum": {
+          "$ref": "#/$defs/count"
+        },
+        "unknownRequests": {
+          "$ref": "#/$defs/count"
+        },
+        "total": {
+          "$ref": "#/$defs/nullableCount"
+        }
+      },
+      "x-exact-total": true
+    },
+    "moneyMetric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["knownSum", "unknownRequests", "total"],
+      "properties": {
+        "knownSum": {
+          "$ref": "#/$defs/money"
+        },
+        "unknownRequests": {
+          "$ref": "#/$defs/count"
+        },
+        "total": {
+          "$ref": "#/$defs/nullableMoney"
+        }
+      },
+      "x-exact-total": true
+    },
+    "tokens": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["input", "output", "cached", "reasoning", "total"],
+      "properties": {
+        "input": {
+          "$ref": "#/$defs/tokenMetric"
+        },
+        "output": {
+          "$ref": "#/$defs/tokenMetric"
+        },
+        "cached": {
+          "$ref": "#/$defs/tokenMetric"
+        },
+        "reasoning": {
+          "$ref": "#/$defs/tokenMetric"
+        },
+        "total": {
+          "$ref": "#/$defs/tokenMetric"
+        }
+      }
+    },
+    "currencyBucket": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["currency", "charge", "upstreamCost", "margin"],
+      "properties": {
+        "currency": {
+          "type": ["string", "null"],
+          "pattern": "^[A-Z]{3}$"
+        },
+        "charge": {
+          "$ref": "#/$defs/moneyMetric"
+        },
+        "upstreamCost": {
+          "$ref": "#/$defs/moneyMetric"
+        },
+        "margin": {
+          "$ref": "#/$defs/moneyMetric"
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requests", "tokens", "money"],
+      "properties": {
+        "requests": {
+          "$ref": "#/$defs/count"
+        },
+        "tokens": {
+          "$ref": "#/$defs/tokens"
+        },
+        "money": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/currencyBucket"
+          }
+        },
+        "sessions": {
+          "$ref": "#/$defs/count"
+        },
+        "observedEvents": {
+          "$ref": "#/$defs/count"
+        },
+        "lastActivity": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "provenance": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source", "authority", "events"],
+            "properties": {
+              "source": {
+                "type": "string",
+                "enum": ["gateway", "codex_local"]
+              },
+              "authority": {
+                "type": "string",
+                "enum": ["authoritative", "client_observed"]
+              },
+              "events": {
+                "$ref": "#/$defs/count"
+              }
+            }
+          }
+        }
+      }
+    },
+    "group": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "label", "metrics"],
+      "properties": {
+        "key": {
+          "type": ["string", "null"]
+        },
+        "label": {
+          "type": ["string", "null"]
+        },
+        "metrics": {
+          "$ref": "#/$defs/metrics"
+        }
+      }
+    }
+  },
+  "x-time-range": true
+}

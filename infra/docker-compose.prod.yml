@@ -1,0 +1,164 @@
+# Default project directory is infra; --project-directory infra is equivalent.
+# With --project-directory ., set NEXUS_BUILD_CONTEXT=. explicitly.
+# Provision schema and separate workload roles before starting applications.
+services:
+  app:
+    build:
+      context: ${NEXUS_BUILD_CONTEXT:-..}
+      dockerfile: infra/Dockerfile
+      args:
+        NEXT_PUBLIC_GATEWAY_BASE_URL: ${NEXT_PUBLIC_GATEWAY_BASE_URL:?Set the public Gateway URL including /v1}
+    image: nexus-control:convergence
+    user: '1001:1001'
+    read_only: true
+    tmpfs: ['/tmp:size=64m']
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL_CONTROL:?Set the nexus_control connection URL}
+      REDIS_URL: redis://redis:6379
+      SNAPSHOT_SIGNING_KEY: ${SNAPSHOT_SIGNING_KEY:?Set the independent routing signer}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?Required production configuration}
+      APP_BASE_URL: ${APP_BASE_URL:?Set the public Control Plane URL}
+      GATEWAY_INTERNAL_TOKEN: ${GATEWAY_INTERNAL_TOKEN:?Set distinct internal token}
+      KMS_PROVIDER: ${KMS_PROVIDER:?Set a production KMS provider}
+    ports: ['3000:3000']
+    depends_on:
+      db: { condition: service_healthy }
+    networks: [ingress, data]
+    deploy:
+      resources:
+        limits: { memory: 512m, cpus: '1.0' }
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: ${NEXUS_BUILD_CONTEXT:-..}
+      dockerfile: services/gateway/Dockerfile
+    image: nexus-gateway:convergence
+    user: '1001:1001'
+    read_only: true
+    environment:
+      GATEWAY_ENV: production
+      GATEWAY_ADDR: ':8080'
+      DATABASE_URL: ${DATABASE_URL_GATEWAY:?Set the nexus_gateway connection URL}
+      REDIS_URL: redis://redis:6379
+      CONTROL_PLANE_URL: http://app:3000
+      GATEWAY_INTERNAL_TOKEN: ${GATEWAY_INTERNAL_TOKEN:?Set distinct internal token}
+      BUDGET_SERVICE_URL: http://budget:8081
+      BUDGET_SERVICE_TOKEN: ${BUDGET_SERVICE_TOKEN:?Set a separate budget token}
+      SNAPSHOT_SIGNING_KEY: ${SNAPSHOT_SIGNING_KEY:?Set the independent routing signer}
+      KMS_PROVIDER: ${KMS_PROVIDER:?Set a production KMS provider}
+      VAULT_ADDR: ${VAULT_ADDR:?Set the HTTPS Vault address}
+      VAULT_TOKEN_FILE: /run/gateway-identity/token
+      VAULT_CA_FILE: /run/secrets/vault-ca.pem
+      SECRET_REGISTRY_FILE: /run/secret-registry/registry.json
+      SECRET_REGISTRY_TRUST_FILE: /run/secrets/registry-trust.json
+      SECRET_REGISTRY_ID: ${SECRET_REGISTRY_ID:?Set the independent registry identity}
+      SECRET_REGISTRY_FLOOR_FILE: /var/lib/nexus-secret-registry/floor.json
+      SECRET_VAULT_RESOURCES: ${SECRET_VAULT_RESOURCES:?Set immutable approved Transit mount/key resources}
+      SECRET_ALLOWED_ORIGINS: ${SECRET_ALLOWED_ORIGINS:?Set immutable HTTPS provider origins}
+    volumes:
+      - ${GATEWAY_IDENTITY_DIR:?Set the Gateway-only Agent token sink directory}:/run/gateway-identity:ro
+      - ${VAULT_CA_PATH:?Set the operator CA file}:/run/secrets/vault-ca.pem:ro
+      - ${SECRET_REGISTRY_DIR:?Set the independent signed registry publication directory}:/run/secret-registry:ro
+      - ${SECRET_REGISTRY_TRUST_PATH:?Set independent operator public keys}:/run/secrets/registry-trust.json:ro
+      - ${SECRET_REGISTRY_STATE_DIR:?Set persistent Gateway-only rollback state directory}:/var/lib/nexus-secret-registry
+
+    ports: ['8080:8080']
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      budget: { condition: service_healthy }
+    # No startup dependency on app: warmed snapshots survive Control Plane outage.
+    networks: [ingress, data, budget, egress]
+    deploy:
+      resources:
+        limits: { memory: 256m, cpus: '1.0' }
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ${NEXUS_BUILD_CONTEXT:-..}
+      dockerfile: services/worker/Dockerfile
+    image: nexus-worker:convergence
+    user: '1001:1001'
+    read_only: true
+    tmpfs: ['/tmp:size=16m']
+    stop_grace_period: 30s
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL_WORKER:?Set the nexus_worker connection URL}
+      WORKER_POLL_INTERVAL_MS: '5000'
+      WORKER_RECONCILE_INTERVAL_MS: '60000'
+    depends_on:
+      db: { condition: service_healthy }
+    networks: [data, egress]
+    deploy:
+      resources:
+        limits: { memory: 256m, cpus: '0.5' }
+    restart: unless-stopped
+
+  budget:
+    build:
+      context: ${NEXUS_BUILD_CONTEXT:-..}
+      dockerfile: services/budget/Dockerfile
+    image: nexus-budget:convergence
+    user: '1001:1001'
+    read_only: true
+    tmpfs: ['/tmp:size=16m']
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL_BUDGET:?Set the nexus_budget connection URL}
+      BUDGET_SERVICE_TOKEN: ${BUDGET_SERVICE_TOKEN:?Set a separate budget token}
+      BUDGET_HOST: '0.0.0.0'
+      BUDGET_PORT: '8081'
+    depends_on:
+      db: { condition: service_healthy }
+    # No published ports or public network; independent of the consumer process.
+    networks: [data, budget]
+    deploy:
+      resources:
+        limits: { memory: 192m, cpus: '0.5' }
+    restart: unless-stopped
+
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: nexus_owner
+      POSTGRES_PASSWORD: ${DB_OWNER_PASSWORD:?Set the schema owner password}
+      POSTGRES_DB: app_db
+    volumes: ['db-data:/var/lib/postgresql/data']
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U nexus_owner -d app_db']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [data]
+    deploy:
+      resources:
+        limits: { memory: 512m, cpus: '1.0' }
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ['redis-server', '--maxmemory', '128mb', '--maxmemory-policy', 'allkeys-lru']
+    volumes: ['redis-data:/data']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [data]
+    deploy:
+      resources:
+        limits: { memory: 192m, cpus: '0.25' }
+    restart: unless-stopped
+
+networks:
+  ingress: {}
+  egress: {}
+  data: { internal: true }
+  budget: { internal: true }
+volumes:
+  db-data: {}
+  redis-data: {}

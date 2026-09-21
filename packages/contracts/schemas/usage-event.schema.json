@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/contracts/usage-event.schema.json",
+  "title": "NexusUsageEventV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "occurred_at",
+    "tenant_id",
+    "request_id",
+    "attempt_id",
+    "model_id",
+    "status",
+    "price_version_id",
+    "catalog_version_id",
+    "usage"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "event_id": { "type": "string", "minLength": 16 },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "tenant_id": { "type": "string" },
+    "request_id": { "type": "string" },
+    "attempt_id": { "type": "string" },
+    "provider_request_id": { "type": ["string", "null"] },
+    "model_id": { "type": "string" },
+    "status": { "enum": ["completed", "failed", "unknown"] },
+    "price_version_id": { "type": "string" },
+    "catalog_version_id": { "type": "string" },
+    "policy_version_id": { "type": ["string", "null"] },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["input_tokens", "output_tokens", "estimated"],
+      "properties": {
+        "input_tokens": { "type": "integer", "minimum": 0 },
+        "cached_input_tokens": { "type": "integer", "minimum": 0, "default": 0 },
+        "output_tokens": { "type": "integer", "minimum": 0 },
+        "reasoning_tokens": { "type": "integer", "minimum": 0, "default": 0 },
+        "estimated": { "type": "boolean" }
+      }
+    },
+    "dimensions": { "type": "object", "additionalProperties": { "type": ["string", "number", "integer"] } }
+  }
+}

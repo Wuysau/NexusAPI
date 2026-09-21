@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/contracts/quota-observation.schema.json",
+  "title": "Public manual quota observation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "observationId",
+    "windowType",
+    "used",
+    "remaining",
+    "scope",
+    "source",
+    "sourceKind",
+    "confidence",
+    "attributionMode",
+    "observedAt",
+    "staleAt",
+    "availability"
+  ],
+  "properties": {
+    "observationId": { "$ref": "#/$defs/id" },
+    "windowType": { "$ref": "#/$defs/id" },
+    "used": { "$ref": "#/$defs/decimal" },
+    "remaining": { "$ref": "#/$defs/decimal" },
+    "scope": { "type": "string", "enum": ["account", "connection"] },
+    "source": { "type": "string", "enum": ["manual"] },
+    "sourceKind": { "type": "string", "enum": ["reported", "estimated", "unknown"] },
+    "confidence": { "type": "string", "enum": ["reported", "estimated", "unknown"] },
+    "attributionMode": { "type": "string", "enum": ["shared", "unknown"] },
+    "observedAt": { "type": "string", "format": "date-time" },
+    "staleAt": { "type": "string", "format": "date-time" },
+    "resetAt": { "type": ["string", "null"], "format": "date-time" },
+    "availability": { "type": "string", "enum": ["available", "unavailable"] }
+  },
+  "$defs": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\u0000-\\u001f\\u007f-\\u009f]+$" },
+    "decimal": {
+      "type": ["string", "null"],
+      "pattern": "^0*[0-9]{1,18}(\\.[0-9]{1,12})?$",
+      "x-normalization": "strip leading integer zeros and trailing fractional zeros without numeric conversion"
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "availability": { "const": "unavailable" } } },
+      "then": { "properties": { "used": { "type": "null" }, "remaining": { "type": "null" } } }
+    }
+  ],
+  "x-relations": [
+    "observedAt <= now",
+    "observedAt <= staleAt",
+    "resetAt absent or null or >= observedAt",
+    "strict calendar RFC3339 timestamps normalize to ISO UTC"
+  ]
+}

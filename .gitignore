@@ -1,0 +1,50 @@
+# deps
+node_modules/
+
+# next
+.next/
+out/
+build/
+dist/
+next-env.d.ts
+
+# env / secrets（.env.example 入库，真实值不入库）
+.env
+.env.*
+!.env.example
+.env.local
+.env.*.local
+.env.production
+.env.development
+.env.staging
+config/nexus-observer.json
+config/nexus-observer.json.*.tmp
+
+# test artifacts
+.test-artifacts/
+
+# go build artifacts
+services/gateway/bin/
+services/gateway/gateway
+services/gateway/gateway.exe
+*.test
+
+# misc
+.DS_Store
+*.log
+*.tsbuildinfo
+
+# Private development tooling and local runtime state
+.claude/
+.codex/
+.superpowers/
+.playwright-mcp/
+nexus-architecture-harness/
+evidence/
+docs/superpowers/
+docs/current-task.md
+docs/project-state.md
+AGENTS.md
+CLAUDE.md
+nexus-observer.json
+output/

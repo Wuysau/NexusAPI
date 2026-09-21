@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/contracts/quota-metadata.schema.json",
+  "title": "Quota snapshot provenance output; stronger enums do not authorize public ingestion",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "provenanceVersion",
+    "observationId",
+    "scope",
+    "sourceKind",
+    "confidence",
+    "attributionMode",
+    "availability",
+    "freshness",
+    "observedAt",
+    "staleAt",
+    "resetAt"
+  ],
+  "properties": {
+    "provenanceVersion": { "enum": [1, null] },
+    "observationId": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
+    "scope": { "type": "string", "enum": ["account", "connection", "project-estimated", "unknown"] },
+    "sourceKind": { "type": "string", "enum": ["official", "reported", "estimated", "derived", "unknown"] },
+    "confidence": { "type": "string", "enum": ["authoritative", "reported", "estimated", "unknown"] },
+    "attributionMode": { "type": "string", "enum": ["shared", "exclusive", "unknown"] },
+    "availability": { "type": "string", "enum": ["available", "unavailable", "unknown"] },
+    "freshness": { "type": "string", "enum": ["fresh", "stale", "unknown", "unavailable"] },
+    "observedAt": { "type": ["string", "null"], "format": "date-time" },
+    "staleAt": { "type": ["string", "null"], "format": "date-time" },
+    "resetAt": { "type": ["string", "null"], "format": "date-time" }
+  },
+  "description": "Legacy metadata uses null version/observationId and unknown provenance/freshness where not established. Raw legacy values remain on the existing snapshot. Official/exclusive claims require a separately authenticated trusted ingestion boundary."
+}

@@ -1,0 +1,39 @@
+# NexusAPI — local dev stack (PostgreSQL + Redis).
+# Usage:
+#   docker compose up -d postgres redis     # start infra only
+#   npm run db:migrate                       # apply schema migrations
+#   npm run dev                              # run the app on the host (HMR)
+#
+# APP_BASE_URL etc. are read from .env.local (see .env.example).
+# No real secrets are baked into this file.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: nexus-pg
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: app_db
+    ports: ['5432:5432']
+    volumes: ['nexus-pg-data:/var/lib/postgresql/data']
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d app_db']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: nexus-redis
+    ports: ['6379:6379']
+    volumes: ['nexus-redis-data:/data']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  nexus-pg-data:
+  nexus-redis-data:
