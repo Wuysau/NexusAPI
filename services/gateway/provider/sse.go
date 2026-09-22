@@ -52,7 +52,8 @@ func (s *SSEReader) Next() (SSEEvent, error) {
 		size    int
 	)
 	for {
-		line, err := s.readLine()
+		line, consumed, err := s.readLine(maxSSEEventBytes - size)
+		size += consumed
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				// Per the SSE specification, a stream that ends without the
@@ -71,16 +72,13 @@ func (s *SSEReader) Next() (SSEEvent, error) {
 				return event, nil
 			}
 			event = SSEEvent{}
+			size = 0
 			continue
 		}
 		if line[0] == ':' {
 			continue // comment / keep-alive
 		}
 		field, value := splitField(line)
-		size += len(line)
-		if size > maxSSEEventBytes {
-			return SSEEvent{}, errors.New("provider: sse event exceeds size limit")
-		}
 		switch field {
 		case "event":
 			event.Event = string(value)
@@ -101,26 +99,38 @@ func (s *SSEReader) Next() (SSEEvent, error) {
 // readLine reads a single line, stripping a trailing CR. The returned slice is
 // owned by the caller (bufio reuses its buffer on the next call, and event data
 // may be returned directly).
-func (s *SSEReader) readLine() ([]byte, error) {
+func (s *SSEReader) readLine(remaining int) ([]byte, int, error) {
 	if s.pendingEOF {
-		return nil, io.EOF
+		return nil, 0, io.EOF
 	}
-	line, err := s.r.ReadBytes('\n')
-	if err != nil {
-		if !errors.Is(err, io.EOF) {
-			return nil, err
+	var line []byte
+	for {
+		fragment, err := s.r.ReadSlice('\n')
+		// ReadSlice never allocates for an unbounded line. Check the event's
+		// remaining wire-byte budget before copying each bounded fragment;
+		// comments, unknown fields and CRLF framing count toward it too.
+		if len(fragment) > remaining-len(line) {
+			return nil, 0, errors.New("provider: sse event exceeds size limit")
 		}
-		s.pendingEOF = true
-		if len(line) == 0 {
-			return nil, io.EOF
+		line = append(line, fragment...)
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
 		}
-		// Fall through: deliver the final unterminated line, then EOF next call.
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				return nil, 0, err
+			}
+			s.pendingEOF = true
+			if len(line) == 0 {
+				return nil, 0, io.EOF
+			}
+		}
+		break
 	}
+	consumed := len(line)
 	line = bytes.TrimSuffix(line, []byte("\n"))
 	line = bytes.TrimSuffix(line, []byte("\r"))
-	out := make([]byte, len(line))
-	copy(out, line)
-	return out, nil
+	return line, consumed, nil
 }
 
 // splitField splits "field: value" per the SSE grammar. A line without a colon

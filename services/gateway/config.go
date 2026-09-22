@@ -50,16 +50,19 @@ type Env struct {
 
 // Limits holds the system-level caps from GATEWAY_SPEC "限制与取消".
 type Limits struct {
-	MaxHeaderBytes    int
-	MaxBodyBytes      int64
-	MaxTokensEstimate int
-	MaxConcurrent     int
-	RequestsPerMinute int
-	TokensPerMinute   int
-	TotalDuration     time.Duration
-	IdleTimeout       time.Duration
-	UpstreamTimeout   time.Duration
-	SlowClientBuffer  int
+	MaxHeaderBytes       int
+	MaxBodyBytes         int64
+	MaxTokensEstimate    int
+	MaxConcurrent        int
+	ChannelMaxConcurrent int
+	ConcurrencyWait      time.Duration
+	MaxResponseBytes     int
+	RequestsPerMinute    int
+	TokensPerMinute      int
+	TotalDuration        time.Duration
+	IdleTimeout          time.Duration
+	UpstreamTimeout      time.Duration
+	SlowClientBuffer     int
 }
 
 // SnapshotConfig controls snapshot freshness and the fail-closed window.
@@ -212,16 +215,19 @@ func splitSecretConfig(value string) []string {
 // raise them up to the hard ceiling; they can never disable them.
 func LoadLimits(getenv func(string) string) Limits {
 	return Limits{
-		MaxHeaderBytes:    int(clampInt(getenv, "GATEWAY_MAX_HEADER_BYTES", 16*1024, 1*1024, 1<<20)),
-		MaxBodyBytes:      clampInt64(getenv, "GATEWAY_MAX_BODY_BYTES", 1<<20, 1024, 32<<20),
-		MaxTokensEstimate: int(clampInt(getenv, "GATEWAY_MAX_TOKENS_ESTIMATE", 65536, 256, 4<<20)),
-		MaxConcurrent:     int(clampInt(getenv, "GATEWAY_MAX_CONCURRENT", 256, 1, 100000)),
-		RequestsPerMinute: int(clampInt(getenv, "GATEWAY_REQUESTS_PER_MINUTE", 600, 1, 10_000_000)),
-		TokensPerMinute:   int(clampInt(getenv, "GATEWAY_TOKENS_PER_MINUTE", 2_000_000, 1, 1<<40)),
-		TotalDuration:     clampDuration(getenv, "GATEWAY_TOTAL_TIMEOUT_SECONDS", 300, time.Second, 24*time.Hour),
-		IdleTimeout:       clampDuration(getenv, "GATEWAY_STREAM_IDLE_TIMEOUT_SECONDS", 60, time.Second, time.Hour),
-		UpstreamTimeout:   clampDuration(getenv, "GATEWAY_UPSTREAM_TIMEOUT_SECONDS", 120, time.Second, time.Hour),
-		SlowClientBuffer:  int(clampInt(getenv, "GATEWAY_SLOW_CLIENT_BUFFER_BYTES", 1<<20, 4096, 64<<20)),
+		MaxHeaderBytes:       int(clampInt(getenv, "GATEWAY_MAX_HEADER_BYTES", 16*1024, 1*1024, 1<<20)),
+		MaxBodyBytes:         clampInt64(getenv, "GATEWAY_MAX_BODY_BYTES", 1<<20, 1024, 32<<20),
+		MaxTokensEstimate:    int(clampInt(getenv, "GATEWAY_MAX_TOKENS_ESTIMATE", 65536, 256, 4<<20)),
+		MaxConcurrent:        int(clampInt(getenv, "GATEWAY_MAX_CONCURRENT", 256, 1, 100000)),
+		ChannelMaxConcurrent: int(clampInt(getenv, "GATEWAY_CHANNEL_MAX_CONCURRENT", 64, 1, 100000)),
+		ConcurrencyWait:      time.Duration(clampInt(getenv, "GATEWAY_CONCURRENCY_WAIT_MS", 0, 0, 30000)) * time.Millisecond,
+		MaxResponseBytes:     int(clampInt(getenv, "GATEWAY_MAX_RESPONSE_BYTES", 16<<20, 4096, 64<<20)),
+		RequestsPerMinute:    int(clampInt(getenv, "GATEWAY_REQUESTS_PER_MINUTE", 600, 1, 10_000_000)),
+		TokensPerMinute:      int(clampInt(getenv, "GATEWAY_TOKENS_PER_MINUTE", 2_000_000, 1, 1<<40)),
+		TotalDuration:        clampDuration(getenv, "GATEWAY_TOTAL_TIMEOUT_SECONDS", 300, time.Second, 24*time.Hour),
+		IdleTimeout:          clampDuration(getenv, "GATEWAY_STREAM_IDLE_TIMEOUT_SECONDS", 60, time.Second, time.Hour),
+		UpstreamTimeout:      clampDuration(getenv, "GATEWAY_UPSTREAM_TIMEOUT_SECONDS", 120, time.Second, time.Hour),
+		SlowClientBuffer:     int(clampInt(getenv, "GATEWAY_SLOW_CLIENT_BUFFER_BYTES", 1<<20, 4096, 64<<20)),
 	}
 }
 

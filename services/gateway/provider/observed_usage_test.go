@@ -82,7 +82,7 @@ func TestObservedStreamingPartialPresence(t *testing.T) {
 		checkObserved(t, finalObservedUsage(t, stream.Next), ObservedUsage{InputTokens: observedInt(4), CachedInputTokens: observedInt(0), OutputTokens: observedInt(0)})
 	})
 	t.Run("gemini", func(t *testing.T) {
-		stream := &geminiStream{usage: &CanonicalUsage{}, reader: NewSSEReader(strings.NewReader("data: {\"usageMetadata\":{\"promptTokenCount\":4,\"candidatesTokenCount\":2}}\n\ndata: {\"usageMetadata\":{\"thoughtsTokenCount\":3,\"totalTokenCount\":9}}\n\n"))}
+		stream := &geminiStream{usage: &CanonicalUsage{}, reader: NewSSEReader(strings.NewReader("data: {\"usageMetadata\":{\"promptTokenCount\":4,\"candidatesTokenCount\":2}}\n\ndata: {\"usageMetadata\":{\"thoughtsTokenCount\":3,\"totalTokenCount\":9}}\n\ndata: {\"candidates\":[{\"finishReason\":\"STOP\"}]}\n\n"))}
 		checkObserved(t, finalObservedUsage(t, stream.Next), ObservedUsage{InputTokens: observedInt(4), OutputTokens: observedInt(5), ReasoningTokens: observedInt(3), TotalTokens: observedInt(9)})
 	})
 	t.Run("anthropic", func(t *testing.T) {
@@ -106,7 +106,7 @@ func TestObservedUsagePreservesLegacyMissingDecision(t *testing.T) {
 func TestObservedStreamingAbsentUsage(t *testing.T) {
 	streams := []func() (CanonicalChunk, error){
 		(&openAIStream{reader: NewSSEReader(strings.NewReader("data: [DONE]\n\n"))}).Next,
-		(&geminiStream{usage: &CanonicalUsage{}, reader: NewSSEReader(strings.NewReader(""))}).Next,
+		(&geminiStream{usage: &CanonicalUsage{}, reader: NewSSEReader(strings.NewReader("data: {\"candidates\":[{\"finishReason\":\"STOP\"}]}\n\n"))}).Next,
 		(&anthropicStream{usage: &CanonicalUsage{}, reader: NewSSEReader(strings.NewReader("data: {\"type\":\"message_stop\"}\n\n"))}).Next,
 	}
 	for _, next := range streams {

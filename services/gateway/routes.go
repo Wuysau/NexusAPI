@@ -2,11 +2,8 @@ package main
 
 // HTTP surface.
 //
-// Only /v1/models and /v1/chat/completions are enabled. /v1/responses and
-// /v1/embeddings exist as explicitly disabled routes: the plan requires them to
-// be enabled ONLY after a full implementation and its contract tests pass, so
-// the gateway answers 501 with a stable code rather than pretending they are
-// absent (a 404 would be indistinguishable from a typo).
+// Models and Chat Completions are enabled by default. Responses is an opt-in
+// stateless protocol adapter; embeddings remains explicitly unsupported.
 
 import (
 	"encoding/json"
@@ -68,7 +65,7 @@ func NewHTTPRouter(proxy *Proxy, snapshots *SnapshotCache, limiter *Limiter, sto
 	router.Get("/v1/models", proxy.ServeModels)
 
 	if options.EnableResponses {
-		router.Post("/v1/responses", proxy.ServeChatCompletions)
+		router.Post("/v1/responses", proxy.ServeResponses)
 	} else {
 		router.Post("/v1/responses", disabledEndpoint("responses"))
 	}

@@ -40,7 +40,7 @@ const checks = docker
           'go',
           'test',
           '-race',
-          ...(fixture ? ['-count=1', '-v'] : []),
+          ...(fixture ? ['-tags', 'redisintegration', '-count=1', '-v'] : []),
           './...',
         ],
       ],
@@ -64,7 +64,7 @@ const checks = docker
       ],
     ]
   : [
-      ['go', ['test', '-race', './...']],
+      ['go', ['test', '-race', ...(fixture ? ['-tags', 'redisintegration', '-count=1'] : []), './...']],
       ['golangci-lint', ['run', '--max-issues-per-linter=0', '--max-same-issues=0']],
     ]
 for (const [command, args] of checks) {

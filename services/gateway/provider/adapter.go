@@ -111,11 +111,13 @@ type CanonicalChunk struct {
 	Text string
 	// Reasoning is incremental reasoning text where the provider exposes it.
 	Reasoning string
-	// ToolCallDelta is raw provider tool-call JSON, forwarded untouched.
+	// ToolCallDelta is an OpenAI-compatible tool_calls JSON array. Function
+	// arguments are incremental strings, which may contain incomplete JSON.
 	ToolCallDelta json.RawMessage
 	// FinishReason is set on the final content chunk ("stop", "length", ...).
 	FinishReason string
-	// Usage is set when the provider reports usage inline (final chunk).
+	// Usage retains observed accounting, including on a chunk returned with an
+	// error. Callers must consume Usage before handling the error.
 	Usage *CanonicalUsage
 	// Done marks the terminal chunk. Exactly one chunk per stream has Done set
 	// (or the stream ends with an error).
@@ -190,7 +192,8 @@ type HealthStatus struct {
 
 // Stream yields canonical chunks until the upstream finishes or errors.
 type Stream interface {
-	// Next returns the next chunk. io.EOF signals a clean end of stream.
+	// Next returns the next chunk. io.EOF follows a successful Done chunk.
+	// A failed read may return a chunk with Usage alongside the error.
 	Next() (CanonicalChunk, error)
 	// Close releases the upstream connection. Safe to call more than once.
 	Close() error
@@ -344,3 +347,7 @@ func classifyHTTPStatus(status int) ErrorClassification {
 
 // ErrStreamClosed is returned by Stream.Next after Close.
 var ErrStreamClosed = errors.New("provider: stream closed")
+
+// ErrStreamTruncated means the transport ended before protocol completion.
+// Observed usage is still returned on the accompanying chunk when available.
+var ErrStreamTruncated = errors.New("provider: stream ended before completion")

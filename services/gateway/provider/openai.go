@@ -182,6 +182,7 @@ type openAIStream struct {
 	providerRequestID string
 	usage             *CanonicalUsage
 	finished          bool
+	terminalSeen      bool
 	// closed is written by Close() on the request goroutine and read by Next()
 	// on the relay's read goroutine, so it must be atomic. finished and usage
 	// are only ever touched by Next(), which the relay calls from one goroutine
@@ -208,9 +209,12 @@ func (s *openAIStream) Next() (CanonicalChunk, error) {
 		if err != nil {
 			if err == io.EOF {
 				s.finished = true
+				if !s.terminalSeen {
+					return CanonicalChunk{Usage: s.usage}, ErrStreamTruncated
+				}
 				return CanonicalChunk{Done: true, Usage: s.usage}, nil
 			}
-			return CanonicalChunk{}, err
+			return CanonicalChunk{Usage: s.usage}, err
 		}
 		payload := strings.TrimSpace(string(event.Data))
 		if payload == "" {
@@ -224,13 +228,16 @@ func (s *openAIStream) Next() (CanonicalChunk, error) {
 		if err != nil {
 			// A malformed chunk from the provider is a protocol error, not
 			// something to silently skip: skipping would under-bill.
-			return CanonicalChunk{}, fmt.Errorf("openai: malformed stream chunk")
+			return CanonicalChunk{Usage: s.usage}, fmt.Errorf("openai: malformed or failed stream chunk")
 		}
 		if chunk.Usage != nil {
 			if s.usage != nil {
 				chunk.Usage.Observed = mergeObserved(s.usage.Observed, chunk.Usage.Observed)
 			}
 			s.usage = chunk.Usage
+		}
+		if chunk.FinishReason != "" {
+			s.terminalSeen = true
 		}
 		if chunk.Text == "" && chunk.Reasoning == "" && chunk.ToolCallDelta == nil && chunk.FinishReason == "" {
 			continue // keep-alive / role-only delta
@@ -275,6 +282,9 @@ func parseOpenAIChunk(raw []byte) (CanonicalChunk, error) {
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		return CanonicalChunk{}, err
 	}
+	if wire.Error != nil {
+		return CanonicalChunk{}, &UpstreamStreamError{Kind: ErrUnknown}
+	}
 	var out CanonicalChunk
 	if wire.Usage != nil {
 		out.Usage = &CanonicalUsage{
@@ -296,6 +306,11 @@ func parseOpenAIChunk(raw []byte) (CanonicalChunk, error) {
 			out.ToolCallDelta = choice.Delta.ToolCalls
 		}
 		if choice.FinishReason != nil {
+			switch *choice.FinishReason {
+			case "", "stop", "length", "tool_calls", "content_filter", "function_call":
+			default:
+				return CanonicalChunk{}, fmt.Errorf("openai: invalid finish reason")
+			}
 			out.FinishReason = *choice.FinishReason
 		}
 	}

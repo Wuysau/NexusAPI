@@ -62,6 +62,10 @@ func run() error {
 		return errSecretPolicy
 	}
 
+	if closer, ok := credentials.(interface{ Close() error }); ok {
+		defer func() { _ = closer.Close() }()
+	}
+
 	// Snapshot cache: verify every bundle before it can serve a request.
 	source := &HTTPSnapshotSource{
 		BaseURL: env.ControlPlaneURL,

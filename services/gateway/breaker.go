@@ -30,6 +30,10 @@ type breakerEntry struct {
 	latencyEwmaMs float64
 	samples       int
 	lastFailure   time.Time
+	ttftEwmaMs    float64
+	ttftSamples   int
+	failureEwma   float64
+	healthSamples int
 }
 
 // BreakerConfig tunes the state machine.
@@ -111,6 +115,50 @@ func (b *Breaker) Allow(key string) bool {
 	}
 }
 
+// Available inspects eligibility without reserving a half-open probe. The
+// caller must still call Allow immediately before dispatch.
+func (b *Breaker) Available(key string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	e := b.entryLocked(key)
+	if e.state == BreakerOpen {
+		return b.now().Sub(e.openedAt) >= b.cfg.OpenDuration
+	}
+	if e.state == BreakerHalfOpen {
+		return b.probes[key] < b.cfg.HalfOpenProbes
+	}
+	return true
+}
+
+// ReleaseProbe releases an unused/cancelled probe without marking the upstream
+// unhealthy. Success/failure paths reset the probe count themselves.
+func (b *Breaker) ReleaseProbe(key string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.probes[key] > 0 {
+		b.probes[key]--
+	}
+}
+
+// RecordTTFT records time to the first semantic output separately from total
+// request latency, which depends on generated response length.
+func (b *Breaker) RecordTTFT(key string, latency time.Duration) {
+	if latency < 0 {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	e := b.entryLocked(key)
+	e.ttftEwmaMs = ewma(e.ttftEwmaMs, float64(latency)/float64(time.Millisecond), b.cfg.LatencyAlpha, e.ttftSamples)
+	e.ttftSamples++
+}
+
+func (b *Breaker) TTFTMs(key string) float64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.entryLocked(key).ttftEwmaMs
+}
+
 func (b *Breaker) admitProbeLocked(key string) bool {
 	if b.probes[key] >= b.cfg.HalfOpenProbes {
 		return false
@@ -129,6 +177,8 @@ func (b *Breaker) RecordSuccess(key string, latency time.Duration) {
 	b.probes[key] = 0
 	e.latencyEwmaMs = ewma(e.latencyEwmaMs, float64(latency.Milliseconds()), b.cfg.LatencyAlpha, e.samples)
 	e.samples++
+	e.failureEwma = ewma(e.failureEwma, 0, b.cfg.LatencyAlpha, e.healthSamples)
+	e.healthSamples++
 }
 
 // RecordFailure counts a failure and opens the breaker at the threshold.
@@ -137,6 +187,8 @@ func (b *Breaker) RecordFailure(key string) {
 	defer b.mu.Unlock()
 	e := b.entryLocked(key)
 	e.consecutiveFailures++
+	e.failureEwma = ewma(e.failureEwma, 1, b.cfg.LatencyAlpha, e.healthSamples)
+	e.healthSamples++
 	e.lastFailure = b.now()
 	if e.state == BreakerHalfOpen || e.consecutiveFailures >= b.cfg.FailureThreshold {
 		e.state = BreakerOpen
@@ -161,6 +213,14 @@ func (b *Breaker) LatencyMs(key string) float64 {
 		return 0
 	}
 	return e.latencyEwmaMs
+}
+
+// FailureRate is a smoothed upstream error signal, independent of whether the
+// consecutive failure threshold has opened the circuit yet.
+func (b *Breaker) FailureRate(key string) float64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.entryLocked(key).failureEwma
 }
 
 // Snapshot reports every tracked breaker for /healthz-style introspection.

@@ -48,6 +48,7 @@ type localCredentialEnvelope struct {
 type LocalCredentialResolver struct {
 	directory string
 	outbound  *http.Transport
+	pool      *credentialTransportPool
 }
 
 func NewLocalCredentialResolver(directory string) (*LocalCredentialResolver, error) {
@@ -63,7 +64,7 @@ func NewLocalCredentialResolver(directory string) (*LocalCredentialResolver, err
 		return nil, errSecretPolicy
 	}
 	clear(key)
-	return &LocalCredentialResolver{directory: directory, outbound: &http.Transport{
+	return &LocalCredentialResolver{directory: directory, pool: newCredentialTransportPool(), outbound: &http.Transport{
 		Proxy: nil, DialContext: localCredentialDialContext,
 		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
 		TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 30 * time.Second,
@@ -174,10 +175,15 @@ func (r *LocalCredentialResolver) Resolve(ctx context.Context, ref CredentialRef
 	if subtle.ConstantTimeCompare(fingerprint[:], expected) != 1 {
 		return provider.Credential{}, errSecretPolicy
 	}
-	return provider.Credential{Ref: e.CredentialID, Fingerprint: e.Fingerprint, Secret: string(plaintext), AuthorizationBinding: binding, AuthorizationExpiresAt: time.Now().Add(30 * time.Second)}, nil
+	return provider.Credential{Ref: e.CredentialID, Fingerprint: e.Fingerprint, Secret: string(plaintext), AuthorizationBinding: binding, AuthorizationExpiresAt: credentialGrantExpiry(time.Now())}, nil
 }
 
 func (r *LocalCredentialResolver) Invalidate(CredentialRef) {}
+
+func (r *LocalCredentialResolver) Close() error {
+	r.outbound.CloseIdleConnections()
+	return r.pool.Close()
+}
 
 func (r *LocalCredentialResolver) BoundClient(ref CredentialRef, c provider.Credential) (*http.Client, error) {
 	_, binding, err := r.load(ref)
@@ -220,7 +226,8 @@ func (t *localCredentialTransport) RoundTrip(req *http.Request) (*http.Response,
 	}
 	ctx := context.WithValue(req.Context(), secretWriteDeadline{}, t.expires)
 	ctx = context.WithValue(ctx, secretWriteAuthorization{}, t.authorize)
-	response, err := t.resolver.outbound.RoundTrip(req.Clone(ctx))
+	key := credentialPoolKey{Reference: t.ref, Binding: t.binding, Deadline: t.expires, Target: target.Scheme + "://" + target.Host, Policy: "local-bound-v1"}
+	response, err := t.resolver.pool.roundTrip(key, t.resolver.outbound, req.Clone(ctx))
 	if err != nil {
 		return nil, errSecretPolicy
 	}

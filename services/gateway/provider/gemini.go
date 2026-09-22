@@ -157,6 +157,7 @@ type geminiStream struct {
 	providerRequestID string
 	usage             *CanonicalUsage
 	finished          bool
+	terminalSeen      bool
 	// closed is written by Close() on the request goroutine and read by Next()
 	// on the relay's read goroutine, so it must be atomic. finished and usage
 	// are only ever touched by Next(), which the relay calls from one goroutine
@@ -207,9 +208,12 @@ func (s *geminiStream) Next() (CanonicalChunk, error) {
 			if err == io.EOF {
 				s.finished = true
 				s.usage.ProviderRequestID = s.providerRequestID
+				if !s.terminalSeen {
+					return CanonicalChunk{Usage: s.usage}, ErrStreamTruncated
+				}
 				return CanonicalChunk{Done: true, Usage: s.usage}, nil
 			}
-			return CanonicalChunk{}, err
+			return CanonicalChunk{Usage: s.usage}, err
 		}
 		payload := bytes.TrimSpace(event.Data)
 		if len(payload) == 0 {
@@ -217,10 +221,10 @@ func (s *geminiStream) Next() (CanonicalChunk, error) {
 		}
 		var wire geminiWireChunk
 		if err := json.Unmarshal(payload, &wire); err != nil {
-			return CanonicalChunk{}, fmt.Errorf("gemini: malformed stream chunk")
+			return CanonicalChunk{Usage: s.usage}, fmt.Errorf("gemini: malformed stream chunk")
 		}
 		if wire.Error != nil {
-			return CanonicalChunk{}, &UpstreamStreamError{Kind: mapGeminiStatus(wire.Error.Status)}
+			return CanonicalChunk{Usage: s.usage}, &UpstreamStreamError{Kind: mapGeminiStatus(wire.Error.Status)}
 		}
 		if wire.UsageMetadata != nil {
 			s.usage.Observed = observeGemini(payload, &s.observedWire)
@@ -237,12 +241,29 @@ func (s *geminiStream) Next() (CanonicalChunk, error) {
 			}
 			if text.Len() > 0 || candidate.FinishReason != "" {
 				out := CanonicalChunk{Text: text.String()}
-				if candidate.FinishReason != "" {
+				if candidate.FinishReason != "" && candidate.FinishReason != "FINISH_REASON_UNSPECIFIED" {
+					if !validGeminiFinishReason(candidate.FinishReason) {
+						return CanonicalChunk{Usage: s.usage}, fmt.Errorf("gemini: invalid finish reason")
+					}
+					s.terminalSeen = true
 					out.FinishReason = mapGeminiFinishReason(candidate.FinishReason)
 				}
 				return out, nil
 			}
 		}
+	}
+}
+
+func validGeminiFinishReason(reason string) bool {
+	switch reason {
+	case "STOP", "MAX_TOKENS", "SAFETY", "RECITATION", "LANGUAGE", "OTHER",
+		"BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "MALFORMED_FUNCTION_CALL",
+		"IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT", "IMAGE_OTHER", "NO_IMAGE",
+		"IMAGE_RECITATION", "UNEXPECTED_TOOL_CALL", "TOO_MANY_TOOL_CALLS",
+		"MISSING_THOUGHT_SIGNATURE", "MALFORMED_RESPONSE", "ESCALATION":
+		return true
+	default:
+		return false
 	}
 }
 

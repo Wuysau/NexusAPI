@@ -83,8 +83,11 @@ func (a *Anthropic) BuildRequest(req *CanonicalRequest, cred Credential, ep Endp
 	body.Temperature = req.Temperature
 	body.TopP = req.TopP
 	body.StopSequences = req.Stop
-	body.Tools = req.Tools
-	body.ToolChoice = req.ToolChoice
+	var err error
+	body.Tools, body.ToolChoice, err = anthropicTools(req.Tools, req.ToolChoice)
+	if err != nil {
+		return nil, err
+	}
 	if req.User != "" {
 		body.Metadata = map[string]string{"user_id": req.User}
 	}
@@ -97,7 +100,11 @@ func (a *Anthropic) BuildRequest(req *CanonicalRequest, cred Credential, ep Endp
 				systemParts = append(systemParts, text)
 			}
 		default:
-			body.Messages = append(body.Messages, anthropicMsg{Role: normalizeAnthropicRole(msg.Role), Content: msg.Content})
+			content, err := anthropicMessageContent(msg)
+			if err != nil {
+				return nil, err
+			}
+			body.Messages = append(body.Messages, anthropicMsg{Role: normalizeAnthropicRole(msg.Role), Content: content})
 		}
 	}
 	if len(systemParts) > 0 {
@@ -203,6 +210,7 @@ type anthropicStream struct {
 	providerRequestID string
 	usage             *CanonicalUsage
 	finished          bool
+	toolIndexes       map[int]int
 	// closed is written by Close() on the request goroutine and read by Next()
 	// on the relay's read goroutine, so it must be atomic. finished and usage
 	// are only ever touched by Next(), which the relay calls from one goroutine
@@ -261,9 +269,9 @@ func (s *anthropicStream) Next() (CanonicalChunk, error) {
 		if err != nil {
 			if err == io.EOF {
 				s.finished = true
-				return CanonicalChunk{Done: true, Usage: s.usage}, nil
+				return CanonicalChunk{Usage: s.usage}, ErrStreamTruncated
 			}
-			return CanonicalChunk{}, err
+			return CanonicalChunk{Usage: s.usage}, err
 		}
 		payload := bytes.TrimSpace(event.Data)
 		if len(payload) == 0 {
@@ -271,7 +279,7 @@ func (s *anthropicStream) Next() (CanonicalChunk, error) {
 		}
 		var wire anthropicWireEvent
 		if err := json.Unmarshal(payload, &wire); err != nil {
-			return CanonicalChunk{}, fmt.Errorf("anthropic: malformed stream event")
+			return CanonicalChunk{Usage: s.usage}, fmt.Errorf("anthropic: malformed stream event")
 		}
 		switch wire.Type {
 		case "message_start":
@@ -298,7 +306,14 @@ func (s *anthropicStream) Next() (CanonicalChunk, error) {
 				if wire.Delta.PartialJSON == "" {
 					continue
 				}
-				return CanonicalChunk{ToolCallDelta: json.RawMessage(wire.Delta.PartialJSON)}, nil
+				index, ok := s.toolIndexes[wire.Index]
+				if !ok {
+					return CanonicalChunk{Usage: s.usage}, fmt.Errorf("anthropic: tool delta without tool start")
+				}
+				delta, _ := json.Marshal([]any{map[string]any{
+					"index": index, "function": map[string]string{"arguments": wire.Delta.PartialJSON},
+				}})
+				return CanonicalChunk{ToolCallDelta: delta}, nil
 			default:
 				if wire.Delta.Text == "" {
 					continue
@@ -307,15 +322,23 @@ func (s *anthropicStream) Next() (CanonicalChunk, error) {
 			}
 		case "content_block_start":
 			if wire.ContentBlock != nil && wire.ContentBlock.Type == "tool_use" {
-				delta, _ := json.Marshal(map[string]any{
-					"index": wire.Index,
+				if s.toolIndexes == nil {
+					s.toolIndexes = make(map[int]int)
+				}
+				if _, exists := s.toolIndexes[wire.Index]; exists {
+					return CanonicalChunk{Usage: s.usage}, fmt.Errorf("anthropic: duplicate tool start")
+				}
+				index := len(s.toolIndexes)
+				s.toolIndexes[wire.Index] = index
+				delta, _ := json.Marshal([]any{map[string]any{
+					"index": index,
 					"id":    wire.ContentBlock.ID,
 					"type":  "function",
 					"function": map[string]any{
 						"name":      wire.ContentBlock.Name,
 						"arguments": "",
 					},
-				})
+				}})
 				return CanonicalChunk{ToolCallDelta: delta}, nil
 			}
 			continue
@@ -333,7 +356,10 @@ func (s *anthropicStream) Next() (CanonicalChunk, error) {
 			s.usage.ProviderRequestID = s.providerRequestID
 			return CanonicalChunk{Done: true, Usage: s.usage}, nil
 		case "error":
-			return CanonicalChunk{}, &UpstreamStreamError{Kind: mapAnthropicErrorType(wire.Error.Type)}
+			if wire.Error == nil {
+				return CanonicalChunk{Usage: s.usage}, fmt.Errorf("anthropic: malformed error event")
+			}
+			return CanonicalChunk{Usage: s.usage}, &UpstreamStreamError{Kind: mapAnthropicErrorType(wire.Error.Type)}
 		default:
 			continue
 		}

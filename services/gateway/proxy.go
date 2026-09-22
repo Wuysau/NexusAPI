@@ -31,8 +31,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptrace"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel/codes"
@@ -322,12 +324,17 @@ func (p *Proxy) ServeChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	// 6. Limits: concurrency, then per-minute requests, then token estimate.
 	concurrencyLimit := ConcurrencyFor(p.limits.MaxConcurrent, bundle)
-	releaseConcurrency, acquired := p.limiter.AcquireConcurrency(identity.TenantID, concurrencyLimit)
-	if !acquired {
-		writeAPIError(w, requestID, errConcurrency())
+	lease, acquireErr := p.limiter.AcquireContext(ctx, ConcurrencyRequest{TenantID: identity.TenantID, TenantLimit: concurrencyLimit, WaitTimeout: p.limits.ConcurrencyWait, AllowLocal: p.env == nil || p.env.Environment != "production"})
+	if acquireErr != nil {
+		if errors.Is(acquireErr, ErrConcurrencyLimit) {
+			writeAPIError(w, requestID, errConcurrency())
+		} else {
+			writeAPIError(w, requestID, errNoHealthyUpstream())
+		}
 		return
 	}
-	defer releaseConcurrency()
+	defer lease.Release()
+	ctx = lease.Context()
 
 	limits := bundle.LimitsFor(p.limits)
 	requestDecision := p.limiter.Allow(ctx, RateLimitBucket(identity.TenantID, identity.KeyID, model.ID, "req"),
@@ -408,20 +415,24 @@ func (p *Proxy) ServeChatCompletions(w http.ResponseWriter, r *http.Request) {
 	rec.TraceID = traceID
 	persistErr := p.store.PersistTerminal(persistCtx, rec)
 	p.logger.Info("request terminal", "request_id", requestID, "tenant_id", identity.TenantID, "project_id", identity.ProjectID, "trace_id", traceID, "outcome", rec.Status, "persisted", persistErr == nil)
-	switch {
-	case persistErr == nil:
-	case errors.Is(persistErr, ErrDuplicateRequest):
-		p.logger.Warn("duplicate terminal record rejected", "request_id", requestID, "tenant", identity.TenantID)
-	default:
-		// The usage fact could not be made durable. The tokens already produced
-		// cannot be un-spent, so this is loud: managed traffic must be
-		// considered at risk until an operator confirms the outbox is healthy.
+	if persistErr != nil {
 		p.logger.Error("terminal persist failed", "request_id", requestID, "outcome", string(result.outcome), "err", persistErr.Error())
 		span.RecordError(persistErr)
 		span.SetStatus(codes.Error, "persist_failed")
 		if !result.wroteHeader {
 			writeAPIError(w, requestID, errInternal())
-			return
+		} else {
+			p.writeStreamError(w, requestID, errStorageUnavailable())
+		}
+		return
+	}
+	if streaming && result.wroteHeader {
+		if result.err != nil || result.outcome != OutcomeCompleted {
+			p.writeStreamError(w, requestID, apiErrorForResult(result))
+		} else {
+			if err := p.writeSSE(http.NewResponseController(w), w, []byte("data: [DONE]\n\n")); err != nil {
+				p.logger.Debug("terminal stream write failed", "request_id", requestID)
+			}
 		}
 	}
 
@@ -453,6 +464,8 @@ func apiErrorForResult(result *attemptResult) *APIError {
 		return errUpstreamTimeout()
 	}
 	switch result.errorCode {
+	case CodeConcurrencyExceeded:
+		return errConcurrency()
 	case CodeRateLimitExceeded:
 		return errRateLimited()
 	case CodeBudgetExceeded:
@@ -679,8 +692,18 @@ func (p *Proxy) attempt(
 ) *attemptResult {
 	result := &attemptResult{outcome: OutcomeFailed, channel: rc.channel, startedAt: startedAt}
 	attemptNumber := 0
+	var releaseAttempt func()
+	defer func() {
+		if releaseAttempt != nil {
+			releaseAttempt()
+		}
+	}()
 
 	for index, candidate := range rc.candidates {
+		if releaseAttempt != nil {
+			releaseAttempt()
+			releaseAttempt = nil
+		}
 		if attemptNumber >= p.maxAttempts {
 			break
 		}
@@ -719,8 +742,27 @@ func (p *Proxy) attempt(
 			return a
 		}
 
+		channelLimit := p.limits.ChannelMaxConcurrent
+		if channelLimit <= 0 {
+			channelLimit = 64
+		}
+		channelLease, admissionErr := p.limiter.AcquireContext(ctx, ConcurrencyRequest{TenantID: identity.TenantID, ChannelID: candidate.Channel.ID, ChannelLimit: channelLimit, WaitTimeout: p.limits.ConcurrencyWait, AllowLocal: p.env == nil || p.env.Environment != "production"})
+		if admissionErr != nil {
+			result.errorCode = CodeNoHealthyUpstream
+			if errors.Is(admissionErr, ErrConcurrencyLimit) {
+				result.errorCode = CodeConcurrencyExceeded
+			}
+			result.err = admissionErr
+			result.attempts = append(result.attempts, finish(p.failedAttempt(candidate, attemptNumber, candidateStart, result.errorCode)))
+			if errors.Is(admissionErr, ErrConcurrencyLimit) {
+				continue
+			}
+			return result
+		}
+
+		releaseAttempt = channelLease.Release
 		credential := rc.credential
-		if candidate.Channel.ID != rc.channel.ID || index > 0 {
+		if candidate.Channel.ID != rc.channel.ID || index > 0 || p.limits.ConcurrencyWait > 0 {
 			resolved, err := p.credentials.Resolve(ctx, CredentialRef{
 				TenantID:          identity.TenantID,
 				CredentialID:      candidate.Channel.CredentialRef,
@@ -732,7 +774,9 @@ func (p *Proxy) attempt(
 				Model:             model.ID,
 			})
 			if err != nil {
-				p.breaker.RecordFailure(breakerKey)
+				if ctx.Err() == nil {
+					p.breaker.RecordFailure(breakerKey)
+				}
 				result.attempts = append(result.attempts, finish(p.failedAttempt(candidate, attemptNumber, candidateStart, "credential_unavailable")))
 				continue
 			}
@@ -766,7 +810,6 @@ func (p *Proxy) attempt(
 		if err != nil {
 			// A request the adapter cannot build is a client-side problem with
 			// this model; it is not switchable and not retryable.
-			p.breaker.RecordFailure(breakerKey)
 			result.outcome = OutcomeFailed
 			result.errorCode = CodeInvalidParameter
 			result.attempts = append(result.attempts, finish(p.failedAttempt(candidate, attemptNumber, candidateStart, CodeInvalidParameter)))
@@ -780,19 +823,42 @@ func (p *Proxy) attempt(
 			result.attempts = append(result.attempts, finish(p.failedAttempt(candidate, attemptNumber, candidateStart, "credential_unavailable")))
 			return result
 		}
-		stream, err := candidate.Adapter.Stream(ctx, client, call)
+		if !p.breaker.Allow(breakerKey) {
+			channelLease.Release()
+			result.attempts = append(result.attempts, finish(p.failedAttempt(candidate, attemptNumber, candidateStart, "circuit_open")))
+			continue
+		}
+		releaseLoad := p.router.BeginRequest(candidate.Channel.ID, model.ID)
+		releaseAttempt = sync.OnceFunc(func() { releaseLoad(); p.breaker.ReleaseProbe(breakerKey); channelLease.Release() })
+		// Once a socket is assigned, a transport error cannot prove that the
+		// provider did not execute the request. Retry only pre-dispatch failures
+		// or explicit overload rejection responses.
+		var connectionAssigned atomic.Bool
+		attemptCtx := httptrace.WithClientTrace(channelLease.Context(), &httptrace.ClientTrace{GotConn: func(httptrace.GotConnInfo) { connectionAssigned.Store(true) }})
+		dispatchStart := p.now()
+		stream, err := candidate.Adapter.Stream(attemptCtx, client, call)
 		if err != nil {
+			releaseAttempt()
 			classification := candidate.Adapter.ClassifyError(statusOf(err), bodyOf(err), err)
-			p.breaker.RecordFailure(breakerKey)
-			result.attempts = append(result.attempts, finish(p.failedAttempt(candidate, attemptNumber, candidateStart, string(classification.Kind))))
+			if ctx.Err() == nil && !errors.Is(err, context.Canceled) {
+				p.breaker.RecordFailure(breakerKey)
+			}
 			result.channel = candidate.Channel
 			result.errorCode = publicCodeFor(classification.Kind)
 			result.err = err
 
-			// No response was received, so the upstream cannot have started
-			// generating. Switching is only allowed when the classification
-			// says a retry could succeed and another candidate exists.
-			if classification.Retryable && index+1 < len(rc.candidates) && attemptNumber < p.maxAttempts {
+			status := statusOf(err)
+			safeRetry := ctx.Err() == nil && (!connectionAssigned.Load() || status == http.StatusTooManyRequests || status == http.StatusServiceUnavailable)
+			if connectionAssigned.Load() && status == 0 {
+				result.outcome = OutcomeUnknown
+				result.applyUsage(nil, req)
+			}
+			failed := p.failedAttempt(candidate, attemptNumber, candidateStart, string(classification.Kind))
+			if result.outcome == OutcomeUnknown {
+				failed.Status = string(OutcomeUnknown)
+			}
+			result.attempts = append(result.attempts, finish(failed))
+			if safeRetry && classification.Retryable && index+1 < len(rc.candidates) && attemptNumber < p.maxAttempts {
 				continue
 			}
 			if classification.Kind == provider.ErrAuth {
@@ -802,7 +868,7 @@ func (p *Proxy) attempt(
 					ProviderID:        candidate.Channel.ProviderID, Mode: candidate.Channel.CredentialMode,
 				})
 			}
-			if classification.Kind == provider.ErrRateLimit || classification.Kind == provider.ErrProviderDown {
+			if result.outcome != OutcomeUnknown && (classification.Kind == provider.ErrRateLimit || classification.Kind == provider.ErrProviderDown) {
 				result.outcome = OutcomeFailed
 			}
 			return result
@@ -811,7 +877,15 @@ func (p *Proxy) attempt(
 		// From here on the upstream has accepted the request. There is no
 		// switching: a second provider would duplicate work we cannot undo.
 		result.channel = candidate.Channel
-		usage, buffered, writeErr := p.relay(ctx, w, stream, req.Model, requestID, streaming, cancelUpstream)
+		usage, buffered, writeErr := p.relayWithOptions(attemptCtx, w, stream, req.Model, requestID, streaming, cancelUpstream, relayOptions{deferDone: true, firstToken: func() { p.breaker.RecordTTFT(breakerKey, p.now().Sub(dispatchStart)) }})
+		// Wire adapters must validate their terminal representation before the
+		// shared path persists a successful execution fact.
+		if writeErr == nil {
+			if validator, ok := w.(interface{ ValidateCompletion([]byte) error }); ok {
+				writeErr = validator.ValidateCompletion(buffered)
+			}
+		}
+		releaseAttempt()
 		result.body = buffered
 		_ = stream.Close()
 		elapsed := p.now().Sub(candidateStart)
@@ -822,9 +896,13 @@ func (p *Proxy) attempt(
 			// unless the stream itself completed.
 			result.wroteHeader = streaming
 			result.outcome = OutcomeUnknown
-			result.errorCode = CodeInternal
+			result.errorCode = CodeUpstreamProtocol
 			result.err = writeErr
-			p.breaker.RecordSuccess(breakerKey, elapsed)
+			result.body = nil
+			var downstream *downstreamWriteError
+			if ctx.Err() == nil && !errors.As(writeErr, &downstream) && !errors.Is(writeErr, context.Canceled) {
+				p.breaker.RecordFailure(breakerKey)
+			}
 			result.applyUsage(usage, req)
 			result.attempts = append(result.attempts, finish(p.completedAttempt(candidate, attemptNumber, candidateStart, &result.usage, string(OutcomeUnknown))))
 			return result
@@ -834,6 +912,9 @@ func (p *Proxy) attempt(
 		result.wroteHeader = streaming
 		result.applyUsage(usage, req)
 		result.outcome = OutcomeCompleted
+		result.err = nil
+		result.errorCode = ""
+		result.errorDetail = ""
 		result.attempts = append(result.attempts, finish(p.completedAttempt(candidate, attemptNumber, candidateStart, &result.usage, string(OutcomeCompleted))))
 		result.completedAt = p.now()
 		return result
@@ -899,7 +980,22 @@ func (p *Proxy) relay(
 	streaming bool,
 	cancelUpstream context.CancelFunc,
 ) (*provider.CanonicalUsage, []byte, error) {
+	return p.relayWithOptions(ctx, w, stream, modelName, requestID, streaming, cancelUpstream, relayOptions{})
+}
+
+type relayOptions struct {
+	deferDone  bool
+	firstToken func()
+}
+
+func (p *Proxy) relayWithOptions(ctx context.Context, w http.ResponseWriter, stream provider.Stream, modelName, requestID string, streaming bool, cancelUpstream context.CancelFunc, opts relayOptions) (*provider.CanonicalUsage, []byte, error) {
 	writer := http.NewResponseController(w)
+	reader := newChunkReader(ctx, stream, p.limits.IdleTimeout)
+	defer reader.close()
+	batch := newStreamBatch(p, w)
+	defer batch.close()
+	reader.flushAt = batch.timer.C
+	reader.flush = batch.flush
 
 	if streaming {
 		w.Header().Set("content-type", "text/event-stream")
@@ -911,12 +1007,12 @@ func (p *Proxy) relay(
 
 	var (
 		usage     *provider.CanonicalUsage
-		text      strings.Builder
+		aggregate responseAggregate
 		finish    string
-		usageSeen bool
 		id        = "chatcmpl-" + requestID
 		created   = p.now().Unix()
 	)
+	aggregate.limit = p.limits.MaxResponseBytes
 	if streaming {
 		if err := p.writeSSE(writer, w, sseChunk(id, requestID, modelName, created, map[string]any{"role": "assistant"}, nil, nil)); err != nil {
 			return nil, nil, err
@@ -927,24 +1023,34 @@ func (p *Proxy) relay(
 		if ctx.Err() != nil {
 			return usage, nil, ctx.Err()
 		}
-		chunk, err := p.nextChunk(ctx, stream, cancelUpstream)
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			// A stream that dies mid-flight leaves the outcome unknown: the
-			// provider may have generated tokens we never saw.
-			return usage, nil, err
-		}
+		chunk, err := reader.next()
 		if chunk.Usage != nil {
 			usage = chunk.Usage
-			usageSeen = true
+		}
+		if err != nil {
+			if cancelUpstream != nil {
+				cancelUpstream()
+			}
+			if errors.Is(err, io.EOF) {
+				err = provider.ErrStreamTruncated
+			}
+			return usage, nil, err
+		}
+		if opts.firstToken != nil && (chunk.Text != "" || chunk.Reasoning != "" || len(chunk.ToolCallDelta) > 0) {
+			opts.firstToken()
+			opts.firstToken = nil
 		}
 		if chunk.FinishReason != "" {
 			finish = chunk.FinishReason
 		}
-		if chunk.Text != "" {
-			text.WriteString(chunk.Text)
+		deltas, err := parseToolDeltas(chunk.ToolCallDelta)
+		if err != nil {
+			return usage, nil, err
+		}
+		if !streaming {
+			if err := aggregate.add(chunk, deltas); err != nil {
+				return usage, nil, err
+			}
 		}
 		if streaming {
 			delta := map[string]any{}
@@ -962,7 +1068,7 @@ func (p *Proxy) relay(
 				finishReason = chunk.FinishReason
 			}
 			if len(delta) > 0 || finishReason != nil {
-				if err := p.writeSSE(writer, w, sseChunk(id, requestID, modelName, created, delta, finishReason, nil)); err != nil {
+				if err := batch.emit(sseChunk(id, requestID, modelName, created, delta, finishReason, nil), finishReason != nil); err != nil {
 					return usage, nil, err
 				}
 			}
@@ -973,18 +1079,19 @@ func (p *Proxy) relay(
 	}
 
 	if streaming {
-		if usageSeen && usage != nil {
-			usageJSON := map[string]any{
-				"prompt_tokens":     usage.InputTokens,
-				"completion_tokens": usage.OutputTokens,
-				"total_tokens":      usage.InputTokens + usage.OutputTokens,
-			}
+		if err := batch.flush(); err != nil {
+			return usage, nil, err
+		}
+		if usage != nil {
+			usageJSON := chatUsage(usage)
 			if err := p.writeSSE(writer, w, sseChunk(id, requestID, modelName, created, map[string]any{}, nil, usageJSON)); err != nil {
 				return usage, nil, err
 			}
 		}
-		if err := p.writeSSE(writer, w, []byte("data: [DONE]\n\n")); err != nil {
-			return usage, nil, err
+		if !opts.deferDone {
+			if err := p.writeSSE(writer, w, []byte("data: [DONE]\n\n")); err != nil {
+				return usage, nil, err
+			}
 		}
 		return usage, nil, nil
 	}
@@ -1000,65 +1107,24 @@ func (p *Proxy) relay(
 		"model":   modelName,
 		"choices": []map[string]any{{
 			"index":         0,
-			"message":       map[string]any{"role": "assistant", "content": text.String()},
+			"message":       aggregate.message(),
 			"finish_reason": finish,
 		}},
 	}
 	if usage != nil {
-		completion["usage"] = map[string]any{
-			"prompt_tokens":     usage.InputTokens,
-			"completion_tokens": usage.OutputTokens,
-			"total_tokens":      usage.InputTokens + usage.OutputTokens,
-		}
+		completion["usage"] = chatUsage(usage)
 	}
 	// The body is returned instead of written: the caller persists the terminal
 	// record first, so an uncommittable outbox can still fail closed rather than
 	// having already told the client the request succeeded.
 	encoded, err := json.Marshal(completion)
+	if err == nil && len(encoded) > aggregate.limit {
+		err = errors.New("upstream response exceeds aggregation limit")
+	}
 	if err != nil {
 		return usage, nil, err
 	}
 	return usage, encoded, nil
-}
-
-// nextChunk reads one chunk with an idle deadline.
-//
-// A provider that stops sending without closing would otherwise pin this
-// goroutine and its connection forever. On timeout the upstream call is
-// cancelled, which unblocks the pending read, so the helper goroutine cannot
-// leak.
-func (p *Proxy) nextChunk(ctx context.Context, stream provider.Stream, cancelUpstream context.CancelFunc) (provider.CanonicalChunk, error) {
-	if p.limits.IdleTimeout <= 0 {
-		return stream.Next()
-	}
-	type result struct {
-		chunk provider.CanonicalChunk
-		err   error
-	}
-	done := make(chan result, 1)
-	go func() {
-		chunk, err := stream.Next()
-		done <- result{chunk: chunk, err: err}
-	}()
-	timer := time.NewTimer(p.limits.IdleTimeout)
-	defer timer.Stop()
-	select {
-	case r := <-done:
-		return r.chunk, r.err
-	case <-timer.C:
-		if cancelUpstream != nil {
-			cancelUpstream()
-		}
-		// Wait for the read to observe the cancellation so the goroutine and
-		// its connection are released before returning.
-		select {
-		case <-done:
-		case <-time.After(time.Second):
-		}
-		return provider.CanonicalChunk{}, errUpstreamIdle
-	case <-ctx.Done():
-		return provider.CanonicalChunk{}, ctx.Err()
-	}
 }
 
 // errUpstreamIdle marks a stalled upstream, which maps to 504.
@@ -1070,9 +1136,12 @@ func (p *Proxy) writeSSE(controller *http.ResponseController, w http.ResponseWri
 		_ = controller.SetWriteDeadline(time.Now().Add(p.limits.IdleTimeout))
 	}
 	if _, err := w.Write(payload); err != nil {
-		return err
+		return &downstreamWriteError{err}
 	}
-	return controller.Flush()
+	if err := controller.Flush(); err != nil {
+		return &downstreamWriteError{err}
+	}
+	return nil
 }
 
 func sseChunk(id, requestID, model string, created int64, delta map[string]any, finishReason any, usage map[string]any) []byte {

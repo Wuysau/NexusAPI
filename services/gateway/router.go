@@ -10,15 +10,17 @@ package main
 //     503 no_healthy_upstream rather than silently falling back to a channel
 //     the policy forbids.
 //
-// Candidate ordering is deterministic: a tie on score is broken by policy
-// priority, then channel weight, then channel id. Deterministic ordering is what
-// makes "no unsafe switch after upstream acceptance" reviewable.
+// Candidates are weighted within a channel priority band. Soft signals adjust
+// their effective weight; the resulting order is fixed for this request.
 
 import (
 	"errors"
+	"math"
+	"math/rand/v2"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"nexus/gateway/provider"
 )
@@ -58,6 +60,9 @@ type Router struct {
 	registry *provider.Registry
 	breaker  *Breaker
 	weights  ScoreWeights
+	mu       sync.Mutex
+	inFlight map[string]int
+	random   func() float64
 }
 
 // ScoreWeights controls the soft-score blend. Cost dominates by default.
@@ -65,12 +70,15 @@ type ScoreWeights struct {
 	Cost    float64
 	Latency float64
 	Health  float64
+	Load    float64
 }
 
-func DefaultScoreWeights() ScoreWeights { return ScoreWeights{Cost: 0.5, Latency: 0.3, Health: 0.2} }
+func DefaultScoreWeights() ScoreWeights {
+	return ScoreWeights{Cost: 0.5, Latency: 0.3, Health: 0.2, Load: 0.3}
+}
 
 func NewRouter(registry *provider.Registry, breaker *Breaker, weights ScoreWeights) *Router {
-	return &Router{registry: registry, breaker: breaker, weights: weights}
+	return &Router{registry: registry, breaker: breaker, weights: weights, inFlight: make(map[string]int), random: rand.Float64}
 }
 
 // Select returns candidates best-first. A non-nil error means no candidate is
@@ -101,7 +109,7 @@ func (r *Router) Select(bundle *GatewayBundle, req RouteRequest) ([]Candidate, e
 		return nil, ErrNoCandidate
 	}
 	r.score(candidates, req)
-	sortCandidates(candidates, bundle, req)
+	r.order(candidates)
 	return candidates, nil
 }
 
@@ -152,7 +160,7 @@ func (r *Router) passesHardFilter(bundle *GatewayBundle, channel *SnapshotChanne
 	}
 	// Circuit breaker is a hard exclusion: a channel known to be failing must
 	// not receive traffic just because nothing else is available.
-	return r.breaker.Allow(BreakerKey(channel.ID, req.ResolvedModel))
+	return r.breaker.Available(BreakerKey(channel.ID, req.ResolvedModel))
 }
 
 func (r *Router) channelAdapter(channel *SnapshotChannel) (provider.Adapter, bool) {
@@ -166,6 +174,8 @@ func (r *Router) channelAdapter(channel *SnapshotChannel) (provider.Adapter, boo
 }
 
 func (r *Router) score(candidates []Candidate, req RouteRequest) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	var maxCost float64
 	latencies := make([]float64, len(candidates))
 	for i, c := range candidates {
@@ -173,7 +183,7 @@ func (r *Router) score(candidates []Candidate, req RouteRequest) {
 		if cost > maxCost {
 			maxCost = cost
 		}
-		latencies[i] = r.breaker.LatencyMs(BreakerKey(c.Channel.ID, req.ResolvedModel))
+		latencies[i] = r.breaker.TTFTMs(BreakerKey(c.Channel.ID, req.ResolvedModel))
 	}
 	maxLatency := 0.0
 	for _, l := range latencies {
@@ -182,49 +192,79 @@ func (r *Router) score(candidates []Candidate, req RouteRequest) {
 		}
 	}
 	for i := range candidates {
-		costScore := 0.0
-		if maxCost > 0 {
-			costScore = relativeCost(candidates[i].Price, req.EstimatedInputTokens, req.EstimatedOutputTokens) / maxCost
+		costScore := 1.0 // Unknown pricing is never treated as free.
+		cost := relativeCost(candidates[i].Price, req.EstimatedInputTokens, req.EstimatedOutputTokens)
+		if !math.IsNaN(cost) {
+			costScore = 0
+			if maxCost > 0 {
+				costScore = cost / maxCost
+			}
 		}
 		latencyScore := 0.0
 		if maxLatency > 0 {
 			latencyScore = latencies[i] / maxLatency
 		}
 		healthScore := healthPenalty(r.breaker.State(BreakerKey(candidates[i].Channel.ID, req.ResolvedModel)))
-		candidates[i].Score = r.weights.Cost*costScore + r.weights.Latency*latencyScore + r.weights.Health*healthScore
+		healthScore += r.breaker.FailureRate(BreakerKey(candidates[i].Channel.ID, req.ResolvedModel))
+		loadScore := float64(r.inFlight[BreakerKey(candidates[i].Channel.ID, req.ResolvedModel)])
+		candidates[i].Score = r.weights.Cost*costScore + r.weights.Latency*latencyScore + r.weights.Health*healthScore + r.weights.Load*loadScore
 	}
 }
 
-// sortCandidates orders best-first with a total, deterministic order.
-func sortCandidates(candidates []Candidate, bundle *GatewayBundle, req RouteRequest) {
-	priorityOf := func(candidate Candidate) (int, bool) {
-		for _, policy := range bundle.Snapshot.RoutingPolicies {
-			for _, route := range policy.ModelRoutes {
-				if route.ModelID != req.ResolvedModel || route.Priority == nil {
-					continue
-				}
-				return *route.Priority, true
-			}
-		}
-		return 0, false
+// order uses exponential races for weighted sampling without replacement.
+// Model-route priority applies to models, not individual channel candidates;
+// only the channel's own priority separates eligible channel bands.
+func (r *Router) order(candidates []Candidate) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	type ranked struct {
+		candidate Candidate
+		rank      float64
 	}
-	sort.SliceStable(candidates, func(i, j int) bool {
-		pi, hasI := priorityOf(candidates[i])
-		pj, hasJ := priorityOf(candidates[j])
-		if hasI != hasJ {
-			return hasI
+	entries := make([]ranked, len(candidates))
+	for i, c := range candidates {
+		weight := float64(c.Channel.Weight)
+		if weight <= 0 {
+			weight = 1
 		}
-		if hasI && hasJ && pi != pj {
-			return pi < pj
+		u := r.random()
+		if u <= 0 {
+			u = math.SmallestNonzeroFloat64
 		}
-		if candidates[i].Score != candidates[j].Score {
-			return candidates[i].Score < candidates[j].Score
+		entries[i] = ranked{c, -math.Log(u) * (1 + math.Max(0, c.Score)) / weight}
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		a, b := entries[i], entries[j]
+		if a.candidate.Channel.Priority != b.candidate.Channel.Priority {
+			return a.candidate.Channel.Priority < b.candidate.Channel.Priority
 		}
-		if candidates[i].Channel.Weight != candidates[j].Channel.Weight {
-			return candidates[i].Channel.Weight > candidates[j].Channel.Weight
+		if a.rank != b.rank {
+			return a.rank < b.rank
 		}
-		return candidates[i].Channel.ID < candidates[j].Channel.ID
+		return a.candidate.Channel.ID < b.candidate.Channel.ID
 	})
+	for i := range entries {
+		candidates[i] = entries[i].candidate
+	}
+}
+
+// BeginRequest tracks a dispatched attempt, scoped to channel and model.
+func (r *Router) BeginRequest(channelID, model string) func() {
+	key := BreakerKey(channelID, model)
+	r.mu.Lock()
+	r.inFlight[key]++
+	r.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			r.inFlight[key]--
+			if r.inFlight[key] <= 0 {
+				delete(r.inFlight, key)
+			}
+		})
+	}
 }
 
 func healthPenalty(state BreakerState) float64 {
@@ -248,21 +288,27 @@ func healthPenalty(state BreakerState) float64 {
 // hold, and only ever uses this float64 ratio to order equally-eligible
 // channels. It is never persisted and never charged.
 //
-// Zero is returned when the price is unknown; a missing price is soft, so it
+// NaN is returned when the price is unknown; a missing price is soft, so it
 // does not remove the candidate.
 func relativeCost(price *SnapshotPriceVersion, inputTokens, outputTokens int) float64 {
 	if price == nil {
-		return 0
+		return math.NaN()
 	}
 	var inputRate, outputRate float64
+	var hasInput, hasOutput bool
 	for _, component := range price.Components {
 		amount := parseFloatAmount(component.Amount)
 		switch component.Kind {
 		case "input":
 			inputRate = amount
+			hasInput = true
 		case "output":
 			outputRate = amount
+			hasOutput = true
 		}
+	}
+	if (inputTokens > 0 && !hasInput) || (outputTokens > 0 && !hasOutput) {
+		return math.NaN()
 	}
 	scale := 1.0
 	if price.Unit == "per_million_tokens" {
@@ -272,12 +318,11 @@ func relativeCost(price *SnapshotPriceVersion, inputTokens, outputTokens int) fl
 }
 
 // parseFloatAmount parses a non-negative decimal amount for ranking only.
-// Invalid or absent amounts rank as free, which the soft score tolerates; a
-// negative amount (which the price contract forbids) also ranks as 0.
+// Invalid, infinite or negative amounts are unknown, never free.
 func parseFloatAmount(raw string) float64 {
 	value, err := strconv.ParseFloat(raw, 64)
-	if err != nil || value < 0 {
-		return 0
+	if err != nil || value < 0 || math.IsInf(value, 0) {
+		return math.NaN()
 	}
 	return value
 }

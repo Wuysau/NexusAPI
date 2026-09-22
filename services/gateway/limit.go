@@ -88,6 +88,7 @@ func NewLimiter(redisURL string, logger *slog.Logger) (*Limiter, error) {
 		if err != nil {
 			return nil, err
 		}
+		opts.ContextTimeoutEnabled = true
 		l.redis = redis.NewClient(opts)
 	}
 	return l, nil
@@ -149,7 +150,7 @@ func (l *Limiter) setDegraded(v bool) {
 	l.degraded = v
 	l.degradedMu.Unlock()
 	if changed && v {
-		l.logger.Warn("redis unavailable: rate limits degraded to conservative local buckets")
+		l.logger.Warn("redis unavailable: shared admission fails closed unless explicit local profile is enabled")
 	}
 }
 
@@ -259,16 +260,17 @@ func minFloat(a, b float64) float64 {
 // tighten. Both are released by the release func, including on client
 // disconnect (the proxy defers it).
 type concurrencyGuard struct {
-	mu      sync.Mutex
-	global  chan struct{}
-	tenants map[string]chan struct{}
+	mu          sync.Mutex
+	globalMax   int
+	globalCount int
+	scopes      map[string]int
 }
 
 // newConcurrencyGuard builds the guard. The global channel is sized lazily on
 // first use because the system cap arrives with the config; a small default
 // keeps the type usable in tests.
 func newConcurrencyGuard() *concurrencyGuard {
-	return &concurrencyGuard{tenants: make(map[string]chan struct{})}
+	return &concurrencyGuard{scopes: make(map[string]int)}
 }
 
 // SetGlobalCap sizes the process-wide semaphore. Safe to call once at startup.
@@ -278,40 +280,53 @@ func (g *concurrencyGuard) SetGlobalCap(max int) {
 	if max < 1 {
 		max = 1
 	}
-	if g.global == nil {
-		g.global = make(chan struct{}, max)
+	if g.globalMax == 0 {
+		g.globalMax = max
 	}
 }
 
 func (g *concurrencyGuard) acquire(tenantID string, max int) (func(), bool) {
-	g.mu.Lock()
-	if g.global == nil {
-		g.global = make(chan struct{}, 256)
+	if max < 1 {
+		return func() {}, false
 	}
-	global := g.global
-	tenant, ok := g.tenants[tenantID]
-	if !ok || cap(tenant) != max {
-		tenant = make(chan struct{}, max)
-		g.tenants[tenantID] = tenant
-	}
-	g.mu.Unlock()
+	return g.acquireScopes(tenantID, max, "", 0, true)
+}
 
-	select {
-	case global <- struct{}{}:
-	default:
+func (g *concurrencyGuard) acquireScopes(tenantID string, tenantMax int, channelID string, channelMax int, processSlot bool) (func(), bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.globalMax == 0 {
+		g.globalMax = 256
+	}
+	tenantKey, channelKey := "tenant:"+tenantID, "channel:"+channelID
+	if (processSlot && g.globalCount >= g.globalMax) || (tenantMax > 0 && g.scopes[tenantKey] >= tenantMax) || (channelMax > 0 && g.scopes[channelKey] >= channelMax) {
 		return func() {}, false
 	}
-	select {
-	case tenant <- struct{}{}:
-	default:
-		<-global
-		return func() {}, false
+	if processSlot {
+		g.globalCount++
+	}
+	if tenantMax > 0 {
+		g.scopes[tenantKey]++
+	}
+	if channelMax > 0 {
+		g.scopes[channelKey]++
 	}
 	var once sync.Once
 	return func() {
 		once.Do(func() {
-			<-tenant
-			<-global
+			g.mu.Lock()
+			defer g.mu.Unlock()
+			if processSlot {
+				g.globalCount--
+			}
+			for key, max := range map[string]int{tenantKey: tenantMax, channelKey: channelMax} {
+				if max > 0 {
+					g.scopes[key]--
+					if g.scopes[key] == 0 {
+						delete(g.scopes, key)
+					}
+				}
+			}
 		})
 	}, true
 }

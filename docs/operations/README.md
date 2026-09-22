@@ -18,6 +18,7 @@ See [slo.md](./slo.md) for service-level objectives, error-budget policy and ale
 | [incident.md](./incident.md) | Active incident | — |
 | [backup-restore.md](./backup-restore.md) | PITR recovery drill | `scripts/ops/pitr-verify.mjs` |
 | [reconciliation.md](./reconciliation.md) | Billing variance | `scripts/ops/reconcile-check.mjs` |
+| [gateway-limits.md](./gateway-limits.md) | Gateway admission, streaming bounds and connection reuse | — |
 
 ## PITR recovery drill
 

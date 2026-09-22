@@ -28,6 +28,7 @@ type VaultCredentialResolver struct {
 	cfg      VaultConfig
 	vault    *http.Client
 	outbound *http.Transport
+	pool     *credentialTransportPool
 	mu       sync.Mutex
 	now      func() time.Time
 }
@@ -62,7 +63,7 @@ func NewVaultCredentialResolver(cfg VaultConfig) (*VaultCredentialResolver, erro
 		}
 	}
 	transport := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}, TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 5 * time.Second, Proxy: nil}
-	r := &VaultCredentialResolver{cfg: cfg, vault: &http.Client{Transport: transport, Timeout: 5 * time.Second, CheckRedirect: denySecretRedirect}, now: time.Now}
+	r := &VaultCredentialResolver{cfg: cfg, vault: &http.Client{Transport: transport, Timeout: 5 * time.Second, CheckRedirect: denySecretRedirect}, now: time.Now, pool: newCredentialTransportPool()}
 	r.outbound = &http.Transport{Proxy: nil, DialContext: publicDialContext, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}, TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 30 * time.Second, DisableKeepAlives: true, TLSNextProto: map[string]func(string, *tls.Conn) http.RoundTripper{}}
 	if _, err = r.token(); err != nil {
 		return nil, err
@@ -195,9 +196,15 @@ func (r *VaultCredentialResolver) Resolve(ctx context.Context, ref CredentialRef
 	if err != nil || entryBinding(current) != entryBinding(e) {
 		return provider.Credential{}, errSecretPolicy
 	}
-	return provider.Credential{Ref: e.CredentialID, Secret: string(plaintext), AuthorizationBinding: entryBinding(e), AuthorizationExpiresAt: r.now().Add(30 * time.Second)}, nil
+	return provider.Credential{Ref: e.CredentialID, Secret: string(plaintext), AuthorizationBinding: entryBinding(e), AuthorizationExpiresAt: credentialGrantExpiry(r.now())}, nil
 }
 func (r *VaultCredentialResolver) Invalidate(_ CredentialRef) {}
+
+func (r *VaultCredentialResolver) Close() error {
+	r.vault.CloseIdleConnections()
+	r.outbound.CloseIdleConnections()
+	return r.pool.Close()
+}
 
 // A client is scoped to one authenticated reference and the exact encrypted binding
 // already resolved; mutable CP routing cannot broaden the scope after decryption.
@@ -251,7 +258,8 @@ func (t *registryTransport) RoundTrip(req *http.Request) (*http.Response, error)
 		return nil
 	})
 	request := req.Clone(context.WithValue(writeContext, secretWriteDeadline{}, deadline))
-	response, err := t.resolver.outbound.RoundTrip(request)
+	key := credentialPoolKey{Reference: t.ref, Binding: t.binding, Deadline: deadline, GrantDeadline: t.expires, Target: origin, Policy: "vault-public-v1"}
+	response, err := t.resolver.pool.roundTrip(key, t.resolver.outbound, request)
 	if err != nil {
 		return nil, errSecretPolicy
 	}
