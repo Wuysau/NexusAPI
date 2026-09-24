@@ -4,13 +4,17 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 const fixture = resolve('.test-artifacts/vault-reference')
+let stage = 'Vault identity fixture'
 try {
-  for (const script of [
-    'scripts/verify-secret-plane.mjs',
-    'scripts/verify-secret-plane-enrollment.mjs',
-    'scripts/verify-legacy-secret-migration.mjs',
-  ])
+  for (const [name, script] of [
+    ['Vault identity fixture', 'scripts/verify-secret-plane.mjs'],
+    ['credential enrollment fixture', 'scripts/verify-secret-plane-enrollment.mjs'],
+    ['legacy migration fixture', 'scripts/verify-legacy-secret-migration.mjs'],
+  ]) {
+    stage = name
     execFileSync(process.execPath, [script], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+  }
+  stage = 'Gateway isolation tests'
   const output = execFileSync(
     'go',
     ['test', '-json', '-tags=vaultintegration', '-run', '^TestVaultRealIdentity$', '-count=1'],
@@ -39,6 +43,7 @@ try {
   ]
   if (requiredTests.some((name) => !passed.includes(name)) || events.some((e) => ['fail', 'skip'].includes(e.Action)))
     throw new Error('Missing required real Gateway verification')
+  stage = 'receipt assembly'
   const identity = JSON.parse(await readFile(resolve(fixture, 'approle-tls-receipt.json'), 'utf8'))
   const enrollment = JSON.parse(await readFile(resolve(fixture, 'enrollment-receipt.json'), 'utf8'))
   const migration = JSON.parse(await readFile(resolve(fixture, 'legacy-migration-receipt.json'), 'utf8'))
@@ -69,6 +74,8 @@ try {
   const total = identity.checksPassed + enrollment.checksPassed + migration.checksPassed + passed.length
   console.log(`${total}/${total} secret-plane checks passed`)
 } catch {
-  console.error('Required real Secret Plane runtime verification failed; sensitive process output suppressed')
+  console.error(
+    `Required real Secret Plane runtime verification failed in ${stage}; sensitive process output suppressed`,
+  )
   process.exitCode = 1
 }
