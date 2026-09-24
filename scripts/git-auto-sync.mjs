@@ -45,6 +45,41 @@ function isAncestor(cwd, ancestor, descendant) {
   return gitResult(cwd, 'merge-base', '--is-ancestor', ancestor, descendant).status === 0
 }
 
+function blobAt(cwd, revision, file) {
+  const result = gitResult(cwd, 'rev-parse', '--verify', `${revision}:${file}`)
+  return result.status === 0 ? result.stdout.trim() : null
+}
+
+function publishUnrelatedChanges(sourcePath, mainPath, sourceBranch, sourceHead) {
+  const baseline = gitResult(sourcePath, 'config', '--local', '--get', 'nexus.autoSyncBaseline').stdout.trim()
+  if (!baseline || !isAncestor(sourcePath, baseline, sourceHead)) {
+    throw new Error('Unrelated local history has no valid nexus.autoSyncBaseline; refusing to publish it')
+  }
+
+  const changed = git(sourcePath, 'diff', '--name-only', '-z', baseline, sourceHead).split('\0').filter(Boolean)
+  const publicPaths = changed.filter(
+    (file) => gitResult(sourcePath, 'check-ignore', '--no-index', '-q', '--', file).status !== 0,
+  )
+  for (const file of publicPaths) {
+    if (blobAt(sourcePath, baseline, file) !== blobAt(mainPath, 'main', file)) {
+      throw new Error(`Public file changed independently on main: ${file}`)
+    }
+  }
+
+  try {
+    for (const file of publicPaths)
+      git(mainPath, 'restore', `--source=${sourceHead}`, '--staged', '--worktree', '--', file)
+    if (gitResult(mainPath, 'diff', '--cached', '--quiet').status !== 0) {
+      git(mainPath, 'commit', '-m', `Sync public changes from ${sourceBranch}`)
+    }
+  } catch (error) {
+    for (const file of publicPaths)
+      gitResult(mainPath, 'restore', '--source=HEAD', '--staged', '--worktree', '--', file)
+    throw error
+  }
+  git(sourcePath, 'config', '--local', 'nexus.autoSyncBaseline', sourceHead)
+}
+
 function run() {
   if (process.env.NEXUS_AUTO_SYNC_RUNNING === '1') return
 
@@ -85,10 +120,14 @@ function run() {
     }
 
     if (sourceBranch !== targetBranch && !isAncestor(sourcePath, sourceHead, targetBranch)) {
-      const merge = gitResult(mainPath, 'merge', '--no-ff', '--no-edit', sourceHead)
-      if (merge.status !== 0) {
-        gitResult(mainPath, 'merge', '--abort')
-        throw new Error(`Could not merge ${sourceBranch} into main: ${(merge.stderr || merge.stdout).trim()}`)
+      if (gitResult(sourcePath, 'merge-base', sourceHead, targetBranch).status !== 0) {
+        publishUnrelatedChanges(sourcePath, mainPath, sourceBranch, sourceHead)
+      } else {
+        const merge = gitResult(mainPath, 'merge', '--no-ff', '--no-edit', sourceHead)
+        if (merge.status !== 0) {
+          gitResult(mainPath, 'merge', '--abort')
+          throw new Error(`Could not merge ${sourceBranch} into main: ${(merge.stderr || merge.stdout).trim()}`)
+        }
       }
     }
 

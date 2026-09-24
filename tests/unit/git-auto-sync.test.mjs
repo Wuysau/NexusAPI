@@ -128,3 +128,62 @@ test('post-commit hook merges and pushes without recursing on the merge commit',
     cleanup(root)
   }
 })
+
+test('publishes public changes from a configured unrelated local history', () => {
+  const { root, repo, remote, mainWorktree } = fixture()
+  try {
+    git(repo, 'switch', '--orphan', 'legacy')
+    writeFileSync(path.join(repo, 'README.md'), 'initial\n')
+    writeFileSync(path.join(repo, '.gitignore'), 'private/\n')
+    mkdirSync(path.join(repo, 'private'))
+    writeFileSync(path.join(repo, 'private', 'secret.txt'), 'not public\n')
+    git(repo, 'add', 'README.md', '.gitignore')
+    git(repo, 'add', '-f', 'private/secret.txt')
+    git(repo, 'commit', '-m', 'legacy baseline')
+    const baseline = git(repo, 'rev-parse', 'HEAD')
+    git(repo, 'config', '--local', 'nexus.autoSyncBaseline', baseline)
+
+    writeFileSync(path.join(repo, 'feature.txt'), 'public change\n')
+    writeFileSync(path.join(repo, 'private', 'secret.txt'), 'still private\n')
+    git(repo, 'add', 'feature.txt')
+    git(repo, 'add', '-f', 'private/secret.txt')
+    git(repo, 'commit', '-m', 'legacy feature')
+
+    const result = spawnSync(process.execPath, [syncScript], { cwd: repo, encoding: 'utf8' })
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(git(mainWorktree, 'show', 'main:feature.txt'), 'public change')
+    assert.equal(git(remote, 'rev-parse', 'refs/heads/main'), git(mainWorktree, 'rev-parse', 'main'))
+    assert.notEqual(spawnSync('git', ['cat-file', '-e', 'main:private/secret.txt'], { cwd: repo }).status, 0)
+    assert.equal(git(repo, 'config', '--local', '--get', 'nexus.autoSyncBaseline'), git(repo, 'rev-parse', 'HEAD'))
+  } finally {
+    cleanup(root)
+  }
+})
+
+test('rejects an unrelated-history change to a public file changed on main', () => {
+  const { root, repo, remote, mainWorktree } = fixture()
+  try {
+    git(repo, 'switch', '--orphan', 'legacy')
+    writeFileSync(path.join(repo, 'README.md'), 'initial\n')
+    git(repo, 'add', 'README.md')
+    git(repo, 'commit', '-m', 'legacy baseline')
+    git(repo, 'config', '--local', 'nexus.autoSyncBaseline', git(repo, 'rev-parse', 'HEAD'))
+    writeFileSync(path.join(repo, 'README.md'), 'legacy change\n')
+    git(repo, 'add', 'README.md')
+    git(repo, 'commit', '-m', 'legacy change')
+
+    writeFileSync(path.join(mainWorktree, 'README.md'), 'remote change\n')
+    git(mainWorktree, 'add', 'README.md')
+    git(mainWorktree, 'commit', '-m', 'remote change')
+    git(mainWorktree, 'push', 'origin', 'main')
+    const remoteHead = git(remote, 'rev-parse', 'refs/heads/main')
+
+    const result = spawnSync(process.execPath, [syncScript], { cwd: repo, encoding: 'utf8' })
+    assert.notEqual(result.status, 0)
+    assert.match(result.stderr, /changed independently/i)
+    assert.equal(git(remote, 'rev-parse', 'refs/heads/main'), remoteHead)
+    assert.equal(git(mainWorktree, 'show', 'main:README.md'), 'remote change')
+  } finally {
+    cleanup(root)
+  }
+})
