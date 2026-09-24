@@ -325,9 +325,9 @@ func TestDuplicateRequestIsRejected(t *testing.T) {
 	}
 }
 
-// Every upstream attempt gets its own record; the usage event bills the final
-// one.
-func TestFailoverRecordsEachAttempt(t *testing.T) {
+// A confirmed quota failure is recorded separately from the next request,
+// which uses the compatible channel and receives its own usage event.
+func TestNextRequestFailoverRecordsSeparateAttempts(t *testing.T) {
 	var calls int
 	h := newHarness(t, harnessOptions{
 		MaxAttempts: 2,
@@ -335,7 +335,7 @@ func TestFailoverRecordsEachAttempt(t *testing.T) {
 			calls++
 			if calls == 1 {
 				w.WriteHeader(http.StatusTooManyRequests)
-				_, _ = io.WriteString(w, `{"error":{"message":"slow down"}}`)
+				_, _ = io.WriteString(w, `{"error":{"code":"insufficient_quota"}}`)
 				return
 			}
 			w.Header().Set("content-type", "text/event-stream")
@@ -348,11 +348,16 @@ func TestFailoverRecordsEachAttempt(t *testing.T) {
 				ID: "chan_test_2", ProviderID: "prov_openai", Provider: "openai",
 				BaseURL: upstreamURL, AuthScheme: "bearer", Models: []string{testModel},
 				Region: "global", CredentialMode: "managed", CredentialRef: "cred_test",
-				Weight: 5, Capabilities: []string{"text", "streaming"}, Enabled: true,
+				Weight: 5, Priority: 1, Capabilities: []string{"text", "streaming"}, Enabled: true,
 			}}
 		},
 	})
 
+	first := h.doChat(chatBody(chatBodyOptions{Stream: true}), nil)
+	_ = readAll(first)
+	if calls != 1 {
+		t.Fatalf("quota failure replayed current request: %d calls", calls)
+	}
 	resp := h.doChat(chatBody(chatBodyOptions{Stream: true}), nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d body=%s", resp.StatusCode, readAll(resp))
@@ -360,19 +365,27 @@ func TestFailoverRecordsEachAttempt(t *testing.T) {
 	_ = readAll(resp)
 
 	records := h.store.Requests()
-	if len(records) != 1 {
+	if len(records) != 2 {
 		t.Fatalf("records = %d", len(records))
 	}
-	if len(records[0].Attempts) != 2 {
-		t.Fatalf("expected two attempt records, got %d", len(records[0].Attempts))
+	var failed, completed *TerminalRecord
+	for _, record := range records {
+		if record.Status == string(OutcomeCompleted) {
+			completed = record
+		} else {
+			failed = record
+		}
 	}
-	if records[0].Attempts[0].ErrorCode != string(provider.ErrRateLimit) {
-		t.Fatalf("first attempt error = %q", records[0].Attempts[0].ErrorCode)
+	if failed == nil || completed == nil || len(failed.Attempts) != 1 || len(completed.Attempts) != 1 {
+		t.Fatalf("expected separate failed and completed attempts: %+v", records)
 	}
-	if records[0].Attempts[1].Status != "completed" {
-		t.Fatalf("second attempt status = %q", records[0].Attempts[1].Status)
+	if failed.Attempts[0].ErrorCode != string(provider.ErrQuota) {
+		t.Fatalf("first attempt error = %q", failed.Attempts[0].ErrorCode)
 	}
-	if records[0].Event.AttemptID != records[0].Attempts[1].AttemptID {
+	if completed.Attempts[0].Status != "completed" {
+		t.Fatalf("second attempt status = %q", completed.Attempts[0].Status)
+	}
+	if completed.Event.AttemptID != completed.Attempts[0].AttemptID {
 		t.Fatal("usage event must reference the final attempt")
 	}
 }

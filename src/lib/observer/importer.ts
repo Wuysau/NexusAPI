@@ -245,9 +245,9 @@ async function scanLocked(client: PoolClient, raw: ObserverConfig, options: { dr
       const result = await readJsonl(file, start, st.size, async (rawEvent) => {
         const e = parser.parse(rawEvent)
         if (!e) return
-        const root = matchWorkspace(e.cwd, roots)
+        let root = matchWorkspace(e.cwd, roots)
         const configured = config.providers.find((p) => p.identifier === e.providerIdentifier)
-        const conn = configured
+        let conn = configured
           ? connections.find(
               (c) =>
                 c.id === configured.connectionId &&
@@ -256,6 +256,42 @@ async function scanLocked(client: PoolClient, raw: ObserverConfig, options: { dr
                 c.product === configured.product,
             )
           : undefined
+        // Supervisor session binding is authoritative across profile/provider changes.
+        // Bare sessions retain existing workspace/provider attribution.
+        const supervised = (
+          await client.query<{
+            project_id: string
+            project_name: string
+            cwd: string
+            connection_id: string
+            provider: string
+            product: string
+            identifier: string
+          }>(
+            `SELECT t.project_id,p.name project_name,t.cwd,c.id connection_id,c.provider,
+            c.capabilities->>'subscription_product' product,c.capabilities->>'provider_identifier' identifier
+          FROM task_sessions s JOIN nexus_tasks t ON t.id=s.task_id AND t.tenant_id=s.tenant_id AND t.organization_id=s.organization_id
+          JOIN projects p ON p.id=t.project_id AND p.tenant_id=t.tenant_id AND p.organization_id=t.organization_id
+          LEFT JOIN LATERAL (
+            SELECT target_connection_id FROM task_resource_transitions r
+            WHERE r.tenant_id=s.tenant_id AND r.organization_id=s.organization_id AND r.task_id=s.task_id
+              AND r.target_conversation_id=s.external_session_id AND r.created_at <= $4::timestamptz
+            ORDER BY r.created_at DESC,r.id DESC LIMIT 1
+          ) transition ON true
+          JOIN owned_connections c ON c.id=COALESCE(transition.target_connection_id,s.connection_id) AND c.tenant_id=s.tenant_id
+          WHERE s.tenant_id=$1 AND s.organization_id=$2 AND s.tool='codex' AND s.external_session_id=$3`,
+            [config.tenantId, config.organizationId, e.sessionId, e.timestamp],
+          )
+        ).rows[0]
+        if (supervised) {
+          root = { projectId: supervised.project_id, projectName: supervised.project_name, root: supervised.cwd }
+          conn = {
+            id: supervised.connection_id,
+            provider: supervised.provider,
+            product: supervised.product,
+            identifier: supervised.identifier,
+          }
+        }
         if (configured && !conn) throw new Error('Observer connection unavailable; configure before scanning')
         const exists = (
           await client.query(

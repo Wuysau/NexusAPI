@@ -1,0 +1,9 @@
+{
+  "tenantId": "your-tenant-id",
+  "organizationId": "your-organization-id",
+  "profiles": [
+    { "profileRef": "account-a", "connectionId": "connection-a", "home": "C:/NexusProfiles/codex/account-a" },
+    { "profileRef": "account-b", "connectionId": "connection-b", "home": "C:/NexusProfiles/codex/account-b" }
+  ],
+  "workspaces": [{ "projectId": "your-project-id", "cwd": "D:/Projects/MyProject" }]
+}

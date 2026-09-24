@@ -15,11 +15,9 @@ package main
 //     that point is still recorded, using a context detached from the client
 //     (context.WithoutCancel) so the terminal write survives the disconnect.
 //
-//  2. No unsafe switch. Once an upstream has produced a response we are
-//     committed: a different channel is only tried when the failure happened
-//     before any response, and only for retryable classifications. After the
-//     first response byte there is no switching, because we cannot prove the
-//     provider did not already do the work.
+//  2. No unsafe switch. An assigned upstream connection makes execution
+//     ambiguous, including error responses. Only a failure before connection
+//     assignment may try another channel within the same request.
 
 import (
 	"context"
@@ -830,9 +828,9 @@ func (p *Proxy) attempt(
 		}
 		releaseLoad := p.router.BeginRequest(candidate.Channel.ID, model.ID)
 		releaseAttempt = sync.OnceFunc(func() { releaseLoad(); p.breaker.ReleaseProbe(breakerKey); channelLease.Release() })
-		// Once a socket is assigned, a transport error cannot prove that the
-		// provider did not execute the request. Retry only pre-dispatch failures
-		// or explicit overload rejection responses.
+		// Once a socket is assigned, neither a transport error nor an HTTP
+		// rejection proves that the provider did not execute the request.
+		// Retry only failures before connection assignment.
 		var connectionAssigned atomic.Bool
 		attemptCtx := httptrace.WithClientTrace(channelLease.Context(), &httptrace.ClientTrace{GotConn: func(httptrace.GotConnInfo) { connectionAssigned.Store(true) }})
 		dispatchStart := p.now()
@@ -841,14 +839,20 @@ func (p *Proxy) attempt(
 			releaseAttempt()
 			classification := candidate.Adapter.ClassifyError(statusOf(err), bodyOf(err), err)
 			if ctx.Err() == nil && !errors.Is(err, context.Canceled) {
-				p.breaker.RecordFailure(breakerKey)
+				if classification.Kind == provider.ErrQuota && statusOf(err) != 0 {
+					// A provider-confirmed exhaustion makes this channel/model
+					// ineligible for the next request. Never replay this turn.
+					p.breaker.Open(breakerKey)
+				} else {
+					p.breaker.RecordFailure(breakerKey)
+				}
 			}
 			result.channel = candidate.Channel
 			result.errorCode = publicCodeFor(classification.Kind)
 			result.err = err
 
 			status := statusOf(err)
-			safeRetry := ctx.Err() == nil && (!connectionAssigned.Load() || status == http.StatusTooManyRequests || status == http.StatusServiceUnavailable)
+			safeRetry := ctx.Err() == nil && !connectionAssigned.Load()
 			if connectionAssigned.Load() && status == 0 {
 				result.outcome = OutcomeUnknown
 				result.applyUsage(nil, req)

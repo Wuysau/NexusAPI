@@ -178,7 +178,7 @@ func TestTransportFailureAfterDispatchDoesNotRetry(t *testing.T) {
 	}
 }
 
-func TestSuccessfulFailoverClearsPriorStreamError(t *testing.T) {
+func TestLaterSuccessfulRequestClearsPriorStreamError(t *testing.T) {
 	for _, status := range []int{http.StatusTooManyRequests, http.StatusServiceUnavailable} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			var calls atomic.Int32
@@ -188,16 +188,27 @@ func TestSuccessfulFailoverClearsPriorStreamError(t *testing.T) {
 					return
 				}
 				defaultUpstreamHandler()(w, r)
-			}, ExtraChannelsFn: func(url string) []SnapshotChannel {
-				return []SnapshotChannel{{ID: "chan_second", ProviderID: "prov_openai", Provider: "openai", BaseURL: url, AuthScheme: "bearer", Models: []string{testModel}, Region: "global", CredentialMode: "managed", CredentialRef: "cred_test", Weight: 5, Capabilities: []string{"text", "streaming"}, Enabled: true}}
 			}})
+			first := readAll(h.doChat(chatBody(chatBodyOptions{Stream: true}), nil))
+			if strings.Contains(first, "[DONE]") || calls.Load() != 1 {
+				t.Fatalf("upstream rejection was replayed or reported complete: %s", first)
+			}
 			body := readAll(h.doChat(chatBody(chatBodyOptions{Stream: true}), nil))
 			if !strings.Contains(body, "[DONE]") || strings.Contains(body, `"error":`) {
-				t.Fatalf("successful fallback retained failure: %s", body)
+				t.Fatalf("later success retained failure: %s", body)
 			}
 			records := h.store.Requests()
-			if len(records) != 1 || records[0].Status != string(OutcomeCompleted) || records[0].ErrorCode != "" {
-				t.Fatalf("successful fallback retained terminal error: %+v", records)
+			if len(records) != 2 {
+				t.Fatalf("expected two terminal records, got %d", len(records))
+			}
+			completed := 0
+			for _, record := range records {
+				if record.Status == string(OutcomeCompleted) && record.ErrorCode == "" {
+					completed++
+				}
+			}
+			if completed != 1 {
+				t.Fatalf("later success retained terminal error: %+v", records)
 			}
 		})
 	}

@@ -1,0 +1,1 @@
+ALTER TABLE "owned_connections" ADD COLUMN "runtime_observation" jsonb;

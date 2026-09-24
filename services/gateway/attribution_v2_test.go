@@ -217,28 +217,42 @@ func TestV2StreamingKeyMoveAffectsOnlyNextRequest(t *testing.T) {
 	}
 }
 
-func TestV2RetryUsesActualFinalConnection(t *testing.T) {
+func TestV2NextRequestFailoverUsesActualConnection(t *testing.T) {
 	var calls atomic.Int64
 	h := newHarness(t, harnessOptions{EnableUsageV2: true, CredentialMode: "byok", UpstreamHandler: func(w http.ResponseWriter, r *http.Request) {
 		if calls.Add(1) == 1 {
-			w.WriteHeader(503)
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":{"code":"insufficient_quota"}}`)
 			return
 		}
 		defaultUpstreamHandler()(w, r)
 	}, ExtraChannelsFn: func(url string) []SnapshotChannel {
 		return []SnapshotChannel{{ID: "retry-channel", ProviderID: "prov_openai", Provider: "openai", BaseURL: url, AuthScheme: "bearer", Models: []string{testModel}, Region: "global", DataResidency: "global", CredentialMode: "byok", CredentialRef: "retry-credential", ConnectionID: "retry-connection", Weight: 1, Priority: 1, Capabilities: []string{"text", "streaming"}, Enabled: true}}
 	}})
+	first := h.doChat(chatBody(chatBodyOptions{}), nil)
+	_ = readAll(first)
+	if calls.Load() != 1 {
+		t.Fatalf("quota failure replayed current request: %d calls", calls.Load())
+	}
 	resp := h.doChat(chatBody(chatBodyOptions{}), nil)
 	body := readAll(resp)
 	if resp.StatusCode != 200 {
 		t.Fatalf("status=%d %s", resp.StatusCode, body)
 	}
-	r := h.store.Requests()[0]
-	if len(r.Attempts) != 2 || r.EventV2 == nil || *r.EventV2.Attribution.ConnectionId != "retry-connection" || *r.EventV2.Attribution.ChannelId != "retry-channel" || *r.EventV2.Attribution.CredentialId != "retry-credential" {
+	var r *TerminalRecord
+	for _, record := range h.store.Requests() {
+		if record.Status == string(OutcomeCompleted) {
+			r = record
+		}
+	}
+	if r == nil {
+		t.Fatal("missing completed fallback request")
+	}
+	if len(r.Attempts) != 1 || r.EventV2 == nil || *r.EventV2.Attribution.ConnectionId != "retry-connection" || *r.EventV2.Attribution.ChannelId != "retry-channel" || *r.EventV2.Attribution.CredentialId != "retry-credential" {
 		t.Fatalf("retry routing mismatch: %+v", r)
 	}
-	if len(h.store.CapturedRequests()) != 1 {
-		t.Fatal("retry recaptured identity")
+	if len(h.store.CapturedRequests()) != 2 {
+		t.Fatal("separate requests did not capture separate identities")
 	}
 }
 

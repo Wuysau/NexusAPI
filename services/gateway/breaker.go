@@ -197,6 +197,21 @@ func (b *Breaker) RecordFailure(key string) {
 	}
 }
 
+// Open marks a confirmed resource exhaustion unavailable immediately. The
+// usual failure threshold remains reserved for transient health failures.
+func (b *Breaker) Open(key string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	e := b.entryLocked(key)
+	e.state = BreakerOpen
+	e.consecutiveFailures = b.cfg.FailureThreshold
+	e.openedAt = b.now()
+	b.probes[key] = 0
+	e.failureEwma = ewma(e.failureEwma, 1, b.cfg.LatencyAlpha, e.healthSamples)
+	e.healthSamples++
+	e.lastFailure = e.openedAt
+}
+
 // State reports the current state (observability + tests).
 func (b *Breaker) State(key string) BreakerState {
 	b.mu.Lock()

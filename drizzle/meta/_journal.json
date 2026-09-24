@@ -141,6 +141,27 @@
       "when": 1789971797254,
       "tag": "0019_unpriced_byok_attempts",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790073047583,
+      "tag": "0020_task_resource_handoff",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1790073677407,
+      "tag": "0021_connection_runtime_observation",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1790214191960,
+      "tag": "0022_task_resource_transitions",
+      "breakpoints": true
     }
   ]
 }

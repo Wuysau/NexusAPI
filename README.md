@@ -1,16 +1,20 @@
 # NexusAPI
 
-开源 LLM 网关与用量管理控制台。统一管理模型渠道、API Key、项目、请求用量和订阅观测，提供兼容 OpenAI 的调用入口。
+NexusAPI 是以项目为核心的 AI Resource Control Plane。统一查看 API 渠道、官方订阅、本地工具、任务、会话、配额与用量；Go 网关继续提供兼容 OpenAI 的 API 数据面。本地订阅执行与网关 API 调用遵守不同的凭据和计费边界。
 
 项目使用 [MIT License](LICENSE)，可修改、分发和商业使用，需保留许可证及版权声明。当前仍在持续开发，支付使用沙箱流程；源码公开不代表已经完成生产环境验收。
 
 ## 功能
 
+- **资源与路由视图**：`/resources` 从现有连接、渠道和官方配额事实生成资源目录，分别显示资源类型、执行方式、账户引用、配额与健康状态；`/routing` 按项目展示本地任务候选预览与 API 渠道。未知值保持未知，渠道配置不冒充已发布网关快照。这些页面不复制订阅凭据，也不创建另一套渠道或额度数据。
 - **统一网关**：Go 数据面提供 /v1/models、/v1/chat/completions 和 SSE 流式响应，支持 OpenAI 与 Anthropic 协议适配；可显式开启 /v1/responses 的文本和函数调用子集。
 - **渠道与密钥**：配置上游地址、模型和 API Key，使用 Nexus API Key 调用已配置渠道。桌面本地模式支持界面录入上游密钥并加密保存。
 - **项目与用量**：按组织、项目、连接查看实际请求、Token、价格来源和对账状态；未知价格保持未知，不自动记为免费。
 - **订阅观测**：独立 Observer 读取 Codex 本地会话中允许的用量字段，并展示账户与官方配额观测。订阅会话不经 Nexus 转发，不产生 Nexus 扣费。
+- **任务监督**：通过独立 Codex Profile 执行持久任务，在安全边界按兼容性和额度交接，提供资源池、策略与执行历史。配置与入口见 [任务级资源切换](docs/operations/task-resource-handoff.md)。
 - **管理控制台**：成员权限、审计、账单、模型目录和价格审批。
+
+本仓库可启用提交后自动合并与推送：运行 `npm run hooks:install`，每次 `git commit` 后将提交合并进 `main` 并推送到 `origin/main`。前提与失败恢复见 [Git 自动同步](docs/operations/git-auto-sync.md)。
 
 ## 环境
 

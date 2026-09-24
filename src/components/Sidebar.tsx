@@ -35,12 +35,15 @@ interface NavEntry {
 
 const NAV: NavEntry[] = [
   { href: '/', label: '数据概览', icon: LayoutDashboard, capability: 'usage:read' },
-  { href: '/channels', label: '渠道管理', icon: Network, group: '网关管理', capability: 'credential:read' },
-  { href: '/connections', label: '我的连接', icon: Network, group: '网关管理', capability: 'credential:read' },
+  { href: '/resources', label: '资源', icon: Layers3, group: '资源管理', capability: 'credential:read' },
+  { href: '/routing', label: '路由', icon: Network, group: '资源管理', capability: 'project:read' },
+  { href: '/channels', label: '渠道管理', icon: Network, group: '资源管理', capability: 'credential:read' },
+  { href: '/connections', label: '我的连接', icon: Network, group: '资源管理', capability: 'credential:read' },
   { href: '/models', label: '模型广场', icon: Layers3, capability: 'pricing:read' },
   { href: '/pricing', label: '价格审批', icon: ClipboardCheck, capability: 'pricing:read' },
   { href: '/keys', label: 'API 密钥', icon: KeyRound, group: '工作空间', capability: 'apikey:read' },
   { href: '/projects', label: '项目', icon: Layers3, group: '工作空间', capability: 'project:read' },
+  { href: '/tasks', label: '任务', icon: ClipboardCheck, capability: 'project:read' },
   { href: '/logs', label: '请求日志', icon: FileText, capability: 'request:read' },
   { href: '/billing', label: '用量与计费', icon: CreditCard, capability: 'billing:read' },
   { href: '/reconciliation', label: '对账工单', icon: Scale, capability: 'billing:read' },

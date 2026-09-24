@@ -27,6 +27,114 @@ import {
 } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
 
+// Task supervision is independent of gateway dispatch and settlement.
+export const resourceRoutingPolicies = pgTable(
+  'resource_routing_policies',
+  {
+    tenantId: text('tenant_id').notNull(),
+    organizationId: text('organization_id').notNull(),
+    projectId: text('project_id').notNull(),
+    policy: jsonb('policy').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.tenantId, t.organizationId, t.projectId] })],
+)
+
+export const nexusTasks = pgTable(
+  'nexus_tasks',
+  {
+    id: text('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    tenantId: text('tenant_id').notNull(),
+    organizationId: text('organization_id').notNull(),
+    projectId: text('project_id').notNull(),
+    originalGoal: text('original_goal').notNull(),
+    cwd: text('cwd').notNull(),
+    status: text('status').notNull().default('paused'),
+    activeResource: text('active_resource'),
+    activeTool: text('active_tool').notNull().default('codex'),
+    activeSession: text('active_session'),
+    context: jsonb('context').notNull().default({}),
+    requestedAction: text('requested_action'),
+    requestedConnectionId: text('requested_connection_id'),
+    commandSeq: integer('command_seq').notNull().default(0),
+    pauseReason: text('pause_reason'),
+    nextResetAt: timestamp('next_reset_at', { withTimezone: true }),
+    heartbeatAt: timestamp('heartbeat_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('nexus_tasks_scope_idx').on(t.tenantId, t.organizationId, t.projectId)],
+)
+
+export const taskSessions = pgTable(
+  'task_sessions',
+  {
+    id: text('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    tenantId: text('tenant_id').notNull(),
+    organizationId: text('organization_id').notNull(),
+    taskId: text('task_id')
+      .notNull()
+      .references(() => nexusTasks.id),
+    connectionId: text('connection_id').notNull(),
+    profileRef: text('profile_ref').notNull(),
+    tool: text('tool').notNull().default('codex'),
+    externalSessionId: text('external_session_id'),
+    status: text('status').notNull(),
+    reason: text('reason'),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    endedAt: timestamp('ended_at', { withTimezone: true }),
+  },
+  (t) => [uniqueIndex('task_sessions_external_idx').on(t.tenantId, t.organizationId, t.tool, t.externalSessionId)],
+)
+
+export const taskHandoffSnapshots = pgTable(
+  'task_handoff_snapshots',
+  {
+    id: text('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    tenantId: text('tenant_id').notNull(),
+    organizationId: text('organization_id').notNull(),
+    taskId: text('task_id')
+      .notNull()
+      .references(() => nexusTasks.id),
+    sourceConnectionId: text('source_connection_id'),
+    sourceSessionId: text('source_session_id'),
+    targetConnectionId: text('target_connection_id'),
+    reason: text('reason').notNull(),
+    workspaceState: jsonb('workspace_state').notNull(),
+    handoffSummary: jsonb('handoff_summary').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('task_snapshots_scope_idx').on(t.tenantId, t.organizationId, t.taskId)],
+)
+
+export const taskResourceTransitions = pgTable(
+  'task_resource_transitions',
+  {
+    id: text('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    tenantId: text('tenant_id').notNull(),
+    organizationId: text('organization_id').notNull(),
+    taskId: text('task_id')
+      .notNull()
+      .references(() => nexusTasks.id),
+    sourceConnectionId: text('source_connection_id'),
+    targetConnectionId: text('target_connection_id').notNull(),
+    sourceConversationId: text('source_conversation_id'),
+    targetConversationId: text('target_conversation_id').notNull(),
+    switchType: text('switch_type').notNull(),
+    reason: text('reason').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('task_resource_transitions_scope_idx').on(t.tenantId, t.organizationId, t.taskId)],
+)
+
 // External observations never reference financial usage/outbox tables.
 export const projectWorkspaceRoots = pgTable(
   'project_workspace_roots',
@@ -280,6 +388,7 @@ export const ownedConnections = pgTable(
     credentialFingerprint: text('credential_fingerprint'),
     capabilities: jsonb('capabilities').$type<Record<string, unknown>>().notNull().default({}),
     accountObservation: jsonb('account_observation').$type<Record<string, unknown>>(),
+    runtimeObservation: jsonb('runtime_observation').$type<Record<string, unknown>>(),
     lastHeartbeatAt: timestamp('last_heartbeat_at', { withTimezone: true }),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),

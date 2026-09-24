@@ -47,6 +47,7 @@ const TITLES: Record<string, string> = {
   '/settings': '系统设置',
   '/docs': '开发文档',
   '/projects': '项目',
+  '/tasks': '任务',
   '/connections': '我的连接',
 }
 
@@ -65,6 +66,7 @@ const SEARCH_ENTRIES: SearchEntry[] = [
   { label: '价格审批', href: '/pricing', icon: Settings2, keywords: ['price', 'pricing', '价格'] },
   { label: 'API 密钥', href: '/keys', icon: KeyRound, keywords: ['key', 'api', '密钥'] },
   { label: '项目', href: '/projects', icon: Layers3, keywords: ['project', '项目'] },
+  { label: '任务', href: '/tasks', icon: Terminal, keywords: ['task', 'codex', '任务', '交接'] },
   { label: '请求日志', href: '/logs', icon: FileText, keywords: ['log', 'request', '日志'] },
   { label: '用量与计费', href: '/billing', icon: CreditCard, keywords: ['billing', 'usage', '计费'] },
   { label: '对账工单', href: '/reconciliation', icon: Scale, keywords: ['reconciliation', '对账'] },

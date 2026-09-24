@@ -12,9 +12,10 @@
     "lint": "eslint .",
     "typecheck": "next typegen && tsc --noEmit",
     "check": "npm run typecheck && eslint .",
-    "test": "vitest run --no-file-parallelism",
+    "test": "vitest run --no-file-parallelism && npm run test:hooks",
     "test:watch": "vitest",
     "test:unit": "vitest run src",
+    "test:hooks": "node --test tests/unit/git-auto-sync.test.mjs",
     "test:contract": "vitest run tests/contract",
     "test:integration": "vitest run tests/integration --no-file-parallelism",
     "test:security": "vitest run tests/security --no-file-parallelism",
@@ -24,6 +25,9 @@
     "observer:dev": "node --env-file-if-exists=.env.local --import tsx services/observer/index.ts",
     "observer:build": "node scripts/build-services.mjs observer",
     "observer:codex": "node --env-file-if-exists=.env.local --env-file-if-exists=.env.observer.local --import tsx scripts/observer-codex.ts",
+    "nexus": "node --env-file-if-exists=.env.local --env-file-if-exists=.env.observer.local --import tsx scripts/nexus.ts",
+    "hooks:install": "node scripts/install-git-hooks.mjs",
+    "git:sync": "node scripts/git-auto-sync.mjs",
     "gateway:build": "cd services/gateway && go build ./...",
     "gateway:local": "node scripts/start-local-gateway.mjs",
     "gateway:test": "cd services/gateway && go test ./...",
@@ -86,5 +90,5 @@
     "node": ">=24 <25"
   },
   "license": "MIT",
-  "description": "OpenAI-compatible LLM gateway and usage management console"
+  "description": "Project-centric AI resource control plane with an OpenAI-compatible API gateway"
 }
