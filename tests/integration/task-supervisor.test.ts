@@ -811,9 +811,8 @@ describe('durable task supervisor', () => {
     }
   })
 
-  it.runIf(process.platform === 'win32')(
-    'blocks a live prior PID under a case and slash alias of the Windows workspace',
-    async () => {
+  if (process.platform === 'win32') {
+    it('blocks a live prior PID under a case and slash alias of the Windows workspace', async () => {
       const cwd = config.workspaces[0].cwd
       const previous = await createTask(pool, scope, {
         cwd: cwd.toUpperCase().replace(/\\/g, '/'),
@@ -828,6 +827,6 @@ describe('durable task supervisor', () => {
       await supervisor().tick()
       expect(await task(created.id)).toMatchObject({ status: 'paused', pause_reason: 'previous_runtime_still_alive' })
       expect(launched()).toHaveLength(0)
-    },
-  )
+    })
+  }
 })
