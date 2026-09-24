@@ -182,7 +182,8 @@ func TestProjectV2PostgresCaptureTerminal(t *testing.T) {
 	var retryCalls atomic.Int64
 	retry := newHarness(t, harnessOptions{EnableUsageV2: true, CredentialMode: "byok", UpstreamHandler: func(w http.ResponseWriter, r *http.Request) {
 		if retryCalls.Add(1) == 1 {
-			w.WriteHeader(503)
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":{"code":"insufficient_quota"}}`)
 			return
 		}
 		w.Header().Set("content-type", "text/event-stream")
@@ -194,10 +195,17 @@ func TestProjectV2PostgresCaptureTerminal(t *testing.T) {
 	retry.proxy.store = retryCapture
 	response = retry.doChat(chatBody(chatBodyOptions{}), nil)
 	_ = readAll(response)
-	if retryCapture.record == nil {
-		t.Fatalf("retry not persisted: %v", retryCapture.lastError)
+	if response.StatusCode == http.StatusOK || retryCalls.Load() != 1 || retryCapture.record == nil {
+		t.Fatalf("quota failure replayed current request or lost terminal: status=%d calls=%d persist=%v", response.StatusCode, retryCalls.Load(), retryCapture.lastError)
 	}
-	rows, err := db.Query(ctx, "SELECT connection_id,resolved_model,execution_mode,price_version_id,catalog_version_id FROM attempts WHERE request_id=$1 ORDER BY attempt_number", retryCapture.record.RequestID)
+	failedRequestID := retryCapture.record.RequestID
+	retryCapture.record = nil
+	response = retry.doChat(chatBody(chatBodyOptions{}), nil)
+	_ = readAll(response)
+	if response.StatusCode != http.StatusOK || retryCapture.record == nil {
+		t.Fatalf("next-request failover not persisted: status=%d persist=%v", response.StatusCode, retryCapture.lastError)
+	}
+	rows, err := db.Query(ctx, "SELECT connection_id,resolved_model,execution_mode,price_version_id,catalog_version_id FROM attempts WHERE request_id IN ($1,$2) ORDER BY CASE WHEN request_id=$1 THEN 0 ELSE 1 END,attempt_number", failedRequestID, retryCapture.record.RequestID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +243,7 @@ func TestProjectV2PostgresCaptureTerminal(t *testing.T) {
 	if err = db.QueryRow(ctx, "SELECT count(*) FROM outbox_events").Scan(&outbox); err != nil {
 		t.Fatal(err)
 	}
-	if created != 1 || attempts != 6 || outbox != 4 {
+	if created != 1 || attempts != 6 || outbox != 5 {
 		t.Fatalf("partial terminal commit created=%d attempts=%d outbox=%d", created, attempts, outbox)
 	}
 	var pending int
