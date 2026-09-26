@@ -24,7 +24,16 @@ export default function DocsPage() {
 
   return (
     <>
-      <PageHeader title="开发文档" description="配置凭据、路由与价格后，通过独立网关调用模型。" />
+      <PageHeader title="开发文档" description="配置凭据、路由与价格后，通过独立网关调用模型。">
+        <a
+          className="button primary"
+          href="https://wuysau.github.io/NexusAPI/"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          完整使用手册 <ArrowUpRight size={14} />
+        </a>
+      </PageHeader>
       <div className="docs-grid">
         <section className="panel docs-content">
           <span className="doc-eyebrow">QUICK START</span>
@@ -149,8 +158,11 @@ export default function DocsPage() {
         </aside>
       </div>
       <p className="section-note">
-        更多细节见仓库中的接口契约文档（docs/contracts）
-        <ArrowUpRight size={12} />
+        从首次启动到任务监督，请阅读{' '}
+        <a href="https://wuysau.github.io/NexusAPI/" target="_blank" rel="noopener noreferrer">
+          在线使用手册 <ArrowUpRight size={12} />
+        </a>
+        。接口契约见仓库中的 docs/contracts。
       </p>
     </>
   )
