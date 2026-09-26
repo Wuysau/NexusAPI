@@ -1,6 +1,6 @@
 # NexusAPI
 
-📖 **[在线使用手册](https://wuysau.github.io/NexusAPI/)**：从首次启动到网关 API、Codex 本地观测和任务监督的完整测试流程。也可直接查看 [手册源文件](docs/index.html)。
+📖 **[在线使用手册](https://wuysau.github.io/NexusAPI/)**：面向新用户介绍项目、网关 API、Codex 本地观测和任务监督的使用方法。也可直接查看 [手册源文件](docs/index.html)。
 
 NexusAPI 是以项目为核心的 AI Resource Control Plane。统一查看 API 渠道、官方订阅、本地工具、任务、会话、配额与用量；Go 网关继续提供兼容 OpenAI 的 API 数据面。本地订阅执行与网关 API 调用遵守不同的凭据和计费边界。
 

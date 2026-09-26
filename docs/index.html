@@ -3,7 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="NexusAPI 使用手册：从本地启动到 API 调用、Codex 订阅观测与任务监督。" />
+    <meta
+      name="description"
+      content="NexusAPI 使用手册：了解项目、API 渠道、Codex 订阅观测、资源视图和编程任务监督。"
+    />
     <title>NexusAPI 使用手册</title>
     <link rel="stylesheet" href="./manual.css" />
   </head>
@@ -15,8 +18,8 @@
         ><span>NexusAPI <small>使用手册</small></span></a
       >
       <nav aria-label="页面导航">
-        <a href="#quickstart">快速开始</a><a href="#workflows">测试流程</a><a href="#concepts">概念</a
-        ><a href="#troubleshooting">排查</a>
+        <a href="#start">开始使用</a><a href="#api">API 渠道</a><a href="#codex">Codex</a><a href="#tasks">任务</a
+        ><a href="#pages">功能导览</a>
       </nav>
       <a class="repo-link" href="https://github.com/Wuysau/NexusAPI">GitHub 仓库 <span aria-hidden="true">↗</span></a>
     </header>
@@ -25,367 +28,479 @@
       <section class="hero" id="top">
         <div class="hero-copy">
           <p class="eyebrow">NEXUSAPI / USER GUIDE</p>
-          <h1>从一个项目开始，<br /><em>验证每条资源路径。</em></h1>
+          <h1>一个工作空间，<br /><em>管理你的 AI 资源。</em></h1>
           <p class="lead">
-            按实际使用顺序完成本地启动、网关 API 调用、Codex 观测和编程任务监督。每一步都列出前置条件与成功信号。
+            NexusAPI 将项目、API 渠道、Codex
+            本地订阅观测与编程任务放在同一控制台。按你的使用场景进入相应流程，不必先配置所有功能。
           </p>
           <div class="hero-actions">
-            <a class="button primary" href="#quickstart">开始配置 <span>↘</span></a
-            ><a class="button secondary" href="#workflows">查看测试路线</a>
+            <a class="button primary" href="#start">开始使用 <span>↘</span></a
+            ><a class="button secondary" href="#paths">选择使用方式</a>
           </div>
         </div>
-        <div class="hero-card" aria-label="三条主要测试路径">
-          <div class="card-top"><span>TEST PATHS</span><span class="live-dot">3 条主流程</span></div>
+        <div class="hero-card" aria-label="NexusAPI 的三种主要使用方式">
+          <div class="card-top"><span>WHAT YOU CAN DO</span><span class="live-dot">按需启用</span></div>
           <div class="path">
             <span class="path-num">01</span>
-            <div><strong>网关 API</strong><small>真实模型响应、请求日志、用量</small></div>
+            <div><strong>调用 API 模型</strong><small>统一渠道、密钥、日志和用量</small></div>
             <span>↗</span>
           </div>
           <div class="path">
             <span class="path-num">02</span>
-            <div><strong>Codex 观测</strong><small>本机会话、官方账户额度</small></div>
+            <div><strong>查看 Codex 订阅</strong><small>本机会话与官方账户观测</small></div>
             <span>↗</span>
           </div>
           <div class="path">
             <span class="path-num">03</span>
-            <div><strong>任务监督</strong><small>项目策略、资源选择、切换历史</small></div>
+            <div><strong>监督编程任务</strong><small>项目策略、资源状态与交接历史</small></div>
             <span>↗</span>
           </div>
-          <p>资源登记 ≠ 连接可用。以真实请求或观测结果作为验收依据。</p>
+          <p>API 调用和本地订阅使用不同的凭据与计费路径。</p>
         </div>
       </section>
 
       <div class="manual-layout">
         <aside class="toc" aria-label="手册目录">
           <p>使用手册</p>
-          <a href="#quickstart">01 · 快速开始</a><a href="#workflows">02 · 三条测试流程</a><a href="#api">网关 API</a
-          ><a href="#observer">Codex 订阅观测</a><a href="#supervisor">任务监督</a
-          ><a href="#concepts">03 · 概念与边界</a><a href="#checklist">04 · 验收清单</a
-          ><a href="#troubleshooting">05 · 常见问题</a>
+          <a href="#start">01 · 开始使用</a>
+          <a href="#paths">选择使用方式</a>
+          <a href="#api">02 · API 渠道</a>
+          <a href="#codex">03 · Codex 订阅</a>
+          <a href="#tasks">04 · 编程任务</a>
+          <a href="#pages">05 · 功能导览</a>
+          <a href="#concepts">06 · 关键概念</a>
+          <a href="#deploy">07 · 本地部署</a>
+          <a href="#faq">常见问题</a>
         </aside>
         <div class="manual-content">
-          <section id="quickstart" class="chapter">
+          <section id="start" class="chapter">
             <div class="chapter-head">
-              <span>01 / SETUP</span>
-              <h2>快速开始</h2>
-              <p>以下命令在本机运行。NexusAPI 控制台是控制面；真正的模型请求发送到独立 Go 网关。</p>
-            </div>
-            <div class="callout">
-              <strong>准备环境</strong>
-              <p>
-                Node.js 24、npm、Docker，以及测试 API 时可用的上游模型账号和密钥。任务监督另需官方 Codex CLI
-                与独立登录的 Profile。
-              </p>
+              <span>01 / GET STARTED</span>
+              <h2>从项目开始</h2>
+              <p>登录控制台后，先创建一个项目。项目是资源归属、成员访问、用量查看和任务策略的共同入口。</p>
             </div>
             <ol class="steps">
               <li>
-                <strong>克隆并安装</strong>
-                <pre><code>git clone https://github.com/Wuysau/NexusAPI.git
-cd NexusAPI
-npm ci</code></pre>
-              </li>
-              <li>
-                <strong>创建本地配置</strong>
+                <strong>登录工作空间</strong>
                 <p>
-                  Windows PowerShell 使用下方命令；macOS/Linux 用 <code>cp .env.example .env.local</code>。编辑
-                  <code>.env.local</code>，设置
-                  <code>DEV_ADMIN_PASSWORD</code>、<code>DEV_VIEWER_PASSWORD</code>；要测网关，还需为
-                  <code>SNAPSHOT_SIGNING_KEY</code>（至少 32 字符）和
-                  <code>GATEWAY_INTERNAL_TOKEN</code> 分别生成随机值。
-                </p>
-                <pre><code>Copy-Item .env.example .env.local</code></pre>
-                <p>
-                  本地网关推荐使用
-                  <code>APP_BASE_URL=http://127.0.0.1:3000</code
-                  >、<code>NEXUS_DESKTOP_ORIGIN=http://127.0.0.1:3000</code>、<code
-                    >CONTROL_PLANE_URL=http://127.0.0.1:3000</code
-                  >
-                  和 <code>NEXT_PUBLIC_GATEWAY_BASE_URL=http://127.0.0.1:8080/v1</code>。
-                </p>
-              </li>
-              <li>
-                <strong>启动基础服务并初始化</strong>
-                <pre><code>docker compose up -d postgres redis
-node --env-file=.env.local scripts/db-migrate.mjs
-npm run seed:dev
-npm run dev</code></pre>
-                <p>
-                  Windows 日常启动也可在数据库已就绪时使用 <code>npm run dev:local</code>。控制台默认位于
-                  <code>http://127.0.0.1:3000</code>；用 <code>DEV_ADMIN_EMAIL</code>（默认
-                  <code>dev@nexus.local</code>）及配置的密码登录。
+                  使用管理员提供的控制台地址和账号登录。如果你是在本机运行源码，登录信息来自本地开发配置；部署说明见<a
+                    href="#deploy"
+                    >本地部署</a
+                  >。
                 </p>
               </li>
               <li>
                 <strong>创建项目</strong>
                 <p>
-                  进入“项目”→“创建项目”，填写名称与实际代码工作目录。工作目录决定后续 Codex
-                  会话用量归属；初次创建不要求已有请求。
+                  打开“项目”→“创建项目”，填写名称。要将本地 Codex
+                  会话归入此项目，再填写代码工作目录的绝对路径；可以每行配置一个路径。
+                </p>
+              </li>
+              <li>
+                <strong>选择接入方式</strong>
+                <p>
+                  需要让应用调用模型，配置<a href="#api">API 渠道</a>。使用本机 Codex，添加<a href="#codex"
+                    >订阅观测连接</a
+                  >。需要由 Nexus 管理编程任务，再配置<a href="#tasks">任务监督</a>。
                 </p>
               </li>
             </ol>
-            <p class="note">
-              安全提醒：<code>.env.local</code> 和真实 API Key 只保存在本机，不要提交到
-              GitHub。开发种子数据用于演示，不代表真实报价、额度或账单。
-            </p>
+            <div class="callout">
+              <strong>不需要一次完成所有设置</strong>
+              <p>只使用网关 API 时，可以先不配置 Codex；只想查看 Codex 本地用量时，也不需要创建网关 API 密钥。</p>
+            </div>
+            <div id="paths" class="concept-grid" aria-label="选择使用方式">
+              <div>
+                <h3>我是应用开发者</h3>
+                <p>从“渠道管理”配置上游模型，再创建 Nexus API 密钥，把网关地址接入自己的客户端。</p>
+                <a href="#api">了解 API 接入 →</a>
+              </div>
+              <div>
+                <h3>我使用 Codex 编程</h3>
+                <p>添加本地订阅观测连接，将会话用量关联到项目，查看账户与官方额度观测。</p>
+                <a href="#codex">了解 Codex 观测 →</a>
+              </div>
+              <div>
+                <h3>我管理多个编程资源</h3>
+                <p>配置独立 Codex Profile 和项目路由策略，通过 Nexus 启动受监督任务。</p>
+                <a href="#tasks">了解任务监督 →</a>
+              </div>
+              <div>
+                <h3>我管理团队工作空间</h3>
+                <p>在项目、资源、日志、用量和审计页面查看范围内的数据，按角色管理成员。</p>
+                <a href="#pages">查看功能导览 →</a>
+              </div>
+            </div>
           </section>
 
-          <section id="workflows" class="chapter">
+          <section id="api" class="chapter">
             <div class="chapter-head">
-              <span>02 / VERIFY</span>
-              <h2>三条主流程</h2>
-              <p>先验证最短的 API 链路，再验证本地 Codex，最后配置需要额外 Profile 的任务监督。</p>
+              <span>02 / GATEWAY API</span>
+              <h2>通过网关调用模型</h2>
+              <p>
+                Nexus API 网关提供兼容 OpenAI 的调用入口。上游模型凭据用于访问供应商；Nexus API
+                密钥用于你的应用访问网关，两者不要混用。
+              </p>
             </div>
-            <article id="api" class="workflow">
+            <article class="workflow">
               <div class="workflow-title">
                 <span class="number">01</span>
                 <div>
-                  <h3>网关 API：发出第一个真实请求</h3>
-                  <p>适合测试上游密钥、路由、模型调用及用量记录。</p>
+                  <h3>配置上游渠道</h3>
+                  <p>控制台 → 渠道管理</p>
                 </div>
-                <span class="tag">真实调用会消耗上游额度</span>
               </div>
-              <ol>
-                <li>
-                  在控制台“渠道管理”中录入上游地址、协议、模型和 API
-                  Key，保存后运行连接测试。不要在“我的连接”里仅登记一个 API 连接就期待网关可用。
-                </li>
-                <li>在“API 密钥”创建 Nexus 下游密钥。它是调用本地网关的密钥，与上游 API Key 不同。</li>
-                <li>
-                  另开终端运行 <code>npm run gateway:local</code>；需要本地渠道密钥已保存。先检查
-                  <code>http://127.0.0.1:8080/healthz</code>。
-                </li>
-                <li>
-                  用下方请求把占位符换成真实 Nexus 密钥和已配置模型。第一段适用于 Bash，第二段适用于 Windows
-                  PowerShell；也可通过兼容 OpenAI 的客户端调用。
-                </li>
-              </ol>
+              <p>
+                在本机控制台填写供应商的接口地址、协议、模型和 API
+                Key，保存后可在页面检查上游连接。渠道决定网关能够调用哪些模型；仅在“我的连接”里登记一条 API
+                连接，不会生成可用渠道。
+              </p>
+              <div class="expected">
+                <strong>凭据位置</strong
+                ><span>本地桌面模式可加密保存上游密钥。其他部署方式由管理员按独立密钥服务的要求配置。</span>
+              </div>
+            </article>
+            <article class="workflow">
+              <div class="workflow-title">
+                <span class="number">02</span>
+                <div>
+                  <h3>创建 Nexus API 密钥</h3>
+                  <p>控制台 → API 密钥</p>
+                </div>
+              </div>
+              <p>
+                为应用创建独立下游密钥，并按需要设置权限范围与过期时间。只在创建时安全保存完整密钥；请求中使用
+                <code>Authorization: Bearer YOUR_NEXUS_API_KEY</code>。
+              </p>
+            </article>
+            <article class="workflow">
+              <div class="workflow-title">
+                <span class="number">03</span>
+                <div>
+                  <h3>在客户端使用网关地址</h3>
+                  <p>控制台 → 开发文档</p>
+                </div>
+              </div>
+              <p>
+                “开发文档”显示当前部署配置的网关 Base URL。将它设为兼容 OpenAI 客户端的地址，填入 Nexus API
+                密钥和已配置的模型 ID。本机默认网关地址是 <code>http://127.0.0.1:8080/v1</code>；本地使用前需启动
+                <code>npm run gateway:local</code>。
+              </p>
               <pre><code>curl http://127.0.0.1:8080/v1/chat/completions \
   -H "Authorization: Bearer YOUR_NEXUS_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model":"YOUR_CONFIGURED_MODEL","messages":[{"role":"user","content":"Hello"}],"max_tokens":32}'</code></pre>
-              <pre><code>$headers = @{ Authorization = "Bearer YOUR_NEXUS_API_KEY" }
-$body = @{ model = "YOUR_CONFIGURED_MODEL"; messages = @(@{ role = "user"; content = "Hello" }); max_tokens = 32 } | ConvertTo-Json -Depth 5
-Invoke-RestMethod -Uri 'http://127.0.0.1:8080/v1/chat/completions' -Method Post -Headers $headers -ContentType 'application/json' -Body $body</code></pre>
-              <div class="expected">
-                <strong>成功信号</strong
-                ><span>收到模型响应；“请求日志”出现请求；“用量与计费”显示实际用量。未知价格仍应显示未知。</span>
-              </div>
-            </article>
-            <article id="observer" class="workflow">
-              <div class="workflow-title">
-                <span class="number">02</span>
-                <div>
-                  <h3>Codex：观察本机订阅使用</h3>
-                  <p>适合验证账户状态、官方额度观测和本地会话用量归属。</p>
-                </div>
-                <span class="tag">不经过网关</span>
-              </div>
-              <ol>
-                <li>在本机通过官方 Codex 完成登录，并确认项目已设置正确的工作目录。</li>
-                <li>
-                  进入“我的连接”→“添加连接”，选择“OpenAI Codex · 本地订阅观测”；供应商标识保留 <code>openai</code>。
-                </li>
-                <li>打开该连接详情，应用 Observer 配置；确认会话目录后点“立即同步”。</li>
-                <li>在已配置的项目工作目录中实际运行一次 Codex，再查看项目分析和连接详情。</li>
-              </ol>
-              <div class="expected">
-                <strong>成功信号</strong
-                ><span
-                  >连接显示最新账户或额度观测，项目分析出现会话用量。订阅会话不会变成网关 API 请求，也不会产生 Nexus
-                  扣费。</span
-                >
-              </div>
-              <p class="detail-link">
-                更多配置与数据边界：<a
-                  href="https://github.com/Wuysau/NexusAPI/blob/main/docs/operations/subscription-observer.md"
-                  >Subscription Observer 运维文档 ↗</a
-                >
+              <p>
+                上方命令适用于 Bash。Windows PowerShell 可以将同样的 JSON 请求通过
+                <code>Invoke-RestMethod</code> 发送；真实请求会消耗上游额度。
               </p>
             </article>
-            <article id="supervisor" class="workflow">
+            <article class="workflow">
               <div class="workflow-title">
-                <span class="number">03</span>
+                <span class="number">04</span>
                 <div>
-                  <h3>任务监督：验证资源选择和切换</h3>
-                  <p>适合测试 Coding Agent 的任务、策略、连续性与故障交接。</p>
+                  <h3>查看请求和用量</h3>
+                  <p>控制台 → 请求日志 / 用量与计费</p>
                 </div>
-                <span class="tag">需独立 Profile</span>
               </div>
-              <ol>
-                <li>
-                  为每个要测试的账户准备独立 <code>CODEX_HOME</code>，在各 Profile 中分别运行官方
-                  <code>codex login</code>。不要复制认证文件。
-                </li>
-                <li>
-                  按运维文档创建忽略提交的 <code>config/nexus-supervisor.json</code>，填写实际租户、组织、项目、连接
-                  ID、工作目录和 Profile 路径。
-                </li>
-                <li>
-                  设置 <code>NEXUS_SUPERVISOR_CONFIG</code> 为配置文件绝对路径，并重启包含 Observer 的本地开发服务。
-                </li>
-                <li>
-                  在“任务”页为项目配置路由策略与候选连接。下方命令适用于工作目录就是 NexusAPI
-                  仓库的测试；若目标是其他仓库，请按运维文档从该仓库运行 Nexus 脚本的绝对路径。
-                </li>
-              </ol>
-              <pre><code>npm run nexus -- codex --project PROJECT_ID --goal "完成一个可验证的编程任务" --persist-context</code></pre>
-              <div class="expected">
-                <strong>成功信号</strong
-                ><span
-                  >“任务”页出现任务状态、当前资源与会话；切换时留下原因和历史。要验证自动故障切换，需两个真实可用且有独立额度观测的兼容
-                  Profile。</span
-                >
-              </div>
-              <p class="detail-link">
-                完整前提、恢复与安全边界：<a
-                  href="https://github.com/Wuysau/NexusAPI/blob/main/docs/operations/task-resource-handoff.md"
-                  >任务级资源切换运维文档 ↗</a
-                >
+              <p>
+                “请求日志”用于查看调用结果与错误；“用量与计费”按请求、项目等维度展示可归属的用量。价格来源不明确时，费用显示为未知，不会被当作免费。
               </p>
             </article>
           </section>
 
-          <section id="concepts" class="chapter">
+          <section id="codex" class="chapter">
             <div class="chapter-head">
-              <span>03 / MODEL</span>
-              <h2>“连接”和“连接器”是什么</h2>
-              <p>区分资源登记、实际执行位置和可用性，能避免配置完成后却无法调用的误解。</p>
+              <span>03 / LOCAL CODEX</span>
+              <h2>查看 Codex 订阅使用</h2>
+              <p>
+                Nexus 读取本机 Codex 会话中允许的用量字段，并单独展示账户和官方额度观测。Codex
+                继续使用自己的登录，不通过 Nexus 网关发送订阅请求。
+              </p>
             </div>
-            <div class="concept-grid">
-              <div>
-                <h3>连接</h3>
-                <p>资源的登记记录，包含供应商、归属项目、类型和观测状态。添加连接不代表凭据已配置或请求可路由。</p>
-              </div>
-              <div>
-                <h3>渠道</h3>
-                <p>网关 API 的上游地址、模型、凭据和路由配置。要测试 HTTP 模型调用，请从“渠道管理”开始。</p>
-              </div>
-              <div>
-                <h3>连接器</h3>
+            <div class="callout">
+              <strong>开始前</strong>
+              <p>
+                在运行 Nexus 的电脑上，先通过官方 Codex 完成登录；在“项目”中配置实际代码工作目录。Nexus 页面不要求你粘贴
+                Codex 凭据。
+              </p>
+            </div>
+            <ol class="steps">
+              <li>
+                <strong>添加 Codex 连接</strong>
                 <p>
-                  设计上是运行在本机或私有网络、代为执行并报告状态的程序。当前“本地连接器”“私有网络连接器”选项主要用于登记，不会在添加时自动安装运行器。
+                  进入“我的连接”→“添加连接”，选择“OpenAI Codex · 本地订阅观测”。官方 OpenAI Codex 使用默认供应商标识
+                  <code>openai</code>；可按需要绑定项目。
                 </p>
-              </div>
-              <div>
-                <h3>Codex Profile</h3>
+              </li>
+              <li>
+                <strong>启用本地同步</strong>
                 <p>
-                  任务监督使用的独立 Codex 配置与登录目录。它不同于普通网关渠道，也不能把订阅凭据直接转换成 API Key。
+                  打开连接详情，在“本地同步配置”中确认 Codex 会话目录并应用 Observer 配置。Observer
+                  会定期读取本机会话，也可以在连接详情中手动请求立即同步。
                 </p>
-              </div>
+              </li>
+              <li>
+                <strong>查看账户与项目用量</strong>
+                <p>
+                  连接详情显示最近的账户、额度和同步状态；“项目”或“用量与计费”中的项目分析显示归属到工作目录的本地会话用量。历史观测不会因后来修改目录而自动移动。
+                </p>
+              </li>
+            </ol>
+            <p class="note">
+              本地观测的 Token 不是官方账单，也不能推算 Coding Plan 的剩余额度；订阅使用不会计入网关请求账单。细节见
+              <a href="https://github.com/Wuysau/NexusAPI/blob/main/docs/operations/subscription-observer.md"
+                >Observer 运维说明 ↗</a
+              >。
+            </p>
+          </section>
+
+          <section id="tasks" class="chapter">
+            <div class="chapter-head">
+              <span>04 / CODING TASKS</span>
+              <h2>监督持续编程任务</h2>
+              <p>
+                任务页用于查看由 Nexus 启动的编程任务、项目策略、当前资源和交接历史。平常直接运行的 Codex
+                会话只进入本地用量观测，不会自动变成受监督任务。
+              </p>
             </div>
             <div class="callout amber">
-              <strong>Coding Plan 的当前边界</strong>
+              <strong>需要管理员先完成本地配置</strong>
               <p>
-                “OpenAI Codex · 本地订阅观测”只针对 OpenAI Codex。其他厂商 Coding Plan
-                不能通过选择它自动接入；需要兼容的 Codex Profile、明确的 provider
-                标识与真实额度观测。当前仓库的自动化测试不等于真实厂商账号验收。
+                每个候选账户要有独立的 Codex Profile 与登录目录；管理员还需设置项目工作目录、连接映射及
+                <code>NEXUS_SUPERVISOR_CONFIG</code>。仅添加连接或在页面保存策略，不会自动创建 Profile。
               </p>
             </div>
+            <ol class="steps">
+              <li>
+                <strong>为项目设置路由策略</strong>
+                <p>
+                  打开“任务”，选择项目并编辑策略：确定所需能力、模型限制、候选连接与优先级。“路由”页面会根据当前观测给出候选预览；未知额度不会被当作可用。
+                </p>
+              </li>
+              <li>
+                <strong>通过 Nexus 启动任务</strong>
+                <p>
+                  在已登记的工作目录中使用 Nexus CLI 提交目标。若目标工作目录不是 NexusAPI 仓库，请按运维说明用 Nexus
+                  脚本的绝对路径启动。
+                </p>
+                <pre><code>npm run nexus -- codex --project PROJECT_ID --goal "完成当前编程任务" --persist-context</code></pre>
+              </li>
+              <li>
+                <strong>在任务页跟进</strong>
+                <p>
+                  查看运行状态、当前资源、会话与切换历史；遇到需要人工检查的中断，可在确认上次执行结果后继续或手动切换。资源切换受
+                  Profile 兼容性与最新额度观测约束。
+                </p>
+              </li>
+            </ol>
+            <p class="detail-link">
+              独立 Profile 的准备方法、恢复规则及安全边界见
+              <a href="https://github.com/Wuysau/NexusAPI/blob/main/docs/operations/task-resource-handoff.md"
+                >任务级资源切换说明 ↗</a
+              >。
+            </p>
           </section>
 
-          <section id="checklist" class="chapter">
+          <section id="pages" class="chapter">
             <div class="chapter-head">
-              <span>04 / ACCEPT</span>
-              <h2>验收清单</h2>
-              <p>依照证据判断通过，不以“已创建”或“已登记”代替成功。</p>
+              <span>05 / WORKSPACE</span>
+              <h2>控制台功能导览</h2>
+              <p>页面展示的是不同来源的事实。了解每个页面负责什么，可以更快找到需要配置或查看的内容。</p>
             </div>
             <div class="check-row">
               <span>01</span>
               <div>
-                <strong>服务可用</strong>
-                <p>
-                  控制台 <code>/api/health</code> 返回 <code>{"ok":true}</code>；网关 <code>/healthz</code> 返回
-                  <code>ok</code>。
-                </p>
+                <strong>项目</strong>
+                <p>组织工作目录、项目成员与项目分析。Codex 本地会话按工作目录归属；网关请求按自身项目归属记录。</p>
               </div>
             </div>
             <div class="check-row">
               <span>02</span>
               <div>
-                <strong>项目与权限</strong>
-                <p>能创建项目、设置工作目录，并以有权限的账号查看项目。</p>
+                <strong>渠道管理 / API 密钥</strong>
+                <p>前者配置网关要调用的上游模型；后者签发你的客户端调用 Nexus 网关所用的下游密钥。</p>
               </div>
             </div>
             <div class="check-row">
               <span>03</span>
               <div>
-                <strong>真实模型请求</strong>
-                <p>渠道测试成功，网关返回模型响应，日志和用量数据能对上同一次调用。</p>
+                <strong>我的连接 / 资源</strong>
+                <p>“我的连接”登记账户和连接并查看观测；“资源”汇总渠道和连接的类型、健康、额度与配置状态。</p>
               </div>
             </div>
             <div class="check-row">
               <span>04</span>
               <div>
-                <strong>本地订阅观测</strong>
-                <p>Codex 运行后出现会话记录；该记录不混入网关账单。</p>
+                <strong>路由 / 任务</strong>
+                <p>
+                  “路由”展示按项目的候选预览；“任务”管理本地编程任务策略和执行历史。网关实际选路以请求时的签名快照为准。
+                </p>
               </div>
             </div>
             <div class="check-row">
               <span>05</span>
               <div>
-                <strong>任务连续性</strong>
-                <p>监督任务能启动、完成；故障切换场景可在任务历史中核对会话 ID、来源和目标资源。</p>
+                <strong>请求日志 / 用量与计费</strong>
+                <p>查看网关请求及其用量，也可在项目分析中查看单独的 Codex 本地观测；两种来源不混算费用。</p>
               </div>
             </div>
             <div class="check-row">
               <span>06</span>
               <div>
-                <strong>资源与路由视图</strong>
-                <p>“资源”显示已登记连接及渠道的实际状态；“路由”按项目给出候选预览。未知额度应保持未知。</p>
+                <strong>模型广场 / 价格审批</strong>
+                <p>查看模型目录与价格治理信息。目录存在不代表当前项目已有可调用渠道；未知价格保持未知。</p>
               </div>
             </div>
             <div class="check-row">
               <span>07</span>
               <div>
-                <strong>模型与价格</strong>
-                <p>“模型广场”显示模型目录；价格审批和账单中的金额应来自已生效价格，未定价的请求不应被标成免费。</p>
-              </div>
-            </div>
-            <div class="check-row">
-              <span>08</span>
-              <div>
-                <strong>成员、审计与对账</strong>
-                <p>用不同角色检查页面权限；创建、修改和撤销操作在审计日志中有记录。对账工单仅在有待处理事实时出现。</p>
+                <strong>成员与角色 / 审计日志 / 对账工单</strong>
+                <p>管理员在这些页面管理访问权限、检查操作记录，并处理出现的对账事项。</p>
               </div>
             </div>
           </section>
 
-          <section id="troubleshooting" class="chapter">
+          <section id="concepts" class="chapter">
             <div class="chapter-head">
-              <span>05 / SUPPORT</span>
+              <span>06 / CONCEPTS</span>
+              <h2>几个容易混淆的概念</h2>
+              <p>“添加连接”是资源登记。能否真正调用或运行，取决于渠道、凭据、Profile 和最新状态是否具备。</p>
+            </div>
+            <div class="concept-grid">
+              <div>
+                <h3>项目</h3>
+                <p>管理访问范围、代码目录、用量归属和任务策略的工作单元。</p>
+              </div>
+              <div>
+                <h3>渠道</h3>
+                <p>网关使用的上游接口、模型与凭据配置。API 模型请求从这里进入。</p>
+              </div>
+              <div>
+                <h3>连接</h3>
+                <p>描述一个账户或资源的归属、类型及观测状态。登记本身不会自动启用模型调用。</p>
+              </div>
+              <div>
+                <h3>连接器</h3>
+                <p>
+                  设计上是运行在本机或私有网络、执行请求并报告状态的程序。当前“本地连接器”“私有网络连接器”选项主要用于登记，不会在添加时自动安装运行器。
+                </p>
+              </div>
+              <div>
+                <h3>Nexus API 密钥</h3>
+                <p>你的客户端访问 Nexus 网关所用的下游凭据，与供应商上游密钥不同。</p>
+              </div>
+              <div>
+                <h3>Codex Profile</h3>
+                <p>任务监督使用的独立 Codex 配置与登录目录，不等同于网关 API 渠道。</p>
+              </div>
+            </div>
+            <div class="callout amber">
+              <strong>其他厂商 Coding Plan</strong>
+              <p>
+                “OpenAI Codex · 本地订阅观测”只针对 OpenAI Codex。其他 Coding Plan
+                不能通过选择这一项直接接通；受监督执行需要相应的兼容 Profile、明确的供应商标识与可信额度观测。
+              </p>
+            </div>
+          </section>
+
+          <section id="deploy" class="chapter">
+            <div class="chapter-head">
+              <span>07 / SELF HOSTING</span>
+              <h2>在本机部署 NexusAPI</h2>
+              <p>
+                这部分面向自行运行源码的管理员。如果你已经有可登录的 Nexus 控制台，可以直接从<a href="#start"
+                  >开始使用</a
+                >阅读。
+              </p>
+            </div>
+            <div class="callout">
+              <strong>环境要求</strong>
+              <p>
+                Node.js 24、npm、PostgreSQL 14+ 和 Redis 6+。本地可以用 Docker 启动数据库与 Redis；Go 网关使用仓库指定的
+                Go 版本。
+              </p>
+            </div>
+            <ol class="steps">
+              <li>
+                <strong>获取代码与配置</strong>
+                <pre><code>git clone https://github.com/Wuysau/NexusAPI.git
+cd NexusAPI
+npm ci
+Copy-Item .env.example .env.local</code></pre>
+                <p>
+                  最后一条是 Windows PowerShell 命令；macOS/Linux 使用
+                  <code>cp .env.example .env.local</code>。编辑本地配置，至少设置开发账号的
+                  <code>DEV_ADMIN_PASSWORD</code> 与 <code>DEV_VIEWER_PASSWORD</code>。真实配置不会提交到仓库。
+                </p>
+              </li>
+              <li>
+                <strong>初始化并运行控制台</strong>
+                <pre><code>docker compose up -d postgres redis
+node --env-file=.env.local scripts/db-migrate.mjs
+npm run seed:dev
+npm run dev</code></pre>
+                <p>
+                  默认控制台地址是 <code>http://127.0.0.1:3000</code>。Windows 在数据库已启动、迁移已完成后也可用
+                  <code>npm run dev:local</code> 日常启动。
+                </p>
+              </li>
+              <li>
+                <strong>按需启动网关</strong>
+                <p>
+                  本地 API 调用还需要在 <code>.env.local</code> 中设置
+                  <code>NEXUS_DESKTOP_ORIGIN</code
+                  >、<code>CONTROL_PLANE_URL</code>、<code>NEXT_PUBLIC_GATEWAY_BASE_URL</code>，并为
+                  <code>SNAPSHOT_SIGNING_KEY</code> 与
+                  <code>GATEWAY_INTERNAL_TOKEN</code> 分别设置随机值。保存本地渠道密钥后，在另一个终端运行
+                  <code>npm run gateway:local</code>。
+                </p>
+              </li>
+            </ol>
+            <p class="note">
+              生产部署有独立的数据库角色、密钥服务和迁移要求；请阅读仓库的
+              <a href="https://github.com/Wuysau/NexusAPI/blob/main/README.md">README</a> 与
+              <a href="https://github.com/Wuysau/NexusAPI/tree/main/docs/operations">运维文档</a
+              >。不要把桌面本地模式作为生产配置。
+            </p>
+          </section>
+
+          <section id="faq" class="chapter">
+            <div class="chapter-head">
+              <span>HELP</span>
               <h2>常见问题</h2>
             </div>
             <details>
-              <summary>添加连接后为什么仍不能调用模型？</summary>
+              <summary>为什么添加了 API 连接，仍无法调用模型？</summary>
               <p>
-                “我的连接”主要记录资源身份和观测状态。API 模型调用需要在“渠道管理”保存上游凭据与模型，再创建 Nexus
-                下游密钥，并启动网关。
+                “我的连接”保存资源登记。请到“渠道管理”配置并启用上游模型渠道，再创建 Nexus API
+                密钥，通过独立网关发起调用。
               </p>
             </details>
             <details>
-              <summary>为什么没有项目用量或任务？</summary>
+              <summary>Codex 已运行，为什么项目中没有本地用量？</summary>
               <p>
-                确认项目配置了与 Codex 实际工作目录一致的路径，Observer 已应用配置且同步成功。普通 Codex
-                会话只会被观测；只有通过 <code>npm run nexus -- codex</code> 注册的任务才进入监督页面。
+                检查项目工作目录是否与 Codex 会话目录匹配，连接详情中的 Observer
+                配置是否已应用、同步是否成功。修改工作目录不会自动重新归属已有历史记录。
               </p>
             </details>
             <details>
-              <summary>为什么 /v1/models 返回 401？</summary>
+              <summary>为什么普通 Codex 会话没有出现在任务页？</summary>
               <p>
-                网关要求 Nexus 下游 API 密钥。先在控制台“API 密钥”创建，再以
-                <code>Authorization: Bearer ...</code> 发送请求。
+                任务页只监督通过 Nexus CLI 登记启动的任务。普通 Codex 会话可以被 Observer 观测，但不会获得 Nexus
+                的任务策略和切换能力。
               </p>
             </details>
             <details>
-              <summary>为什么 Coding Plan 没有自动切换？</summary>
+              <summary>为什么资源状态显示“未知”？</summary>
               <p>
-                检查是否存在两个独立登录的兼容 Profile、Supervisor
-                配置、项目路由策略和最新官方额度观测。未知额度不会被当成可用额度。
+                Nexus
+                不会凭连接名称猜测额度、价格或健康状态。缺少新鲜可信的观测时，状态保持未知；部分路由与任务选择因此不会自动启用。
               </p>
             </details>
             <p class="closing">
-              发现手册与实际行为不一致？请在
-              <a href="https://github.com/Wuysau/NexusAPI/issues">GitHub Issues</a> 提供页面、操作步骤和脱敏后的结果。
+              如果手册与实际页面不一致，请在
+              <a href="https://github.com/Wuysau/NexusAPI/issues">GitHub Issues</a> 描述页面、操作步骤和脱敏后的结果。
             </p>
           </section>
         </div>
