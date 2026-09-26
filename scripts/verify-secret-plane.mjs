@@ -12,15 +12,22 @@ const image = 'hashicorp/vault@sha256:4e33b126a59c0c333b76fb4e894722462659a6bec7
 const base = 'https://127.0.0.1:58201/v1/'
 const checks = {},
   policyDigests = {}
+let stage = 'fixture startup'
 const hash = (value) => createHash('sha256').update(value).digest('hex')
-const command = (bin, args) =>
-  execFileSync(bin, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+const command = (bin, args) => {
+  stage = `${bin} ${args[0]}`
+  return execFileSync(bin, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+}
 const requireCheck = (name, condition) => {
-  if (!condition) throw new Error(name)
+  if (!condition) {
+    stage = `check ${name}`
+    throw new Error(name)
+  }
   checks[name] = 'passed'
 }
 let ca, admin
 async function call(path, body, token, expected = 200, headers = {}) {
+  stage = `Vault API ${path}`
   const result = await new Promise((accept, reject) => {
     const req = request(
       new URL(path, base),
@@ -425,8 +432,9 @@ async function main() {
   console.log(JSON.stringify(receipt, null, 2))
 }
 main().catch((error) => {
+  const exit = Number.isInteger(error.status) ? ` (exit ${error.status})` : ''
   console.error(
-    `Secret Plane fixture failed: ${error.message.startsWith('Unexpected Vault status') ? error.message : 'check or prerequisite failed; sensitive diagnostic output suppressed'}`,
+    `Secret Plane fixture failed at ${stage}${exit}: ${error.message.startsWith('Unexpected Vault status') ? error.message : 'check or prerequisite failed; sensitive diagnostic output suppressed'}`,
   )
   process.exitCode = 1
 })
