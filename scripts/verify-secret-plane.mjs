@@ -151,17 +151,40 @@ async function agentLogin(role) {
       windowsHide: true,
     })
     const logs = `${result.stdout || ''}\n${result.stderr || ''}`
+    const permissionLines = logs.split(/\r?\n/).filter((line) => /permission denied/i.test(line))
+    const access = [
+      ['role-id', '/bootstrap/role-id', '-r'],
+      ['wrapped-id', '/bootstrap/wrapped-secret-id', '-r'],
+      ['ca', '/bootstrap/ca.pem', '-r'],
+      ['sink', '/run/identity', '-w'],
+    ]
+      .map(([name, path, flag]) => {
+        const probe = spawnSync('docker', ['exec', agent, 'test', flag, path], {
+          stdio: 'ignore',
+          windowsHide: true,
+        })
+        return `${name}:${probe.status === 0 ? 'yes' : 'no'}`
+      })
+      .join(',')
     const signals = [
       ['tls', /x509|certificate|tls handshake/i],
       ['network', /no such host|connection refused|dial tcp|lookup /i],
       ['permission', /permission denied|operation not permitted/i],
+      ['api-403', /error making api request|code:\s*403|status code:\s*403/i],
       ['wrapped-secret', /wrapping token|wrapped secret|secret.id/i],
       ['config', /error parsing|invalid configuration|unknown field/i],
       ['auth', /error authenticating|invalid role|login failed/i],
     ]
       .filter(([, pattern]) => pattern.test(logs))
       .map(([name]) => name)
-    stage = `Vault Agent token bootstrap timeout (container=${status}, exit=${exitCode}, signals=${signals.join(',') || 'none'})`
+    const deniedAt = [
+      ['bootstrap', /bootstrap|role-id|wrapped-secret-id|ca\.pem/i],
+      ['sink', /run\/identity|gateway-token|sink/i],
+      ['Vault API', /auth\/approle|api request|status code|code:\s*403/i],
+    ]
+      .filter(([, pattern]) => permissionLines.some((line) => pattern.test(line)))
+      .map(([name]) => name)
+    stage = `Vault Agent token bootstrap timeout (container=${status}, exit=${exitCode}, access=${access}, signals=${signals.join(',') || 'none'}, deniedAt=${deniedAt.join(',') || 'unknown'})`
     throw new Error('Agent identity bootstrap failed')
   }
   await call('sys/wrapping/unwrap', {}, wrapped.wrap_info.token, 400)
