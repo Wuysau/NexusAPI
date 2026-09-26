@@ -12,7 +12,17 @@ try {
     ['legacy migration fixture', 'scripts/verify-legacy-secret-migration.mjs'],
   ]) {
     stage = name
-    execFileSync(process.execPath, [script], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+    try {
+      execFileSync(process.execPath, [script], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+    } catch (error) {
+      if (name === 'Vault identity fixture') {
+        const diagnostic = String(error.stderr ?? '')
+          .split(/\r?\n/)
+          .find((line) => /^Secret Plane fixture failed at (?:docker|go|Vault API|check|fixture) /.test(line))
+        if (diagnostic) console.error(diagnostic)
+      }
+      throw error
+    }
   }
   stage = 'Gateway isolation tests'
   const output = execFileSync(
