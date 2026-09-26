@@ -166,6 +166,22 @@ async function agentLogin(role) {
         return `${name}:${probe.status === 0 ? 'yes' : 'no'}`
       })
       .join(',')
+    const processStatus = spawnSync('docker', ['exec', agent, 'cat', '/proc/1/status'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    })
+    const processUid = /^Uid:\s+(\d+)/m.exec(processStatus.stdout || '')?.[1] || 'unknown'
+    const bootstrapStats = ['/bootstrap/role-id', '/bootstrap/wrapped-secret-id', '/bootstrap/ca.pem']
+      .map((path) => {
+        const probe = spawnSync('docker', ['exec', agent, 'stat', '-c', '%u:%a', path], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+          windowsHide: true,
+        })
+        return probe.status === 0 ? probe.stdout.trim() : 'unknown'
+      })
+      .join(',')
     const signals = [
       ['tls', /x509|certificate|tls handshake/i],
       ['network', /no such host|connection refused|dial tcp|lookup /i],
@@ -178,13 +194,16 @@ async function agentLogin(role) {
       .filter(([, pattern]) => pattern.test(logs))
       .map(([name]) => name)
     const deniedAt = [
-      ['bootstrap', /bootstrap|role-id|wrapped-secret-id|ca\.pem/i],
+      ['role-id', /\/bootstrap\/role-id/i],
+      ['wrapped-id', /\/bootstrap\/wrapped-secret-id/i],
+      ['ca', /\/bootstrap\/ca\.pem/i],
+      ['bootstrap-other', /\/bootstrap(?!\/(?:role-id|wrapped-secret-id|ca\.pem))/i],
       ['sink', /run\/identity|gateway-token|sink/i],
       ['Vault API', /auth\/approle|api request|status code|code:\s*403/i],
     ]
       .filter(([, pattern]) => permissionLines.some((line) => pattern.test(line)))
       .map(([name]) => name)
-    stage = `Vault Agent token bootstrap timeout (container=${status}, exit=${exitCode}, access=${access}, signals=${signals.join(',') || 'none'}, deniedAt=${deniedAt.join(',') || 'unknown'})`
+    stage = `Vault Agent token bootstrap timeout (container=${status}, exit=${exitCode}, uid=${processUid}, bootstrap=${bootstrapStats}, access=${access}, signals=${signals.join(',') || 'none'}, deniedAt=${deniedAt.join(',') || 'unknown'})`
     throw new Error('Agent identity bootstrap failed')
   }
   await call('sys/wrapping/unwrap', {}, wrapped.wrap_info.token, 400)
