@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { readFile, writeFile, mkdir, stat } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { request } from 'node:https'
@@ -84,6 +84,7 @@ async function agentLogin(role) {
   await writeFile(resolve(directory, 'role-id'), roleID, { mode: 0o600 })
   await writeFile(resolve(directory, 'wrapped-secret-id'), wrapped.wrap_info.token, { mode: 0o600 })
   await writeFile(resolve(directory, 'ca.pem'), ca)
+  const { uid, gid } = await stat(resolve(directory, 'role-id'))
   await writeFile(
     resolve(directory, 'agent.hcl'),
     `disable_mlock=true\nvault {\naddress="https://nexus-vault-tls-convergence:8200"\nca_cert="/bootstrap/ca.pem"\n}\nauto_auth {\nmethod "approle" {\nmount_path="auth/approle"\nconfig={ role_id_file_path="/bootstrap/role-id" secret_id_file_path="/bootstrap/wrapped-secret-id" secret_id_response_wrapping_path="auth/approle/role/${role}/secret-id" remove_secret_id_file_after_reading=false }\n}\nsink "file" { config={ path="/run/identity/gateway-token" mode=0600 } }\n}\n`,
@@ -114,9 +115,9 @@ async function agentLogin(role) {
     '--security-opt',
     'no-new-privileges',
     '--tmpfs',
-    '/run/identity:rw,noexec,nosuid,mode=0700',
+    `/run/identity:rw,noexec,nosuid,mode=0700,uid=${uid},gid=${gid}`,
     '--user',
-    '0',
+    `${uid}:${gid}`,
     '--entrypoint',
     'vault',
     '--mount',
