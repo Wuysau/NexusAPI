@@ -126,7 +126,7 @@ async function agentLogin(role) {
     '-config=/bootstrap/agent.hcl',
   ])
   let token
-  for (let n = 0; n < 30; n++) {
+  for (let n = 0; n < 100; n++) {
     try {
       token = command('docker', ['exec', agent, 'cat', '/run/identity/gateway-token']).trim()
       if (token) break
@@ -135,7 +135,10 @@ async function agentLogin(role) {
     }
     await new Promise((r) => setTimeout(r, 300))
   }
-  if (!token) throw new Error('Agent identity bootstrap failed')
+  if (!token) {
+    stage = 'Vault Agent token bootstrap timeout'
+    throw new Error('Agent identity bootstrap failed')
+  }
   await call('sys/wrapping/unwrap', {}, wrapped.wrap_info.token, 400)
   requireCheck('agent_consumed_single_use_wrapped_secret', true)
   const detail = JSON.parse(command('docker', ['inspect', agent]))[0]

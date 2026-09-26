@@ -18,7 +18,7 @@ try {
       if (name === 'Vault identity fixture') {
         const diagnostic = String(error.stderr ?? '')
           .split(/\r?\n/)
-          .find((line) => /^Secret Plane fixture failed at (?:docker|go|Vault API|check|fixture) /.test(line))
+          .find((line) => /^Secret Plane fixture failed at (?:docker|go|Vault API|Vault Agent|check|fixture) /.test(line))
         if (diagnostic) console.error(diagnostic)
       }
       throw error
