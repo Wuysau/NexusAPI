@@ -10,6 +10,7 @@ const env = {
   BUDGET_SERVICE_TOKEN: 'convergence-budget-gateway-fixture-token',
   BUDGET_PORT: '3311',
   BUDGET_HOST: '127.0.0.1',
+  WORKER_POLL_INTERVAL_MS: '200',
   NODE_ENV: 'development',
 }
 const children = []

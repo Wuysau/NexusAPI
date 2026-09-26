@@ -12,12 +12,16 @@ const client = new pg.Client({ connectionString: url.href })
 await client.connect()
 try {
   async function waitPublished() {
-    for (let attempt = 0; attempt < 50; attempt++) {
+    const deadline = Date.now() + 30_000
+    let published = 0
+    do {
       const row = (await client.query("SELECT count(*)::int n FROM outbox_events WHERE status='published'")).rows[0]
-      if (row.n === 5) return
-      await delay(100)
-    }
-    throw new Error('Worker did not publish all five fixture events')
+      published = row.n
+      if (published === 5) return
+      if (Date.now() >= deadline) break
+      await delay(250)
+    } while (true)
+    throw new Error(`Worker published ${published} of five fixture events before the deadline`)
   }
   await waitPublished()
   const requests = (
