@@ -1,6 +1,6 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { request } from 'node:https'
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 
@@ -136,7 +136,32 @@ async function agentLogin(role) {
     await new Promise((r) => setTimeout(r, 300))
   }
   if (!token) {
-    stage = 'Vault Agent token bootstrap timeout'
+    let status = 'unknown'
+    let exitCode = 'unknown'
+    try {
+      const detail = JSON.parse(command('docker', ['inspect', agent]))[0]
+      status = detail.State.Status
+      exitCode = detail.State.ExitCode
+    } catch {
+      /* Keep the failure report safe if the disposable container vanished. */
+    }
+    const result = spawnSync('docker', ['logs', agent], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    })
+    const logs = `${result.stdout || ''}\n${result.stderr || ''}`
+    const signals = [
+      ['tls', /x509|certificate|tls handshake/i],
+      ['network', /no such host|connection refused|dial tcp|lookup /i],
+      ['permission', /permission denied|operation not permitted/i],
+      ['wrapped-secret', /wrapping token|wrapped secret|secret.id/i],
+      ['config', /error parsing|invalid configuration|unknown field/i],
+      ['auth', /error authenticating|invalid role|login failed/i],
+    ]
+      .filter(([, pattern]) => pattern.test(logs))
+      .map(([name]) => name)
+    stage = `Vault Agent token bootstrap timeout (container=${status}, exit=${exitCode}, signals=${signals.join(',') || 'none'})`
     throw new Error('Agent identity bootstrap failed')
   }
   await call('sys/wrapping/unwrap', {}, wrapped.wrap_info.token, 400)
