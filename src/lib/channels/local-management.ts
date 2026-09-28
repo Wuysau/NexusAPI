@@ -16,6 +16,7 @@ export async function createLocalChannel(
   input: {
     name: string
     providerId: string
+    customProvider?: boolean
     secret: unknown
     baseUrl?: unknown
     protocol?: unknown
@@ -42,6 +43,16 @@ export async function createLocalChannel(
   let published = false
   try {
     await db.query('BEGIN')
+    if (input.customProvider) {
+      await db.query(
+        `INSERT INTO providers(code,name,official_base_url)
+         VALUES('custom','自定义','https://custom.invalid')
+         ON CONFLICT(code) DO NOTHING`,
+      )
+      const provider = await db.query<{ id: string }>("SELECT id FROM providers WHERE code='custom' AND enabled=true")
+      if (!provider.rows[0]) throw new LocalCredentialError('invalid_provider', '自定义供应商不可用', 409)
+      binding.provider_id = provider.rows[0].id
+    }
     const envelope = await publishLocalCredential(binding, input.secret)
     published = true
     await db.query(
@@ -49,7 +60,7 @@ export async function createLocalChannel(
       VALUES($1,$2,$3,$4,$5,$6,$7)`,
       [
         binding.credential_id,
-        input.providerId,
+        binding.provider_id,
         ctx.organizationId,
         ctx.tenantId,
         `${input.name} API Key`,
@@ -60,7 +71,7 @@ export async function createLocalChannel(
     const connectionId = await createLocalConnection(
       db,
       ctx,
-      input.providerId,
+      binding.provider_id,
       binding.credential_id,
       envelope.fingerprint,
     )
@@ -69,7 +80,7 @@ export async function createLocalChannel(
       VALUES($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9::jsonb) RETURNING id`,
       [
         ctx.tenantId,
-        input.providerId,
+        binding.provider_id,
         binding.credential_id,
         input.name,
         JSON.stringify(input.capabilities),

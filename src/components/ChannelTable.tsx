@@ -407,17 +407,25 @@ export function ChannelTable({ compact = false }: { compact?: boolean }) {
                     <option value="" disabled>
                       请选择已登记的供应商
                     </option>
-                    {providers.map((p) => (
-                      <option value={p.id} key={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
+                    {providers
+                      .filter((p) => p.code !== 'custom')
+                      .map((p) => (
+                        <option value={p.id} key={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    {localKeyInput && <option value="custom">自定义（兼容接口）</option>}
                   </select>
-                  <small>{localKeyInput ? '选择 API Key 所属的供应商。' : '选择已登记的供应商。'}</small>
+                  <small>
+                    {localKeyInput
+                      ? '未列出的服务可选“自定义”，再填写接口地址、调用协议和模型 ID。'
+                      : '选择已登记的供应商。'}
+                  </small>
                 </label>
                 <label>
                   路由权重
                   <input name="weight" type="number" min={1} max={100} defaultValue={10} required />
+                  <small>同优先级、同状态渠道的相对选中倾向；20 对 10 约为 2:1，并非流量百分比。</small>
                 </label>
               </div>
               {localKeyInput ? (

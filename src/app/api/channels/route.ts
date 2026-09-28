@@ -137,7 +137,10 @@ export async function POST(req: Request) {
       return apiError(400, 'invalid_request', '凭据版本必须为正整数')
 
     const providerRef = typeof body?.provider === 'string' ? body.provider : ''
-    const provider = await findProvider(providerRef)
+    const customProvider = providerRef === 'custom'
+    if (customProvider && !local)
+      return apiError(400, 'custom_requires_local', '自定义供应商仅支持本机控制台录入 API Key')
+    const provider = customProvider ? { id: 'custom', code: 'custom' } : await findProvider(providerRef)
     if (!provider) return apiError(400, 'unknown_provider', '请选择有效的上游供应商')
 
     const capabilities = Array.isArray(body?.capabilities)
@@ -160,6 +163,7 @@ export async function POST(req: Request) {
         await createLocalChannel(ctx, {
           name,
           providerId: provider.id,
+          customProvider,
           secret: body?.secret,
           baseUrl: body?.baseUrl,
           protocol: body?.protocol,
