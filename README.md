@@ -16,6 +16,21 @@ NexusAPI 是以项目为核心的 AI Resource Control Plane。统一查看 API �
 - **任务监督**：通过独立 Codex Profile 执行持久任务，在安全边界按兼容性和额度交接，提供资源池、策略与执行历史。配置与入口见 [任务级资源切换](docs/operations/task-resource-handoff.md)。
 - **管理控制台**：成员权限、审计、账单、模型目录和价格审批。
 
+## Performance Benchmark (2026-09-28)
+
+- **Hardware**: Intel Core Ultra 7 255H / 16 cores, 16 logical processors / 31.6 GiB RAM / Windows 11 Home (build 26200)
+- **Go version**: go1.27.0 windows/amd64
+- **GOMAXPROCS**: 4, 8, or 16 as shown below; host process, not a container
+- **Test method**: `cd services/gateway && go test -run '^TestPerfOverhead$' -count=5 -v .` with each `GOMAXPROCS` value set separately. Each run sends 320 streaming requests at concurrency 16 to a mock upstream with zero think time and eight SSE chunks. The reported p50/p95/p99 values are the median of the five per-run percentiles, calculated from gateway request time minus the run's mean upstream-handler time.
+
+| Config | Concurrency | p50 | p95 | p99 | Notes |
+| --- | ---: | ---: | ---: | ---: | --- |
+| In-process mock, GOMAXPROCS=4 | 16 | 3.71 ms | 11.20 ms | 20.11 ms | 5 runs × 320 requests |
+| In-process mock, GOMAXPROCS=8 | 16 | 4.93 ms | 10.55 ms | 14.68 ms | 5 runs × 320 requests |
+| In-process mock, GOMAXPROCS=16 | 16 | 6.30 ms | 18.35 ms | 22.82 ms | 5 runs × 320 requests |
+
+This benchmark uses an in-memory gateway harness, fixture credentials, fake budget reservation, and a mock upstream. It does **not** measure Redis admission, the real Budget service, PostgreSQL, TLS, or a production deployment. The local control plane and Docker services were running in the background, so these laptop results are indicative rather than a production latency claim. The test implementation and its limits are in [`services/gateway/perf_test.go`](services/gateway/perf_test.go).
+
 本仓库可启用提交后自动合并与推送：运行 `npm run hooks:install`，每次 `git commit` 后将提交合并进 `main` 并推送到 `origin/main`。前提与失败恢复见 [Git 自动同步](docs/operations/git-auto-sync.md)。
 
 ## 环境
