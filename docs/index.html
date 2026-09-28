@@ -152,8 +152,8 @@
               </div>
               <p>
                 在本机控制台填写供应商的接口地址、协议、API Key，并按每行一个填写该渠道支持的模型 ID。
-                保存后可在页面检查上游连接；连接测试只验证第一个模型。渠道决定网关能够调用哪些模型；仅在“我的连接”里登记一条 API
-                连接，不会生成可用渠道。
+                保存后可在页面检查上游连接；连接测试只验证第一个模型。渠道决定网关能够调用哪些模型；仅在“我的连接”里登记一条
+                API 连接，不会生成可用渠道。
               </p>
               <div class="expected">
                 <strong>凭据位置</strong
@@ -260,38 +260,57 @@
               <span>04 / CODING TASKS</span>
               <h2>监督持续编程任务</h2>
               <p>
-                任务页用于查看由 Nexus 启动的编程任务、项目策略、当前资源和交接历史。平常直接运行的 Codex
+                给 Nexus 一个明确的编程目标，它会在本地运行
+                Codex，并在任务页记录进度、当前资源、会话和交接历史。任务页不是待办清单； 平常直接运行的 Codex
                 会话只进入本地用量观测，不会自动变成受监督任务。
               </p>
             </div>
             <div class="callout amber">
-              <strong>需要管理员先完成本地配置</strong>
+              <strong>开始前：准备本地运行环境</strong>
               <p>
-                每个候选账户要有独立的 Codex Profile 与登录目录；管理员还需设置项目工作目录、连接映射及
-                <code>NEXUS_SUPERVISOR_CONFIG</code>。仅添加连接或在页面保存策略，不会自动创建 Profile。
+                在“项目”中登记实际代码工作目录，并为候选账户创建连接。每个候选账户需要独立的 Codex Profile 和登录目录；
+                管理员还需在本机配置项目、连接与 Profile 的映射，设置 <code>NEXUS_SUPERVISOR_CONFIG</code>，
+                并启动启用了任务监督的 Observer。仅添加连接或保存页面策略，不会自动创建 Profile 或启动任务。
               </p>
             </div>
             <ol class="steps">
               <li>
                 <strong>为项目设置路由策略</strong>
                 <p>
-                  打开“任务”，选择项目并编辑策略：确定所需能力、模型限制、候选连接与优先级。“路由”页面会根据当前观测给出候选预览；未知额度不会被当作可用。
+                  打开控制台“任务”页，选择项目，点击“编辑策略”→“添加候选资源”。为每个候选项选择连接，填写与本地配置一致的
+                  Profile 引用，并设置优先级、能力及按需使用的模型限制。保存后可在下方“资源池”查看哪些候选资源可用，
+                  以及不可用的原因。自动切换只在确认资源耗尽或不可用时执行；额度未知不会被当作可用。
                 </p>
               </li>
               <li>
                 <strong>通过 Nexus 启动任务</strong>
                 <p>
-                  在已登记的工作目录中使用 Nexus CLI 提交目标。若目标工作目录不是 NexusAPI 仓库，请按运维说明用 Nexus
-                  脚本的绝对路径启动。
+                  展开页面的“从本地启动任务”，复制命令，在已登记的代码工作目录里运行。将
+                  <code>PROJECT_ID</code> 换成所选项目 ID，并把示例目标改成你希望 Codex 完成的工作。<code
+                    >--persist-context</code
+                  >
+                  表示同意保存本次任务目标和必要的交接上下文；任务由本地 Observer 接手执行。若代码目录不是 NexusAPI
+                  仓库， 请按下方运维说明使用 Nexus 脚本的绝对路径。
                 </p>
                 <pre><code>npm run nexus -- codex --project PROJECT_ID --goal "完成当前编程任务" --persist-context</code></pre>
               </li>
               <li>
-                <strong>在任务页跟进</strong>
+                <strong>查看任务与资源状态</strong>
                 <p>
-                  查看运行状态、当前资源、会话与切换历史；遇到需要人工检查的中断，可在确认上次执行结果后继续或手动切换。资源切换受
-                  Profile 兼容性与最新额度观测约束。
+                  回到“任务”页查看任务状态、当前连接、会话连续性、资源切换和观测用量。页面可见时每 7
+                  秒刷新，也可以手动刷新。 “项目任务 0”表示该项目尚未通过 Nexus 启动托管任务；“可用资源 / 全部 0 /
+                  0”表示策略中还没有可展示的候选资源， 不代表项目没有连接。普通 Codex 对话不会自动出现在此列表。
                 </p>
+              </li>
+              <li>
+                <strong>继续或恢复任务</strong>
+                <p>
+                  任务运行中可在卡片上请求“切换资源”，Nexus 会等待安全边界并尽量保留原会话；暂停或失败后，
+                  先检查工作目录和上次执行结果，再点击“恢复任务”。如果任务已完成，还想沿用原目标继续工作，
+                  在本地终端提交新指令。<code>TASK_ID</code> 可从任务卡片或下方状态命令获取。
+                </p>
+                <pre><code>npm run nexus -- status --project PROJECT_ID
+npm run nexus -- continue --project PROJECT_ID --task TASK_ID --instruction "继续完成剩余工作"</code></pre>
               </li>
             </ol>
             <p class="detail-link">
