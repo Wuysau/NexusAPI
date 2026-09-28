@@ -20,11 +20,15 @@ export interface WorkspaceConnection {
   accountStatus?: string | null
   accountPlan?: string | null
   id: string
+  owner_user_id: string | null
   provider: string
   mode: string
   status: string
   project_id: string | null
   project_name: string | null
+  channelId: string | null
+  channelName: string | null
+  channelEnabled: boolean | null
   provider_identifier: string | null
   subscription_product: string | null
   revoked_at: string | null

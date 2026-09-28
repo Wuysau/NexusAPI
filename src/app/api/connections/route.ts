@@ -10,6 +10,7 @@ export async function GET(req: Request) {
     const ctx = await requireContext(req, 'credential:read')
     const result = await pool.query(
       `SELECT c.id,c.provider,c.mode,c.status,c.owner_user_id,c.project_id,p.name project_name,c.credential_fingerprint,
+        bound_channel.id "channelId",bound_channel.name "channelName",bound_channel.enabled "channelEnabled",
         CASE WHEN c.account_observation->>'organizationId'=$2 THEN c.account_observation->>'status' END "accountStatus",
         CASE WHEN c.account_observation->>'organizationId'=$2 THEN c.account_observation->'account'->>'planType' END "accountPlan",
         c.capabilities->>'provider_identifier' provider_identifier,c.capabilities->>'subscription_product' subscription_product,
@@ -17,6 +18,12 @@ export async function GET(req: Request) {
           'routing',c.capabilities->'routing','provider_identifier',c.capabilities->'provider_identifier','subscription_product',c.capabilities->'subscription_product') capabilities,
         c.last_heartbeat_at,c.revoked_at,c.created_at,observed.events "observedEvents",observed.sessions "observedSessions",observed.last_activity "lastObservedAt"
        FROM owned_connections c LEFT JOIN projects p ON p.id=c.project_id AND p.tenant_id=$1 AND p.organization_id=$2
+       LEFT JOIN LATERAL (
+         SELECT ch.id,ch.name,ch.enabled FROM channels ch
+         JOIN provider_credentials pc ON pc.id=ch.provider_credential_id AND pc.tenant_id=ch.tenant_id
+         WHERE ch.tenant_id=c.tenant_id AND pc.organization_id=$2 AND ch.metadata->>'connection_id'=c.id
+         ORDER BY ch.created_at DESC LIMIT 1
+       ) bound_channel ON true
        LEFT JOIN LATERAL (
         SELECT count(*)::text events,count(DISTINCT external_session_id)::text sessions,max(occurred_at) last_activity
         FROM external_observed_usage e WHERE e.connection_id=c.id AND ${observedVisibility}

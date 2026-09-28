@@ -39,6 +39,7 @@ function state(c: WorkspaceConnection) {
   if (revoked(c)) return '已撤销'
   if (c.status === 'blocked') return '已阻止'
   if (c.status === 'expired') return '已过期'
+  if (c.channelId) return c.channelEnabled ? '已关联渠道' : '渠道已停用'
   if (c.mode === 'subscription_interactive')
     return c.accountStatus
       ? (accountStatusLabels[c.accountStatus] ?? '尚未同步')
@@ -65,6 +66,7 @@ export default function ConnectionsPage() {
   const [provider, setProvider] = useState('openai')
   const [identifier, setIdentifier] = useState('openai')
   const [projectId, setProjectId] = useState('')
+  const [setupProjectId, setSetupProjectId] = useState('')
   const [source, setSource] = useState('')
   const [pickingPath, setPickingPath] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -110,6 +112,29 @@ export default function ConnectionsPage() {
       await reload()
     } catch (e) {
       setFormError(errorMessage(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  async function saveProject(e: FormEvent) {
+    e.preventDefault()
+    if (!setup || busy) return
+    setBusy(true)
+    setFormError('')
+    try {
+      const nextProjectId = setupProjectId || null
+      await apiSend(`/api/connections/${encodeURIComponent(setup.id)}/project`, 'PATCH', {
+        projectId: nextProjectId,
+      })
+      setSetup({
+        ...setup,
+        project_id: nextProjectId,
+        project_name: projectData.items.find((project) => project.id === nextProjectId)?.name ?? null,
+      })
+      setNotice(nextProjectId ? '连接已绑定到项目；该项目原有连接保持不变。' : '连接已取消项目绑定。')
+      await reload()
+    } catch (error) {
+      setFormError(errorMessage(error))
     } finally {
       setBusy(false)
     }
@@ -179,7 +204,7 @@ export default function ConnectionsPage() {
           <strong>{loading && !connections.length ? '—' : connections.length}</strong>
         </div>
         <div>
-          <span>有用量的连接</span>
+          <span>有本地观测的连接</span>
           <strong>{connections.filter((c) => !revoked(c) && BigInt(c.observedEvents) > 0n).length}</strong>
         </div>
         <div>
@@ -236,7 +261,7 @@ export default function ConnectionsPage() {
                 </div>
                 <span
                   className={
-                    ['已有观测', '已上报心跳', '已连接', '已连接 · Connected'].includes(state(c))
+                    ['已有观测', '已上报心跳', '已连接', '已连接 · Connected', '已关联渠道'].includes(state(c))
                       ? styles.badge
                       : styles.mutedBadge
                   }
@@ -245,22 +270,36 @@ export default function ConnectionsPage() {
                 </span>
               </div>
               <div className={styles.cardBody}>
-                <div className={styles.metrics}>
-                  <div>
-                    <strong>{count(c.observedSessions)}</strong>
-                    <span>本地会话</span>
+                {!c.channelId && (
+                  <div className={styles.metrics}>
+                    <div>
+                      <strong>{count(c.observedSessions)}</strong>
+                      <span>本地会话</span>
+                    </div>
+                    <div>
+                      <strong>{count(c.observedEvents)}</strong>
+                      <span>用量记录</span>
+                    </div>
                   </div>
-                  <div>
-                    <strong>{count(c.observedEvents)}</strong>
-                    <span>用量记录</span>
-                  </div>
-                </div>
+                )}
                 <dl className={styles.details}>
                   <dt>绑定项目</dt>
-                  <dd>{c.project_name ?? '未绑定 · 按工作目录归属'}</dd>
-                  <dt>最近观测</dt>
-                  <dd>{localDate(c.lastObservedAt)}</dd>
-                  {c.mode !== 'subscription_interactive' && (
+                  <dd>
+                    {c.project_name ?? (c.mode === 'subscription_interactive' ? '未绑定 · 按工作目录归属' : '未绑定')}
+                  </dd>
+                  {c.channelId && (
+                    <>
+                      <dt>关联渠道</dt>
+                      <dd>{c.channelName ?? c.channelId}</dd>
+                    </>
+                  )}
+                  {!c.channelId && (
+                    <>
+                      <dt>最近观测</dt>
+                      <dd>{localDate(c.lastObservedAt)}</dd>
+                    </>
+                  )}
+                  {c.mode !== 'subscription_interactive' && !c.channelId && (
                     <>
                       <dt>最近心跳</dt>
                       <dd>{localDate(c.last_heartbeat_at)}</dd>
@@ -273,6 +312,7 @@ export default function ConnectionsPage() {
                   className={styles.link}
                   onClick={() => {
                     setSetup(c)
+                    setSetupProjectId(c.project_id ?? '')
                     setFormError('')
                     setCopied(false)
                     setSource('')
@@ -298,7 +338,8 @@ export default function ConnectionsPage() {
         </div>
       )}
       <HelpDetails label="连接与用量说明">
-        添加连接后需完成配置。本地用量独立于官方额度与账单，撤销连接后仍保留历史记录。 API 模型调用请在渠道管理中配置。
+        上游渠道会自动生成关联连接；这类连接不采集本地会话或心跳，API
+        请求请到用量分析查看。订阅连接的本地用量独立于官方额度与账单，撤销连接后仍保留历史记录。
       </HelpDetails>
       {creating && (
         <WorkspaceDialog title="添加连接" busy={busy} onClose={() => setCreating(false)}>
@@ -403,9 +444,64 @@ export default function ConnectionsPage() {
         <WorkspaceDialog title={title(setup) + ' · 连接详情'} onClose={() => setSetup(null)}>
           <div className={styles.form}>
             {revoked(setup) && <WorkspaceNotice>连接已撤销，当前显示历史记录。</WorkspaceNotice>}
-            {!revoked(setup) && setup.mode !== 'subscription_interactive' && (
-              <WorkspaceNotice>已登记连接，可用状态请在渠道管理中查看。</WorkspaceNotice>
+            {!revoked(setup) && setup.channelId && (
+              <WorkspaceNotice>
+                此连接由上游渠道「{setup.channelName ?? setup.channelId}」自动创建。接口与模型在渠道管理查看，API Key
+                可在渠道管理更换。
+              </WorkspaceNotice>
             )}
+            {!revoked(setup) && setup.mode !== 'subscription_interactive' && !setup.channelId && (
+              <WorkspaceNotice>这是连接登记；若要调用上游 API，请在渠道管理中添加渠道。</WorkspaceNotice>
+            )}
+            <dl className={styles.details}>
+              <dt>绑定项目</dt>
+              <dd>{setup.project_name ?? '未绑定'}</dd>
+              {setup.channelId && (
+                <>
+                  <dt>关联渠道</dt>
+                  <dd>{setup.channelName ?? setup.channelId}</dd>
+                </>
+              )}
+            </dl>
+            {!revoked(setup) &&
+              can('project:update') &&
+              session &&
+              (['owner', 'admin'].includes(session.role) || setup.owner_user_id === session.user.id) && (
+                <form className={styles.form} onSubmit={(event) => void saveProject(event)}>
+                  <label className={styles.field}>
+                    更改绑定项目
+                    <select
+                      aria-label="更改绑定项目"
+                      value={setupProjectId}
+                      onChange={(event) => setSetupProjectId(event.target.value)}
+                      disabled={busy || projectData.loading || Boolean(projectData.error)}
+                    >
+                      <option value="">不绑定项目</option>
+                      {setup.project_id && !projectData.items.some((project) => project.id === setup.project_id) && (
+                        <option value={setup.project_id}>{setup.project_name ?? '原项目（已不可用）'}</option>
+                      )}
+                      {projectData.items.map((project) => (
+                        <option key={project.id} value={project.id}>
+                          {project.name}
+                        </option>
+                      ))}
+                    </select>
+                    <span className={styles.hint}>一个项目可以绑定多个连接；修改当前连接不会改变历史用量归属。</span>
+                  </label>
+                  {projectData.error && <WorkspaceNotice error>项目加载失败，请刷新后重试。</WorkspaceNotice>}
+                  <button
+                    className={styles.secondary}
+                    disabled={
+                      busy ||
+                      projectData.loading ||
+                      Boolean(projectData.error) ||
+                      setupProjectId === (setup.project_id ?? '')
+                    }
+                  >
+                    {busy ? '保存中…' : '保存项目绑定'}
+                  </button>
+                </form>
+              )}
             {setup.mode === 'subscription_interactive' && (
               <CodexAccountPanel
                 key={`account:${setup.id}`}
