@@ -27,6 +27,7 @@ interface Channel {
   baseUrl: string
   protocol: 'openai' | 'anthropic' | null
   model: string | null
+  models: string[]
   verification?: Verification | null
   credential: {
     id: string
@@ -108,7 +109,10 @@ export function ChannelTable({ compact = false }: { compact?: boolean }) {
               secret: data.get('secret'),
               baseUrl: data.get('baseUrl'),
               protocol: data.get('protocol'),
-              model: data.get('model'),
+              models: String(data.get('models') ?? '')
+                .split(/\r?\n/)
+                .map((model) => model.trim())
+                .filter(Boolean),
             }
           : {
               credentialId: data.get('credentialId'),
@@ -272,7 +276,7 @@ export function ChannelTable({ compact = false }: { compact?: boolean }) {
                               {channel.protocol && (
                                 <span style={{ display: 'block' }}>
                                   {channel.protocol === 'anthropic' ? 'Anthropic Messages' : 'OpenAI Chat Completions'}
-                                  {channel.model ? ` · ${channel.model}` : ''}
+                                  {channel.models.length ? ` · ${channel.models.join('、')}` : ''}
                                 </span>
                               )}
                             </span>
@@ -455,8 +459,16 @@ export function ChannelTable({ compact = false }: { compact?: boolean }) {
                     </select>
                   </label>
                   <label>
-                    模型 ID
-                    <input name="model" required placeholder="服务商提供的模型 ID" autoComplete="off" />
+                    模型 ID（每行一个）
+                    <textarea
+                      name="models"
+                      required
+                      rows={4}
+                      placeholder={'服务商提供的模型 ID，例如：\nmodel-large\nmodel-fast'}
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    <small>网关模型列表会列出这些 ID。测试连接仅验证第一个模型。</small>
                   </label>
                   <label>
                     API Key

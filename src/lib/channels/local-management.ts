@@ -6,6 +6,7 @@ import { createLocalConnection } from './local-routing'
 import {
   LocalCredentialError,
   localConnectionConfig,
+  localModelIds,
   publishLocalCredential,
   removeLocalCredential,
   type LocalCredentialBinding,
@@ -21,13 +22,15 @@ export async function createLocalChannel(
     baseUrl?: unknown
     protocol?: unknown
     model?: unknown
+    models?: unknown
     capabilities: string[]
     weight: number
     priority: number
     region: string
   },
 ) {
-  const config = localConnectionConfig(input)
+  const models = localModelIds(input.models ?? input.model)
+  const config = localConnectionConfig({ ...input, model: models[0] })
   if (typeof input.secret !== 'string') throw new LocalCredentialError('invalid_api_key', '请填写 API Key')
   const binding: LocalCredentialBinding = {
     tenant_id: ctx.tenantId,
@@ -93,6 +96,7 @@ export async function createLocalChannel(
           base_url: config.baseUrl,
           protocol: config.protocol,
           model: config.model,
+          models,
           connection_id: connectionId,
         }),
       ],

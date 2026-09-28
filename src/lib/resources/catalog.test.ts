@@ -74,7 +74,7 @@ describe('unified execution resource catalog', () => {
           enabled: true,
           priority: 2,
           capabilities: ['chat'],
-          metadata: { connection_id: 'conn-api', model: 'gpt-x' },
+          metadata: { connection_id: 'conn-api', model: 'gpt-x', models: ['gpt-x', 'gpt-y'] },
         },
       ],
       [],
@@ -88,7 +88,7 @@ describe('unified execution resource catalog', () => {
         resourceType: 'api',
         executionMode: 'gateway',
         quotaState: 'unknown',
-        supportedModels: ['gpt-x'],
+        supportedModels: ['gpt-x', 'gpt-y'],
         routingStatus: 'configured',
       },
     ])

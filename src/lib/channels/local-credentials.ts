@@ -110,6 +110,18 @@ export function localConnectionConfig(body: { baseUrl?: unknown; protocol?: unkn
     throw new LocalCredentialError('invalid_model', '请填写上游模型名称')
   return { baseUrl, protocol: body.protocol as 'openai' | 'anthropic', model: body.model.trim() }
 }
+export function localModelIds(value: unknown): string[] {
+  const entries = typeof value === 'string' ? [value] : value
+  if (!Array.isArray(entries) || entries.length < 1 || entries.length > 50)
+    throw new LocalCredentialError('invalid_models', '请填写 1–50 个上游模型 ID')
+  const models = entries.map((entry) => {
+    if (typeof entry !== 'string' || !entry.trim() || entry.length > 200 || /[\x00-\x1f\x7f]/.test(entry))
+      throw new LocalCredentialError('invalid_models', '每个上游模型 ID 须为不超过 200 字符的有效文本')
+    return entry.trim()
+  })
+  if (new Set(models).size !== models.length) throw new LocalCredentialError('invalid_models', '上游模型 ID 不能重复')
+  return models
+}
 function validateBinding(b: LocalCredentialBinding) {
   if (
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(b.credential_id) ||

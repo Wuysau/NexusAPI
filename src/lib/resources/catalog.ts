@@ -257,7 +257,11 @@ export function buildResourceCatalog(
             : 'pending',
       priority: channel.priority,
       capabilities: stringArray(channel.capabilities),
-      supportedModels: stringValue(channel.metadata?.model) ? [channel.metadata!.model as string] : [],
+      supportedModels: Array.isArray(channel.metadata?.models)
+        ? stringArray(channel.metadata?.models)
+        : stringValue(channel.metadata?.model)
+          ? [channel.metadata?.model as string]
+          : [],
       quotaState: 'unknown',
       resetAt: null,
       usedPercent: null,

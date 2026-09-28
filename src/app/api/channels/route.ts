@@ -59,6 +59,11 @@ function safeChannel(row: ChannelRow) {
     baseUrl: row.metadata?.credential_storage === 'local' ? row.metadata.base_url : row.official_base_url,
     protocol: row.metadata?.protocol ?? null,
     model: row.metadata?.model ?? null,
+    models: Array.isArray(row.metadata?.models)
+      ? row.metadata.models.filter((model): model is string => typeof model === 'string')
+      : typeof row.metadata?.model === 'string'
+        ? [row.metadata.model]
+        : [],
     verification: row.metadata?.verification ?? null,
     credential: row.provider_credential_id
       ? {
@@ -116,6 +121,7 @@ interface CreateChannelBody {
   baseUrl?: unknown
   protocol?: unknown
   model?: unknown
+  models?: unknown
 }
 
 export async function POST(req: Request) {
@@ -168,6 +174,7 @@ export async function POST(req: Request) {
           baseUrl: body?.baseUrl,
           protocol: body?.protocol,
           model: body?.model,
+          models: body?.models,
           capabilities,
           weight,
           priority,

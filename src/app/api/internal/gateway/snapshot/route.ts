@@ -19,7 +19,7 @@ import { createHmac } from 'node:crypto'
 import { pool } from '@/db'
 import { canonicalJson, signSnapshot, signingKeyIdFor } from '@/lib/catalog/snapshot'
 import { snapshotSigningKeyring } from '@/lib/secrets/snapshot-signing'
-import { localConnectionConfig, localKeyInputAllowed } from '@/lib/channels/local-credentials'
+import { localConnectionConfig, localKeyInputAllowed, localModelIds } from '@/lib/channels/local-credentials'
 import { buildLocalSnapshot } from '@/lib/channels/local-snapshot'
 import { internalError, normalizeTenantScope, requireGatewayToken } from '../_shared'
 
@@ -268,6 +268,8 @@ async function loadChannels(tenantId: string | null, localOnly = false) {
         metadata.credential_storage === 'local'
           ? localConnectionConfig({ baseUrl: metadata.base_url, protocol: metadata.protocol, model: metadata.model })
           : null
+      const localModels = local ? localModelIds(metadata.models ?? metadata.model) : null
+      if (local && localModels?.[0] !== local.model) throw new Error('Invalid local channel model binding')
       if (row.credential_id) {
         const owned =
           row.credential_tenant_id !== null &&
@@ -320,7 +322,7 @@ async function loadChannels(tenantId: string | null, localOnly = false) {
           : row.auth_scheme === 'x-api-key'
             ? 'x_api_key'
             : row.auth_scheme,
-        models: local ? [local.model] : (row.models ?? []),
+        models: localModels ?? row.models ?? [],
         region: row.region,
         data_residency: typeof metadata.data_residency === 'string' ? metadata.data_residency : row.region,
         credential_mode: credentialMode,

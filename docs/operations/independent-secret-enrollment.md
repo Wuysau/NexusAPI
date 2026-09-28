@@ -2,7 +2,7 @@
 
 ## Local desktop UI
 
-For the nonproduction local desktop console, open **渠道管理 → 添加渠道**, select a supplier, enter its Base URL, API protocol, model ID and API Key, then save. The credential ID is generated automatically. Save does not call the provider; **测试连接（少量额度）** sends one minimal request. **替换 API Key** saves a new version without returning the previous key. These diagnostics do not claim gateway routing or billing settlement.
+For the nonproduction local desktop console, open **渠道管理 → 添加渠道**, select a supplier, enter its Base URL, API protocol, one or more model IDs (one per line), and API Key, then save. The credential ID is generated automatically. Save does not call the provider; **测试连接（少量额度）** sends one minimal request using the first configured model. **替换 API Key** saves a new version without returning the previous key. These diagnostics do not claim gateway routing or billing settlement.
 
 The local profile requires exact loopback `NEXUS_DESKTOP_ORIGIN`, authenticated administrator capabilities and CSRF. Normal Windows development startup configures the desktop origin. API keys are AES-256-GCM encrypted in credential records and local encrypted files. The random master key and encrypted files live under `~/.nexusapi/credentials` by default; `NEXUS_LOCAL_CREDENTIAL_DIR` overrides that directory. Keep this directory private and back it up together with the database; a lost master key cannot decrypt existing credentials. No plaintext key is persisted or returned by channel reads.
 

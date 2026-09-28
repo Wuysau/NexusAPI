@@ -10,6 +10,7 @@ import {
   publishLocalCredential,
   readLocalCredential,
   localKeyInputAllowed,
+  localModelIds,
 } from './local-credentials'
 
 const binding = () => ({
@@ -26,6 +27,12 @@ afterEach(async () => {
   for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true })
 })
 describe('local UI credential boundary', () => {
+  it('accepts distinct model IDs while keeping a single legacy model readable', () => {
+    expect(localModelIds([' model-large ', 'model-fast'])).toEqual(['model-large', 'model-fast'])
+    expect(localModelIds('legacy-model')).toEqual(['legacy-model'])
+    for (const invalid of [[], ['same', 'same'], ['valid', ''], ['valid', 3], Array(51).fill('model')])
+      expect(() => localModelIds(invalid)).toThrow()
+  })
   it('encrypts with randomized nonce, authenticates complete identity and endpoint, never serializes plaintext', () => {
     const key = randomBytes(32),
       b = binding(),

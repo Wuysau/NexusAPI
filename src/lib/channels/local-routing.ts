@@ -1,6 +1,6 @@
 import type { PoolClient } from 'pg'
 import type { ControlPlaneContext } from '@/app/api/_lib/control-plane'
-import { LocalCredentialError } from './local-credentials'
+import { LocalCredentialError, localModelIds } from './local-credentials'
 
 export async function createLocalConnection(
   db: PoolClient,
@@ -54,5 +54,11 @@ export async function prepareLocalRouting(db: PoolClient, ctx: ControlPlaneConte
       [connectionId, id, ctx.tenantId],
     )
   }
-  return { id, connectionId, model: row.metadata.model, routingConfigured: true }
+  return {
+    id,
+    connectionId,
+    model: row.metadata.model,
+    models: localModelIds(row.metadata.models ?? row.metadata.model),
+    routingConfigured: true,
+  }
 }

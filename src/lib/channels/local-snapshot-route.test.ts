@@ -114,6 +114,28 @@ it('exports saved protocol/model/endpoint without querying or promoting the shar
   expect(body.bundle.snapshot.price_versions).toEqual([])
 })
 
+it('publishes every configured local model for gateway routing and model selection', async () => {
+  query.mockImplementation(async (sql: string) => ({
+    rows: sql.includes('FROM channels c')
+      ? [savedChannel({ metadata: { ...savedChannel().metadata, models: ['saved/model', 'saved/fast'] } })]
+      : [],
+  }))
+  const response = await GET(request('?tenant_id=tenant-a'))
+  expect(response.status).toBe(200)
+  const body = await response.json()
+  expect(body.bundle.channels[0].models).toEqual(['saved/fast', 'saved/model'])
+  expect(body.bundle.models.map((m: { id: string }) => m.id)).toEqual(['saved/fast', 'saved/model'])
+})
+
+it('rejects a local model list that no longer matches the credential-bound primary model', async () => {
+  query.mockImplementation(async (sql: string) => ({
+    rows: sql.includes('FROM channels c')
+      ? [savedChannel({ metadata: { ...savedChannel().metadata, models: ['unexpected/model', 'saved/model'] } })]
+      : [],
+  }))
+  expect((await GET(request('?tenant_id=tenant-a'))).status).toBe(500)
+})
+
 it.each([
   { connection_tenant_id: 'tenant-b' },
   { credential_org_tenant_id: 'tenant-b' },

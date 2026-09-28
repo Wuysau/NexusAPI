@@ -12,7 +12,12 @@ vi.mock('@/app/api/_lib/control-plane', () => ({ auditControlPlane: vi.fn() }))
 vi.mock('./local-routing', () => ({ createLocalConnection }))
 vi.mock('./local-credentials', () => ({
   LocalCredentialError: class extends Error {},
-  localConnectionConfig: () => ({ baseUrl: 'https://example.invalid/v1', protocol: 'openai', model: 'example-model' }),
+  localConnectionConfig: (input: { model: string }) => ({
+    baseUrl: 'https://example.invalid/v1',
+    protocol: 'openai',
+    model: input.model,
+  }),
+  localModelIds: (value: string | string[]) => (Array.isArray(value) ? value : [value]),
   publishLocalCredential,
   removeLocalCredential: vi.fn(),
 }))
@@ -44,7 +49,7 @@ it('registers a custom provider and uses its actual ID for every local channel b
       secret: 'synthetic-key',
       baseUrl: 'https://example.invalid/v1',
       protocol: 'openai',
-      model: 'example-model',
+      models: ['model-large', 'model-fast'],
       capabilities: ['chat'],
       weight: 10,
       priority: 0,
@@ -54,9 +59,14 @@ it('registers a custom provider and uses its actual ID for every local channel b
 
   expect(query.mock.calls.some(([sql]) => sql.includes("VALUES('custom','自定义'"))).toBe(true)
   expect(publishLocalCredential.mock.calls[0][0].provider_id).toBe('actual-provider-id')
+  expect(publishLocalCredential.mock.calls[0][0].model).toBe('model-large')
   expect(createLocalConnection.mock.calls[0][2]).toBe('actual-provider-id')
   const credentialInsert = query.mock.calls.find(([sql]) => sql.includes('INSERT INTO provider_credentials'))
   const channelInsert = query.mock.calls.find(([sql]) => sql.includes('INSERT INTO channels'))
   expect(credentialInsert?.[1][1]).toBe('actual-provider-id')
   expect(channelInsert?.[1][1]).toBe('actual-provider-id')
+  expect(JSON.parse(channelInsert?.[1][8])).toMatchObject({
+    model: 'model-large',
+    models: ['model-large', 'model-fast'],
+  })
 })

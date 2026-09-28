@@ -47,7 +47,7 @@ export default function DocsPage() {
             <div>
               <h3>添加渠道</h3>
               <p>
-                先通过独立凭据流程录入并授权上游密钥，再在渠道管理中登记凭据引用。由部署方发布有效的模型路由与价格快照。
+                本机控制台可在渠道管理中填写上游地址、协议、API Key，以及每行一个的模型 ID。其他部署方式需先通过独立凭据流程录入并授权上游密钥，再登记凭据引用；由部署方发布有效的模型路由与价格快照。
               </p>
               <Link className="text-link" href="/channels">
                 前往渠道管理 <ArrowRight size={14} />

@@ -1857,7 +1857,8 @@ tbody tr:hover {
   font-weight: 500;
 }
 .form-body input:not([type='checkbox']),
-.form-body select {
+.form-body select,
+.form-body textarea {
   border: 1px solid #e0e6eb;
   border-radius: 6px;
   background: #fff;
@@ -1868,7 +1869,13 @@ tbody tr:hover {
   min-width: 0;
   height: 39px;
 }
-.form-body input::placeholder {
+.form-body textarea {
+  height: auto;
+  min-height: 90px;
+  resize: vertical;
+}
+.form-body input::placeholder,
+.form-body textarea::placeholder {
   color: #b0b8c1;
   font-size: 11px;
 }
