@@ -1,5 +1,5 @@
 'use client'
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { FolderKanban, Plus, ArrowUpRight, Folder, Pencil, Archive, RotateCcw, Eye } from 'lucide-react'
 import Link from 'next/link'
 import { HelpDetails } from '@/components/HelpDetails'
@@ -17,6 +17,7 @@ import {
   type WorkspaceProject,
 } from '@/components/workspace/Workspace'
 import { ProjectDetails } from '@/components/workspace/ProjectDetails'
+import { projectAnalyticsHref } from '@/components/workspace/project-analytics-link'
 import styles from '@/components/workspace/workspace.module.css'
 
 export default function ProjectsPage() {
@@ -37,6 +38,19 @@ export default function ProjectsPage() {
   const [busy, setBusy] = useState(false)
   const [formError, setFormError] = useState('')
   const [notice, setNotice] = useState('')
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState === 'visible') void reload()
+    }
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', refresh)
+    const timer = window.setInterval(refresh, 30_000)
+    return () => {
+      window.removeEventListener('focus', refresh)
+      document.removeEventListener('visibilitychange', refresh)
+      window.clearInterval(timer)
+    }
+  }, [reload])
   const filtered = projects.filter(
     (p) =>
       (status === 'all' || (status === 'archived' ? p.status === 'archived' : p.status !== 'archived')) &&
@@ -192,7 +206,7 @@ export default function ProjectsPage() {
                   <dd>
                     {p.memberCount} 位 / {p.connectionCount} 个
                   </dd>
-                  <dt>最近观测</dt>
+                  <dt title="已导入的最新一条本地用量事件的发生时间">最近用量事件</dt>
                   <dd>{localDate(p.lastObservedAt)}</dd>
                 </dl>
                 <div className={styles.root}>
@@ -201,7 +215,7 @@ export default function ProjectsPage() {
                 </div>
               </div>
               <div className={styles.footer}>
-                <Link className={styles.link} href={`/projects/${encodeURIComponent(p.id)}/analytics`}>
+                <Link className={styles.link} href={projectAnalyticsHref(p.id, p.firstObservedAt)}>
                   用量分析
                   <ArrowUpRight size={14} />
                 </Link>
@@ -235,7 +249,9 @@ export default function ProjectsPage() {
         </div>
       )}
       <HelpDetails label="项目用量如何归属">
-        卡片展示全部历史 Codex 本地用量，按工作目录匹配项目。网关请求与费用请查看「用量分析」。
+        卡片展示全部历史 Codex
+        本地用量，按工作目录匹配项目；进入用量分析时默认覆盖这些历史记录。最近用量事件取事件发生时间，Observer
+        导入后页面会自动更新。网关请求与费用请查看「用量分析」。
       </HelpDetails>
       {detail && <ProjectDetails project={detail} onClose={() => setDetail(null)} />}
       {editing && (

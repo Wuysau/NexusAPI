@@ -13,6 +13,7 @@ export interface WorkspaceProject {
   workspaceRoots: string[]
   observedSessions: string
   observedEvents: string
+  firstObservedAt: string | null
   lastObservedAt: string | null
 }
 export interface WorkspaceConnection {

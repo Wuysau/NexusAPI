@@ -20,9 +20,10 @@ export async function GET(req: Request) {
         (SELECT count(*)::int FROM project_memberships pm WHERE pm.tenant_id=$1 AND pm.project_id=p.id) member_count,
         (SELECT count(*)::int FROM owned_connections oc WHERE oc.tenant_id=$1 AND oc.project_id=p.id AND oc.revoked_at IS NULL) connection_count,
         ARRAY(SELECT root FROM project_workspace_roots r WHERE r.tenant_id=$1 AND r.organization_id=$2 AND r.project_id=p.id ORDER BY root) workspace_roots,
-        observed.events,observed.sessions,observed.last_activity
+        observed.events,observed.sessions,observed.first_activity,observed.last_activity
        FROM projects p LEFT JOIN LATERAL (
-        SELECT count(*)::text events,count(DISTINCT external_session_id)::text sessions,max(occurred_at) last_activity
+        SELECT count(*)::text events,count(DISTINCT external_session_id)::text sessions,
+          min(occurred_at) first_activity,max(occurred_at) last_activity
         FROM external_observed_usage e WHERE e.tenant_id=$1 AND e.organization_id=$2 AND e.project_id=p.id
        ) observed ON true WHERE ${projectVisibility}
          AND ($5='all' OR ($5='active' AND p.archived_at IS NULL) OR ($5='archived' AND p.archived_at IS NOT NULL)) ORDER BY p.created_at DESC`,
@@ -39,6 +40,7 @@ export async function GET(req: Request) {
         workspaceRoots: r.workspace_roots,
         observedEvents: r.events,
         observedSessions: r.sessions,
+        firstObservedAt: r.first_activity?.toISOString() ?? null,
         lastObservedAt: r.last_activity?.toISOString() ?? null,
       })),
     })

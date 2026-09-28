@@ -217,7 +217,8 @@ function AnalyticsResults({ query }: { query: string }) {
 export function ProjectAnalyticsView({
   initialProjectId = '',
   initialUsageSource = 'all',
-}: { initialProjectId?: string; initialUsageSource?: string } = {}) {
+  initialFrom = '',
+}: { initialProjectId?: string; initialUsageSource?: string; initialFrom?: string } = {}) {
   const { session } = useSession()
   const projects = useCollection<WorkspaceProject>('/api/projects', 'projects')
   const [revision, setRevision] = useState(0)
@@ -228,7 +229,10 @@ export function ProjectAnalyticsView({
   const [usageSource, setUsageSource] = useState(initialUsageSource)
   const [provider, setProvider] = useState('')
   const [model, setModel] = useState('')
-  const [dates, setDates] = useState(defaultAnalyticsDates)
+  const [dates, setDates] = useState(() => {
+    const defaults = defaultAnalyticsDates()
+    return initialFrom ? { ...defaults, from: initialFrom } : defaults
+  })
   const organizationId = session?.organization.id
   const request = useMemo(() => {
     try {

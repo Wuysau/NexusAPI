@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { useApiData } from '@/components/lib/useApiData'
 import { LoadingState } from '@/components/States'
 import { WorkspaceDialog, WorkspaceNotice, localDate, type WorkspaceProject } from './Workspace'
+import { projectAnalyticsHref } from './project-analytics-link'
 import styles from './workspace.module.css'
 
 interface Details {
@@ -68,7 +69,7 @@ export function ProjectDetails({ project, onClose }: { project: WorkspaceProject
           <button className={styles.secondary} onClick={onClose}>
             关闭
           </button>
-          <Link className={styles.primary} href={`/projects/${encodeURIComponent(project.id)}/analytics`}>
+          <Link className={styles.primary} href={projectAnalyticsHref(project.id, project.firstObservedAt)}>
             查看用量分析
           </Link>
         </div>

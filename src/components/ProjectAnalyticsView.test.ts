@@ -7,6 +7,7 @@ import { ProjectAnalyticsView } from './ProjectAnalyticsView'
 const state = vi.hoisted(() => ({ data: {} as unknown, path: '' }))
 vi.mock('./lib/useApiData', () => ({
   useApiData: (path: string) => {
+    if (path.endsWith('/quota')) return { data: { connections: [] }, loading: false, forbidden: false, error: null }
     state.path = path
     return { data: state.data, loading: false, forbidden: false, error: null }
   },
@@ -60,4 +61,15 @@ it('emits a valid default timestamp query and all canonical grouping choices', (
   expect(html).toContain('value="day"')
   expect(html).toContain('value="subscription"')
   expect(new URL(state.path, 'http://localhost').searchParams.get('usageSource')).toBe('all')
+})
+
+it('starts project analytics at the project card’s first observation date', () => {
+  const props = { initialProjectId: 'project-a', initialFrom: '2026-09-14' }
+  const html = renderToStaticMarkup(
+    React.createElement(ProjectAnalyticsView as React.FunctionComponent<typeof props>, props),
+  )
+  const query = new URL(state.path, 'http://localhost').searchParams
+  expect(query.get('projectId')).toBe('project-a')
+  expect(query.get('from')).toBe(new Date(2026, 8, 14).toISOString())
+  expect(html).toContain('value="2026-09-14"')
 })
