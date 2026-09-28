@@ -1,6 +1,5 @@
 'use client'
-import { Fragment, useMemo, useState } from 'react'
-import { ChevronDown, ChevronRight } from 'lucide-react'
+import { useMemo, useState } from 'react'
 import { HelpDetails } from '@/components/HelpDetails'
 import { useApiData } from '@/components/lib/useApiData'
 import { apiGet, errorMessage } from '@/components/lib/api'
@@ -25,17 +24,7 @@ const kindLabels: Record<string, string> = {
   other: '其他会话',
 }
 const tokenLabels = { input: '输入', cached: '缓存输入', reasoning: '推理输出', output: '输出', total: '总计' }
-function sumTokens(values: SessionTokens[]): SessionTokens {
-  return Object.fromEntries(
-    sessionTokenNames.map((key) => [
-      key,
-      values.some((v) => v[key] === null) ? null : values.reduce((sum, v) => sum + BigInt(v[key]!), 0n).toString(),
-    ]),
-  ) as SessionTokens
-}
-function descendants(node: SessionNode): SessionDetail[] {
-  return [node.session, ...node.children.flatMap(descendants)]
-}
+const agentToolLabels: Record<string, string> = { codex_local: 'Codex' }
 function forest(sessions: SessionDetail[]) {
   const map = new Map(sessions.map((session) => [session.id, { session, children: [] } as SessionNode]))
   const roots: SessionNode[] = []
@@ -57,7 +46,7 @@ function forest(sessions: SessionDetail[]) {
   }
   return roots
 }
-function TokenCells({
+function TokenBreakdown({
   tokens,
   subscription,
   denominator,
@@ -67,89 +56,72 @@ function TokenCells({
   denominator: SessionTokens
 }) {
   return (
-    <>
+    <dl className={styles.sessionTokenGrid}>
       {sessionTokenNames.map((key) => (
-        <td key={key}>
-          <span>{tokens[key] === null ? '未知' : count(tokens[key]!)}</span>
+        <div key={key}>
+          <dt>{tokenLabels[key]}</dt>
+          <dd>{tokens[key] === null ? '未知' : count(tokens[key]!)}</dd>
           <small
             className={styles.sessionShare}
             title={`订阅同项分子：${subscription[key] ?? '未知'}；当前查询订阅同项分母：${denominator[key] ?? '未知'}`}
           >
-            {tokenShare(subscription[key], denominator[key]) ?? '占比未知'}
+            订阅占比 {tokenShare(subscription[key], denominator[key]) ?? '未知'}
           </small>
-        </td>
+        </div>
       ))}
-    </>
+    </dl>
   )
 }
 function SessionBranch({ node, depth, denominator }: { node: SessionNode; depth: number; denominator: SessionTokens }) {
-  const [open, setOpen] = useState(false)
-  const records = descendants(node),
-    s = node.session
+  const s = node.session
   const kind = kindLabels[s.kind ?? ''] ?? '类型未知'
   return (
-    <Fragment>
-      <tr className={node.children.length ? styles.sessionParent : undefined}>
-        <td>
-          <div className={styles.sessionIdentity} style={{ paddingLeft: Math.min(depth, 6) * 16 }}>
-            {node.children.length > 0 && (
-              <button
-                className={styles.link}
-                aria-expanded={open}
-                aria-label={`${open ? '折叠' : '展开'} ${s.id} 子会话`}
-                onClick={() => setOpen(!open)}
-              >
-                {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-              </button>
-            )}
-            <div>
-              <strong>
-                {kind} · {s.id.slice(0, 8)}
-              </strong>
-              <HelpDetails label="会话 ID">
-                <p>{s.id}</p>
-                {s.parentId && <p>父会话：{s.parentId}</p>}
-              </HelpDetails>
-              <small>
-                {node.children.length
-                  ? `自身及已加载的 ${records.length - 1} 个子会话合计`
-                  : s.parentId
-                    ? `父会话：${s.parentId.slice(0, 8)}`
-                    : s.kind === 'cli'
-                      ? '独立命令行会话'
-                      : '会话自身用量'}
-              </small>
-              <small>
-                {localDate(s.firstActivity)} — {localDate(s.lastActivity)}
-              </small>
-              <small>{[...new Set(records.flatMap((r) => r.models))].join(' / ') || '模型未知'}</small>
-            </div>
+    <div className={depth ? styles.sessionChild : styles.sessionRoot}>
+      <article
+        className={styles.sessionCard}
+        aria-label={`${agentToolLabels[s.usageSource] ?? '工具未知'} 会话 ${s.id}`}
+      >
+        <div className={styles.sessionCardHeader}>
+          <div className={styles.sessionBadges}>
+            <span className={styles.badge}>Agent 工具：{agentToolLabels[s.usageSource] ?? '未知'}</span>
+            <span className={styles.mutedBadge}>{kind}</span>
           </div>
-        </td>
-        <TokenCells
-          tokens={sumTokens(records.map((r) => r.tokens))}
-          subscription={sumTokens(records.map((r) => r.subscriptionTokens))}
-          denominator={denominator}
-        />
-      </tr>
-      {open && (
-        <>
-          <tr>
-            <td>
-              <div className={styles.sessionIdentity} style={{ paddingLeft: Math.min(depth + 1, 6) * 16 }}>
-                <span>
-                  {kind}自身 · {count(s.events)} 条事件
-                </span>
-              </div>
-            </td>
-            <TokenCells tokens={s.tokens} subscription={s.subscriptionTokens} denominator={denominator} />
-          </tr>
-          {node.children.map((child) => (
-            <SessionBranch key={child.session.id} node={child} depth={depth + 1} denominator={denominator} />
-          ))}
-        </>
-      )}
-    </Fragment>
+          <strong>会话 {s.id.slice(0, 8)}</strong>
+        </div>
+        <div className={styles.sessionMeta}>
+          <span>最近活动：{localDate(s.lastActivity)}</span>
+          <span>模型：{s.models.join(' / ') || '未知'}</span>
+          {s.parentId && <span>父会话：{s.parentId.slice(0, 8)}</span>}
+          {node.children.length > 0 && <span>已加载子会话：{node.children.length}</span>}
+        </div>
+        <div className={styles.sessionMetrics}>
+          <div>
+            <span>本会话 Token</span>
+            <strong>{s.tokens.total === null ? '未知' : count(s.tokens.total)}</strong>
+          </div>
+          <div>
+            <span>观测事件</span>
+            <strong>{count(s.events)}</strong>
+          </div>
+        </div>
+        <details className={styles.sessionBreakdown}>
+          <summary>查看 Token 构成与完整 ID</summary>
+          <p className={styles.hint}>
+            会话 ID：<code>{s.id}</code>
+          </p>
+          {s.connectionIds.length > 0 && (
+            <p className={styles.hint}>
+              关联连接：<code>{s.connectionIds.join('、')}</code>
+            </p>
+          )}
+          <p className={styles.hint}>以下数值只属于本会话，不重复加上子会话。</p>
+          <TokenBreakdown tokens={s.tokens} subscription={s.subscriptionTokens} denominator={denominator} />
+        </details>
+      </article>
+      {node.children.map((child) => (
+        <SessionBranch key={child.session.id} node={child} depth={depth + 1} denominator={denominator} />
+      ))}
+    </div>
   )
 }
 export function SessionDetails({ query, groupKey, asOf }: { query: string; groupKey: string | null; asOf: string }) {
@@ -189,18 +161,18 @@ export function SessionDetails({ query, groupKey, asOf }: { query: string; group
   return (
     <div className={styles.sessionDetails}>
       <div className={styles.accountHeading}>
-        <strong>会话 Token 明细</strong>
-        <span className={styles.mutedBadge}>本机记录</span>
+        <strong>逐条会话记录</strong>
+        <span className={styles.mutedBadge}>Codex 本地导入</span>
       </div>
-      <p className={styles.hint}>百分比为当前查询内的订阅用量占比，不是官方额度占比。</p>
+      <p className={styles.hint}>每张卡片是一条会话，可直接查看 Agent 工具、会话类型、模型、时间和本会话 Token。</p>
       <HelpDetails label="统计口径与隐私">
         <p>
           每项百分比 = 该会话的订阅同项 Token ÷ 当前查询范围的订阅同项 Token
           总量，不随展开的分组改变。缓存包含在输入中，推理包含在输出中，请勿将各列相加。
         </p>
         <p>
-          对话按会话 ID 和时间识别，不读取正文或标题。只展示明确的父子关联；命令行会话独立计量，单条 Shell 命令没有独立
-          Token 统计。
+          Agent 工具由导入器的用量来源确定：当前仅导入 Codex 会话，不从日期目录名猜测工具。对话按会话 ID 和时间识别，
+          不读取正文或标题。只展示明确的父子关联；命令行会话独立计量，单条 Shell 命令没有独立 Token 统计。
         </p>
         <p>父会话不在当前筛选或已加载结果中时，子会话单独列出。来源：Codex local · client_observed。</p>
       </HelpDetails>
@@ -220,30 +192,15 @@ export function SessionDetails({ query, groupKey, asOf }: { query: string; group
             <p className={styles.hint}>
               已加载 {all.length} / {state.data.totalSessions} 个会话
             </p>
-            <div className={styles.sessionTable}>
-              <table>
-                <thead>
-                  <tr>
-                    <th>对话 / 子会话</th>
-                    {sessionTokenNames.map((key) => (
-                      <th key={key}>
-                        {tokenLabels[key]}
-                        <small>数量 / 订阅同项占比</small>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {nodes.map((node) => (
-                    <SessionBranch
-                      key={node.session.id}
-                      node={node}
-                      depth={0}
-                      denominator={state.data!.subscriptionTotals}
-                    />
-                  ))}
-                </tbody>
-              </table>
+            <div className={styles.sessionList}>
+              {nodes.map((node) => (
+                <SessionBranch
+                  key={node.session.id}
+                  node={node}
+                  depth={0}
+                  denominator={state.data!.subscriptionTotals}
+                />
+              ))}
             </div>
             {!all.length && <p className={styles.hint}>当前分组没有可见的本地会话。</p>}
             {offset != null && (

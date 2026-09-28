@@ -432,6 +432,7 @@ details[open] > .disclosure::after {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   border-top: 1px solid #ecf0ed;
   background: #fcfdfc;
@@ -695,40 +696,104 @@ details[open] > .disclosure::after {
   color: #355745;
   font-weight: 400;
 }
-.sessionTable {
+.sessionList,
+.sessionRoot,
+.sessionChild {
+  display: grid;
+  gap: 10px;
+}
+.sessionList {
+  max-height: 640px;
   overflow: auto;
+  padding: 2px;
+}
+.sessionChild {
+  margin-left: 16px;
+  padding-left: 12px;
+  border-left: 2px solid #dce8e0;
+}
+.sessionCard {
+  min-width: 0;
+  padding: 14px 16px;
   border: 1px solid #dce8e0;
-  border-radius: 8px;
+  border-radius: 10px;
   background: #fff;
 }
-.sessionTable small {
-  display: block;
-  color: #6b8274;
-  font-size: 10px;
-  font-weight: 400;
-  line-height: 1.7;
-}
-.sessionIdentity {
+.sessionCardHeader,
+.sessionBadges,
+.sessionMeta,
+.sessionMetrics {
   display: flex;
-  align-items: flex-start;
-  gap: 5px;
-  text-align: left;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
 }
-.sessionIdentity strong {
+.sessionCardHeader {
+  justify-content: space-between;
+}
+.sessionCardHeader strong {
+  color: #244a3a;
+  font-size: 13px;
+}
+.sessionMeta {
+  margin: 10px 0;
+  color: #657870;
+  font-size: 12px;
+  gap: 6px 18px;
+}
+.sessionMetrics {
+  gap: 24px;
+  padding-top: 10px;
+  border-top: 1px solid #edf2ee;
+}
+.sessionMetrics > div {
+  display: grid;
+  gap: 2px;
+}
+.sessionMetrics span,
+.sessionTokenGrid dt,
+.sessionTokenGrid small {
+  color: #6b8274;
+  font-size: 11px;
+}
+.sessionMetrics strong,
+.sessionTokenGrid dd {
+  color: #214638;
+  font-size: 16px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.sessionBreakdown {
+  margin-top: 12px;
+  border-top: 1px solid #edf2ee;
+  padding-top: 10px;
+}
+.sessionBreakdown summary {
+  color: #167653;
+  cursor: pointer;
   font-size: 12px;
 }
-.sessionTable .sessionShare {
+.sessionBreakdown code {
+  overflow-wrap: anywhere;
+}
+.sessionTokenGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(116px, 1fr));
+  gap: 10px;
+  margin: 12px 0 0;
+}
+.sessionTokenGrid > div {
+  display: grid;
+  gap: 2px;
+  padding: 10px;
+  border-radius: 7px;
+  background: #f3f8f5;
+}
+.sessionTokenGrid dd {
+  margin: 0;
+}
+.sessionTokenGrid .sessionShare {
   color: #208060;
-}
-.sessionTable .sessionParent {
-  background: #f0f7f3;
-}
-.analyticsTable .sessionTable tbody tr:first-child {
-  background: inherit;
-  font-weight: 400;
-}
-.sessionTable td {
-  vertical-align: top;
 }
 .analyticsProvenance {
   display: flex;

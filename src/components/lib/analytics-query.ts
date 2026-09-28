@@ -26,6 +26,7 @@ export function analyticsDateQuery(
     projectId: string
     organizationId?: string
     usageSource?: string
+    connectionId?: string
     provider?: string
     model?: string
   },
@@ -45,6 +46,7 @@ export function analyticsDateQuery(
   if (values.projectId) params.set('projectId', values.projectId)
   if (values.organizationId) params.set('organizationId', values.organizationId)
   if (values.usageSource) params.set('usageSource', values.usageSource)
+  if (values.connectionId) params.set('connectionId', values.connectionId)
   if (values.provider) params.set('provider', values.provider)
   if (values.model) params.set('model', values.model)
   parseUsageAnalyticsQuery(params, now)

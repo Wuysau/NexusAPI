@@ -27,6 +27,22 @@ it('bounds today at asOf and defaults to seven inclusive calendar dates', () => 
   expect(q.get('to')).toBe(now.toISOString())
   expect(q.get('asOf')).toBe(now.toISOString())
 })
+it('keeps the selected gateway connection in a project usage drilldown', () => {
+  const q = analyticsDateQuery(
+    {
+      from: '2026-09-12',
+      to: '2026-09-18',
+      projectId: 'project-a',
+      connectionId: 'connection-a',
+      usageSource: 'gateway',
+      groupBy: 'model',
+    },
+    new Date('2026-09-20T00:00:00Z'),
+  )
+  expect(q.get('projectId')).toBe('project-a')
+  expect(q.get('connectionId')).toBe('connection-a')
+  expect(q.get('usageSource')).toBe('gateway')
+})
 it.each([
   ['', '2026-09-18'],
   ['2026-02-30', '2026-09-18'],

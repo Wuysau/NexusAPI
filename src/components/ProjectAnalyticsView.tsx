@@ -114,6 +114,7 @@ function AnalyticsResults({ query }: { query: string }) {
   if (!data || !validateUsageAnalyticsResponse(data).ok)
     return <ErrorState message="用量数据格式异常，请重试。" onRetry={state.reload} />
   const showMoney = data.totals.money.length > 0
+  const filters = new URLSearchParams(query.split('?')[1])
   return (
     <>
       <div className={styles.overview}>
@@ -193,7 +194,16 @@ function AnalyticsResults({ query }: { query: string }) {
           </tbody>
         </table>
       </div>
-      {data.groups.length === 0 && <EmptyState title="所选范围暂无项目用量" description="试试调整日期或筛选条件。" />}
+      {data.groups.length === 0 && (
+        <EmptyState
+          title="所选范围暂无用量"
+          description={
+            filters.get('usageSource') === 'gateway' && filters.has('connectionId')
+              ? '绑定连接本身不会产生用量。网关调用需使用归属目标项目的 Nexus API 密钥，并实际选中该渠道；也可调整日期范围。'
+              : '试试调整日期或筛选条件。'
+          }
+        />
+      )}
       <div className={styles.toolbarActions}>
         <button className={styles.secondary} disabled={data.offset === 0} onClick={() => setPage(query)}>
           首页
@@ -218,15 +228,22 @@ export function ProjectAnalyticsView({
   initialProjectId = '',
   initialUsageSource = 'all',
   initialFrom = '',
-}: { initialProjectId?: string; initialUsageSource?: string; initialFrom?: string } = {}) {
+  initialConnectionId = '',
+}: {
+  initialProjectId?: string
+  initialUsageSource?: string
+  initialFrom?: string
+  initialConnectionId?: string
+} = {}) {
   const { session } = useSession()
   const projects = useCollection<WorkspaceProject>('/api/projects', 'projects')
   const [revision, setRevision] = useState(0)
   const [projectId, setProjectId] = useState(initialProjectId)
   const [groupBy, setGroupBy] = useState<AnalyticsGroupBy>(
-    initialUsageSource === 'codex_local' && initialProjectId ? 'model' : 'project',
+    (initialUsageSource === 'codex_local' && initialProjectId) || initialConnectionId ? 'model' : 'project',
   )
   const [usageSource, setUsageSource] = useState(initialUsageSource)
+  const [connectionId, setConnectionId] = useState(initialConnectionId)
   const [provider, setProvider] = useState('')
   const [model, setModel] = useState('')
   const [dates, setDates] = useState(() => {
@@ -237,13 +254,13 @@ export function ProjectAnalyticsView({
   const request = useMemo(() => {
     try {
       return {
-        query: `/api/billing?${analyticsDateQuery({ ...dates, projectId, groupBy, organizationId, usageSource, provider, model })}`,
+        query: `/api/billing?${analyticsDateQuery({ ...dates, projectId, groupBy, organizationId, usageSource, connectionId, provider, model })}`,
         error: null,
       }
     } catch (error) {
       return { query: null, error: error instanceof Error ? error.message : '无效日期' }
     }
-  }, [dates, projectId, groupBy, organizationId, usageSource, provider, model])
+  }, [dates, projectId, groupBy, organizationId, usageSource, connectionId, provider, model])
   return (
     <section className={styles.shell} aria-label="项目用量分析">
       {initialProjectId && (
@@ -294,6 +311,15 @@ export function ProjectAnalyticsView({
               value={provider}
               onChange={(e) => setProvider(e.target.value)}
               placeholder="全部供应商"
+            />
+          </label>
+          <label className={styles.field}>
+            连接 ID
+            <input
+              aria-label="连接 ID"
+              value={connectionId}
+              onChange={(e) => setConnectionId(e.target.value.trim())}
+              placeholder="全部连接"
             />
           </label>
           <label className={styles.field}>

@@ -204,8 +204,14 @@ export default function ConnectionsPage() {
           <strong>{loading && !connections.length ? '—' : connections.length}</strong>
         </div>
         <div>
-          <span>有本地观测的连接</span>
-          <strong>{connections.filter((c) => !revoked(c) && BigInt(c.observedEvents) > 0n).length}</strong>
+          <span title="已由本地 Observer 导入过 Codex 会话用量；上游 API 渠道不计入">已有 Codex 会话记录</span>
+          <strong>
+            {
+              connections.filter(
+                (c) => !revoked(c) && c.mode === 'subscription_interactive' && BigInt(c.observedEvents) > 0n,
+              ).length
+            }
+          </strong>
         </div>
         <div>
           <span>已撤销</span>
@@ -321,6 +327,15 @@ export default function ConnectionsPage() {
                   {revoked(c) ? '查看记录' : '配置与详情'}
                   <ArrowUpRight size={14} />
                 </button>
+                {c.channelId && c.project_id && can('billing:read') && (
+                  <Link
+                    className={styles.link}
+                    href={`/projects/${encodeURIComponent(c.project_id)}/analytics?usageSource=gateway&connectionId=${encodeURIComponent(c.id)}`}
+                  >
+                    查看 API 用量
+                    <ArrowUpRight size={14} />
+                  </Link>
+                )}
                 {can('credential:disable') && !revoked(c) && (
                   <button
                     className={styles.dangerLink}
@@ -338,8 +353,9 @@ export default function ConnectionsPage() {
         </div>
       )}
       <HelpDetails label="连接与用量说明">
-        上游渠道会自动生成关联连接；这类连接不采集本地会话或心跳，API
-        请求请到用量分析查看。订阅连接的本地用量独立于官方额度与账单，撤销连接后仍保留历史记录。
+        “已有 Codex 会话记录”只统计本地 Observer 已导入用量的订阅连接。上游渠道关联的连接不采集本地会话； 它的 API
+        请求只有实际通过网关调用后才出现在用量分析中，项目归属以请求所用的 Nexus API 密钥为准。
+        绑定项目不会补记或迁移历史请求。订阅连接的本地用量独立于官方额度与账单。
       </HelpDetails>
       {creating && (
         <WorkspaceDialog title="添加连接" busy={busy} onClose={() => setCreating(false)}>
@@ -447,7 +463,7 @@ export default function ConnectionsPage() {
             {!revoked(setup) && setup.channelId && (
               <WorkspaceNotice>
                 此连接由上游渠道「{setup.channelName ?? setup.channelId}」自动创建。接口与模型在渠道管理查看，API Key
-                可在渠道管理更换。
+                可在渠道管理更换。绑定项目不会自动产生用量；API 请求按调用所用的 Nexus API 密钥归属项目。
               </WorkspaceNotice>
             )}
             {!revoked(setup) && setup.mode !== 'subscription_interactive' && !setup.channelId && (
@@ -463,6 +479,14 @@ export default function ConnectionsPage() {
                 </>
               )}
             </dl>
+            {setup.channelId && setup.project_id && can('billing:read') && (
+              <Link
+                className={styles.link}
+                href={`/projects/${encodeURIComponent(setup.project_id)}/analytics?usageSource=gateway&connectionId=${encodeURIComponent(setup.id)}`}
+              >
+                查看该连接的 API 用量 <ArrowUpRight size={14} />
+              </Link>
+            )}
             {!revoked(setup) &&
               can('project:update') &&
               session &&
@@ -546,12 +570,18 @@ export default function ConnectionsPage() {
                 <dd>
                   {setup.mode === 'subscription_interactive'
                     ? 'Codex App Server + Codex local telemetry'
-                    : '连接登记 / 自报心跳'}
+                    : setup.channelId
+                      ? 'NexusAPI 网关请求（非本地会话）'
+                      : '连接登记 / 自报心跳'}
                 </dd>
-                <dt>历史观测</dt>
-                <dd>
-                  {count(setup.observedSessions)} 会话 / {count(setup.observedEvents)} 条记录
-                </dd>
+                {!setup.channelId && (
+                  <>
+                    <dt>历史本地观测</dt>
+                    <dd>
+                      {count(setup.observedSessions)} 会话 / {count(setup.observedEvents)} 条记录
+                    </dd>
+                  </>
+                )}
               </dl>
             </HelpDetails>
             {!revoked(setup) && setup.mode === 'subscription_interactive' && can('credential:create') && (

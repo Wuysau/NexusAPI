@@ -3,6 +3,8 @@ export type SessionTokenName = (typeof sessionTokenNames)[number]
 export type SessionTokens = Record<SessionTokenName, string | null>
 export interface SessionDetail {
   id: string
+  usageSource: string
+  connectionIds: string[]
   kind: string | null
   parentId: string | null
   firstActivity: string

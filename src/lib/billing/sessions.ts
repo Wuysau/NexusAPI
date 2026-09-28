@@ -29,7 +29,9 @@ export async function readSessionDetails(
   }>(
     `${facts.sql}, keyed AS (SELECT *,${grouping.key} drilldown_key FROM scoped),
      grouped AS (
-       SELECT k.external_session_id id,max(e.session_kind) kind,max(e.parent_session_id) "parentId",
+       SELECT k.external_session_id id,max(k.usage_source) "usageSource",
+       array_remove(array_agg(DISTINCT k.connection_id),NULL) "connectionIds",
+       max(e.session_kind) kind,max(e.parent_session_id) "parentId",
        min(k.started_at) "firstActivity",max(k.started_at) "lastActivity",count(*)::text events,
        array_remove(array_agg(DISTINCT k.model),NULL) models,${totals('k')} tokens,${totals('k', true)} "subscriptionTokens"
        FROM keyed k JOIN external_observed_usage e ON e.id=k.id AND e.tenant_id=k.tenant_id AND e.organization_id=k.organization_id
