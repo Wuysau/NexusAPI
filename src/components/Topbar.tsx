@@ -9,78 +9,28 @@ import {
   BookOpen,
   ChevronDown,
   ChevronRight,
-  CreditCard,
-  FileText,
   KeyRound,
   Layers3,
-  LayoutDashboard,
   LogOut,
   Menu,
-  Network,
   RefreshCw,
-  Scale,
   Search,
-  Settings2,
   ShieldCheck,
-  Terminal,
-  Users,
   X,
-  type LucideIcon,
 } from 'lucide-react'
 import { useSession } from './SessionProvider'
 import { useRefresh } from './RefreshProvider'
 import { ReauthDialog } from './ReauthDialog'
 import { useToast } from './Toast'
+import { models } from '@/lib/catalog/display'
+import { DOCS_ENTRY, NAV, searchNavigation, type NavEntry } from './navigation'
 
-const TITLES: Record<string, string> = {
-  '/': '数据概览',
-  '/channels': '渠道管理',
-  '/models': '模型广场',
-  '/pricing': '价格审批',
-  '/keys': 'API 密钥',
-  '/logs': '请求日志',
-  '/billing': '用量与计费',
-  '/reconciliation': '对账工单',
-  '/playground': '在线调试',
-  '/members': '成员与角色',
-  '/audit': '审计日志',
-  '/settings': '系统设置',
-  '/docs': '开发文档',
-  '/projects': '项目',
-  '/tasks': '任务',
-  '/connections': '我的连接',
-}
-
-interface SearchEntry {
-  label: string
-  href: string
-  icon: LucideIcon
-  keywords: string[]
-}
-
-const SEARCH_ENTRIES: SearchEntry[] = [
-  { label: '数据概览', href: '/', icon: LayoutDashboard, keywords: ['overview', 'dashboard', '概览'] },
-  { label: '渠道管理', href: '/channels', icon: Network, keywords: ['channel', 'provider', '渠道'] },
-  { label: '我的连接', href: '/connections', icon: Network, keywords: ['connection', 'byok', '连接'] },
-  { label: '模型广场', href: '/models', icon: Layers3, keywords: ['model', '模型'] },
-  { label: '价格审批', href: '/pricing', icon: Settings2, keywords: ['price', 'pricing', '价格'] },
-  { label: 'API 密钥', href: '/keys', icon: KeyRound, keywords: ['key', 'api', '密钥'] },
-  { label: '项目', href: '/projects', icon: Layers3, keywords: ['project', '项目'] },
-  { label: '任务', href: '/tasks', icon: Terminal, keywords: ['task', 'codex', '任务', '交接'] },
-  { label: '请求日志', href: '/logs', icon: FileText, keywords: ['log', 'request', '日志'] },
-  { label: '用量与计费', href: '/billing', icon: CreditCard, keywords: ['billing', 'usage', '计费'] },
-  { label: '对账工单', href: '/reconciliation', icon: Scale, keywords: ['reconciliation', '对账'] },
-  { label: '在线调试', href: '/playground', icon: Terminal, keywords: ['playground', 'debug', '调试'] },
-  { label: '成员与角色', href: '/members', icon: Users, keywords: ['member', 'role', '成员'] },
-  { label: '审计日志', href: '/audit', icon: ShieldCheck, keywords: ['audit', '审计'] },
-  { label: '系统设置', href: '/settings', icon: Settings2, keywords: ['setting', '设置'] },
-  { label: '开发文档', href: '/docs', icon: BookOpen, keywords: ['docs', '文档'] },
-]
+const TITLES = Object.fromEntries([...NAV, DOCS_ENTRY].map(({ href, label }) => [href, label]))
 
 export function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
   const pathname = usePathname()
   const router = useRouter()
-  const { session, logout, refresh } = useSession()
+  const { session, logout, refresh, can } = useSession()
   const { refresh: refreshData } = useRefresh()
   const { notify } = useToast()
   const [profile, setProfile] = useState(false)
@@ -118,11 +68,13 @@ export function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
     if (searchOpen) setTimeout(() => searchInputRef.current?.focus(), 50)
   }, [searchOpen])
 
-  const filtered = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase()
-    if (!q) return SEARCH_ENTRIES
-    return SEARCH_ENTRIES.filter((e) => e.label.toLowerCase().includes(q) || e.keywords.some((k) => k.includes(q)))
-  }, [searchQuery])
+  const filtered = useMemo(() => searchNavigation(searchQuery, can), [searchQuery, can])
+
+  const filteredModels = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase()
+    if (!query || !can('request:read')) return []
+    return models.filter((model) => `${model.name} ${model.id}`.toLowerCase().includes(query))
+  }, [searchQuery, can])
 
   // No effect needed — searchIndex resets in the onChange handler.
 
@@ -131,8 +83,13 @@ export function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
     setSearchQuery('')
   }
 
-  function selectEntry(entry: SearchEntry) {
+  function selectEntry(entry: NavEntry) {
     router.push(entry.href)
+    closeSearch()
+  }
+
+  function selectModel(model: (typeof models)[number]) {
+    router.push(`/playground?model=${encodeURIComponent(model.id)}`)
     closeSearch()
   }
 
@@ -171,9 +128,9 @@ export function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
         <span className="environment">{session?.environment ?? '环境未知'}</span>
       </div>
       <div className="header-actions">
-        <button className="global-search" onClick={() => setSearchOpen(true)} title="搜索控制台功能" aria-label="搜索">
+        <button className="global-search" onClick={() => setSearchOpen(true)} title="搜索功能、模型" aria-label="搜索">
           <Search size={15} />
-          <span>搜索控制台功能...</span>
+          <span>搜索功能、模型...</span>
           <kbd>⌘ K</kbd>
         </button>
         <button
@@ -292,7 +249,7 @@ export function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
                       setSearchIndex(0)
                     }}
                     onKeyDown={onSearchKey}
-                    placeholder="搜索控制台功能..."
+                    placeholder="搜索功能或模型..."
                     autoFocus
                   />
                 </div>
@@ -311,7 +268,21 @@ export function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
                     </button>
                   ))}
                 </div>
-                {filtered.length === 0 && (
+                {searchQuery.trim() && filteredModels.length > 0 && (
+                  <>
+                    <small>模型</small>
+                    <div className="search-results">
+                      {filteredModels.map((model) => (
+                        <button key={model.id} className="search-result" onClick={() => selectModel(model)}>
+                          <Layers3 size={17} strokeWidth={1.7} />
+                          <span>{model.name}</span>
+                          <ChevronRight size={14} className="right-icon" />
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+                {filtered.length === 0 && filteredModels.length === 0 && (
                   <div className="search-empty">
                     <Search size={32} />
                     <p>没有匹配的结果</p>

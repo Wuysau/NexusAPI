@@ -3,55 +3,9 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import {
-  BookOpen,
-  ChevronRight,
-  CircleHelp,
-  ClipboardCheck,
-  CreditCard,
-  ExternalLink,
-  FileText,
-  KeyRound,
-  Layers3,
-  LayoutDashboard,
-  Network,
-  Scale,
-  Settings2,
-  ShieldCheck,
-  Sparkles,
-  Terminal,
-  Users,
-  X,
-} from 'lucide-react'
+import { BookOpen, ChevronRight, CircleHelp, ExternalLink, Layers3, Sparkles, X } from 'lucide-react'
 import { useSession } from './SessionProvider'
-
-interface NavEntry {
-  href: string
-  label: string
-  icon: typeof LayoutDashboard
-  group?: string
-  capability?: string
-}
-
-const NAV: NavEntry[] = [
-  { href: '/', label: '数据概览', icon: LayoutDashboard, capability: 'usage:read' },
-  { href: '/resources', label: '资源', icon: Layers3, group: '资源管理', capability: 'credential:read' },
-  { href: '/routing', label: '路由', icon: Network, group: '资源管理', capability: 'project:read' },
-  { href: '/channels', label: '渠道管理', icon: Network, group: '资源管理', capability: 'credential:read' },
-  { href: '/connections', label: '我的连接', icon: Network, group: '资源管理', capability: 'credential:read' },
-  { href: '/models', label: '模型广场', icon: Layers3, capability: 'pricing:read' },
-  { href: '/pricing', label: '价格审批', icon: ClipboardCheck, capability: 'pricing:read' },
-  { href: '/keys', label: 'API 密钥', icon: KeyRound, group: '工作空间', capability: 'apikey:read' },
-  { href: '/projects', label: '项目', icon: Layers3, group: '工作空间', capability: 'project:read' },
-  { href: '/tasks', label: '任务', icon: ClipboardCheck, capability: 'project:read' },
-  { href: '/logs', label: '请求日志', icon: FileText, capability: 'request:read' },
-  { href: '/billing', label: '用量与计费', icon: CreditCard, capability: 'billing:read' },
-  { href: '/reconciliation', label: '对账工单', icon: Scale, capability: 'billing:read' },
-  { href: '/playground', label: '在线调试', icon: Terminal, capability: 'request:read' },
-  { href: '/members', label: '成员与角色', icon: Users, group: '治理', capability: 'member:read' },
-  { href: '/audit', label: '审计日志', icon: ShieldCheck, capability: 'audit:read' },
-  { href: '/settings', label: '系统设置', icon: Settings2, capability: 'org:read' },
-]
+import { NAV } from './navigation'
 
 export function Sidebar({ open, onNavigate }: { open: boolean; onNavigate: () => void }) {
   const pathname = usePathname()
