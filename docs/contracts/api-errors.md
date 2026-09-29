@@ -27,3 +27,9 @@ with error.type=invalid_request_error, param=null, request_id and no-store.
 They do not parse request bodies, authenticate, redirect or move funds.
 Managed authorization uses `packages/contracts/schemas/budget-request.schema.json`; final usage uses
 only the durable outbox.
+
+## Console response parsing
+
+The browser's `apiGet`/`apiSend` helpers reject an unreadable or malformed JSON body even when the HTTP status is successful. These failures use a local `ApiError` with code `invalid_response`, the received HTTP status and a fixed message asking the user to refresh and check the operation's result. Parser excerpts and response content are not included. This local error is not a new server error code or HTTP response.
+
+An `AbortError` during a successful response's body read retains its identity. Valid JSON `null` and explicit 204/205 no-content responses remain accepted. Existing non-success HTTP status/error normalization is unchanged. The helper does not retry: a dispatched mutation may already have taken effect, even when its response could not be read.
