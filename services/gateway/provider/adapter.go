@@ -65,16 +65,19 @@ type Message struct {
 
 // CanonicalRequest is the provider-agnostic chat request.
 type CanonicalRequest struct {
-	Model          string
-	Messages       []Message
-	MaxTokens      *int
-	Temperature    *float64
-	TopP           *float64
-	Stop           []string
-	Tools          json.RawMessage
-	ToolChoice     json.RawMessage
-	ResponseFormat json.RawMessage
-	Stream         bool
+	Model     string
+	Messages  []Message
+	MaxTokens *int
+	// MaxCompletionTokens marks an explicitly supplied modern token limit.
+	// MaxTokens still carries the same effective cap for native adapters.
+	MaxCompletionTokens *int
+	Temperature         *float64
+	TopP                *float64
+	Stop                []string
+	Tools               json.RawMessage
+	ToolChoice          json.RawMessage
+	ResponseFormat      json.RawMessage
+	Stream              bool
 	// User is an opaque abuse-tracking id; never customer content.
 	User string
 }
@@ -140,6 +143,9 @@ type ModelCapabilities struct {
 // Endpoint is the channel's connection facts (from the signed snapshot).
 type Endpoint struct {
 	BaseURL string
+	// ProviderCode is the reviewed provider from the signed channel. Protocol
+	// compatibility alone does not imply identical optional parameter names.
+	ProviderCode string
 	// Protocol is an explicit compatible API selection; empty preserves legacy base semantics.
 	Protocol   string
 	AuthScheme string // bearer | x_api_key | query

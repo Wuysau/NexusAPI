@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-const openAIAdapterVersion = "1.0.0"
+const openAIAdapterVersion = "1.0.1"
 
 // OpenAICompatible implements Adapter for /chat/completions providers.
 type OpenAICompatible struct {
@@ -71,18 +71,19 @@ func (a *OpenAICompatible) Capabilities(model string) ModelCapabilities {
 // openAIChatBody is the wire body. Optional fields are pointers so "unset" is
 // distinguishable from "zero".
 type openAIChatBody struct {
-	Model          string          `json:"model"`
-	Messages       []Message       `json:"messages"`
-	Stream         bool            `json:"stream"`
-	MaxTokens      *int            `json:"max_tokens,omitempty"`
-	Temperature    *float64        `json:"temperature,omitempty"`
-	TopP           *float64        `json:"top_p,omitempty"`
-	Stop           []string        `json:"stop,omitempty"`
-	Tools          json.RawMessage `json:"tools,omitempty"`
-	ToolChoice     json.RawMessage `json:"tool_choice,omitempty"`
-	ResponseFormat json.RawMessage `json:"response_format,omitempty"`
-	User           string          `json:"user,omitempty"`
-	StreamOptions  *streamOptions  `json:"stream_options,omitempty"`
+	Model               string          `json:"model"`
+	Messages            []Message       `json:"messages"`
+	Stream              bool            `json:"stream"`
+	MaxTokens           *int            `json:"max_tokens,omitempty"`
+	MaxCompletionTokens *int            `json:"max_completion_tokens,omitempty"`
+	Temperature         *float64        `json:"temperature,omitempty"`
+	TopP                *float64        `json:"top_p,omitempty"`
+	Stop                []string        `json:"stop,omitempty"`
+	Tools               json.RawMessage `json:"tools,omitempty"`
+	ToolChoice          json.RawMessage `json:"tool_choice,omitempty"`
+	ResponseFormat      json.RawMessage `json:"response_format,omitempty"`
+	User                string          `json:"user,omitempty"`
+	StreamOptions       *streamOptions  `json:"stream_options,omitempty"`
 }
 
 type streamOptions struct {
@@ -112,6 +113,18 @@ func (a *OpenAICompatible) BuildRequest(req *CanonicalRequest, cred Credential, 
 		ToolChoice:     req.ToolChoice,
 		ResponseFormat: req.ResponseFormat,
 		User:           req.User,
+	}
+	if req.MaxCompletionTokens != nil {
+		code := ep.ProviderCode
+		if code == "" {
+			code = a.id
+		}
+		// Ollama and DeepSeek expose this cap as max_tokens. Other compatible
+		// endpoints receive the caller's explicit field without model guessing.
+		if code != "ollama" && code != "deepseek" {
+			body.MaxTokens = nil
+			body.MaxCompletionTokens = req.MaxCompletionTokens
+		}
 	}
 	if req.Stream {
 		body.StreamOptions = &streamOptions{IncludeUsage: true}

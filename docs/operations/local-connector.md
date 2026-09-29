@@ -128,6 +128,8 @@ curl -N https://gateway.example.com/v1/chat/completions \
 
 首版只提供 Chat Completions 文本和流式传输，不代表支持任意 Agent 所需的全部工具调用、多模态、Embeddings 或 Responses 功能。内部沿用已有 OpenAI 适配器的流式上游调用，再聚合非流式客户端响应。上游未提供可靠字段时保留 `null/unknown`；没有价格时进入现有未定价/核对流程，不生成免费结算。通过项目分析查看 Gateway 用量与连接归因。
 
+Chat 的 `max_tokens` 和 `max_completion_tokens` 都会作为有效输出上限发给 Ollama 的 `max_tokens`；两者同时非空时采用 `max_completion_tokens`。远端启用 `GATEWAY_ENABLE_RESPONSES=true` 后，[现有 Responses 子集](./gateway-limits.md#responses-compatibility)也可经同一路径调用，其 `max_output_tokens` 使用同样的上限映射。Ollama 的本地接口仍为 `/v1/chat/completions`，无需更新连接器配置或 CLI。其他提供方的字段选择遵循各自已配置的协议。
+
 ## 5. 撤销、轮换和故障排查
 
 重新生成配对令牌会立即撤销原身份与租约；用新的私有身份文件重新配对。撤销连接会同时撤销租约、身份、未使用配对令牌并停用关联 Channel，历史记录保留。取消项目绑定、归档项目、禁用项目 Key 或 Channel 后，下一次连接器调用会被实时授权检查拒绝，不等快照刷新。

@@ -47,6 +47,7 @@ let gatewayLogs = '',
   singleModelAuthorizations = 0
 let gatewayEnv: NodeJS.ProcessEnv
 let tlsAgent: HTTPSAgent
+const upstreamTokenLimits: Array<{ max_tokens?: number; max_completion_tokens?: number }> = []
 const params = () => ({ params: Promise.resolve({ id: connectionId }) })
 const admin = (method = 'GET', body?: unknown, authCookie = cookie) =>
   new Request('http://localhost/api/connections', {
@@ -194,6 +195,7 @@ beforeAll(async () => {
     const chunks: Buffer[] = []
     for await (const chunk of req) chunks.push(Buffer.from(chunk))
     const body = JSON.parse(Buffer.concat(chunks).toString())
+    upstreamTokenLimits.push({ max_tokens: body.max_tokens, max_completion_tokens: body.max_completion_tokens })
     calls++
     expect(body.stream).toBe(true)
     expect(models).toContain(body.model)
@@ -501,6 +503,7 @@ it('pairs through the standalone CLI, starts a separate Gateway and lists only r
     GATEWAY_REPLICAS: '1',
     NEXUS_CONNECTORS_ENABLED: 'true',
     GATEWAY_OTEL_DISABLED: 'true',
+    GATEWAY_ENABLE_RESPONSES: 'true',
     GATEWAY_SNAPSHOT_REFRESH_SECONDS: '1',
     GATEWAY_STREAM_IDLE_TIMEOUT_SECONDS: '2',
     GATEWAY_TOTAL_TIMEOUT_SECONDS: '8',
@@ -811,6 +814,55 @@ it('relays nonstreaming and streaming chat through the local process with durabl
   expect((await db.query('SELECT id FROM usage_records')).rowCount).toBe(0)
   expect((await db.query(`SELECT id FROM ledger_transactions WHERE type='usage'`)).rowCount).toBe(0)
   expect(JSON.stringify(events)).not.toContain('private prompt marker')
+})
+
+it('keeps modern Chat and Responses output limits effective at the local Ollama process', async () => {
+  const before = upstreamTokenLimits.length
+  const requestIds: string[] = []
+  let limit = 17
+  for (const endpoint of ['/v1/chat/completions', '/v1/responses']) {
+    for (const stream of [false, true]) {
+      const body =
+        endpoint === '/v1/responses'
+          ? { model: models[0], input: 'limit fixture', stream, max_output_tokens: limit }
+          : {
+              model: models[0],
+              messages: [{ role: 'user', content: 'limit fixture' }],
+              stream,
+              max_completion_tokens: limit,
+            }
+      const response = await gatewayFetch(endpoint, body)
+      const result = await response.text()
+      expect(response.status, result).toBe(200)
+      expect(result).toContain('Ollama')
+      if (stream) expect(result).toContain(endpoint === '/v1/responses' ? 'response.completed' : '[DONE]')
+      expect(upstreamTokenLimits.at(-1)).toEqual({ max_tokens: limit, max_completion_tokens: undefined })
+      expect(response.headers.get('x-request-id')).toBeTruthy()
+      requestIds.push(response.headers.get('x-request-id')!)
+      limit++
+    }
+  }
+  expect(upstreamTokenLimits.length - before).toBe(4)
+  await waitFor(
+    async () =>
+      (await db.query(`SELECT id FROM request_records WHERE id=ANY($1::text[]) AND status='completed'`, [requestIds]))
+        .rowCount === 4,
+  )
+  const records = (
+    await db.query(
+      `SELECT f.project_id,f.api_key_id,a.connection_id,a.price_version_id,a.execution_mode FROM request_project_facts f JOIN attempts a ON a.request_id=f.request_id WHERE f.request_id=ANY($1::text[])`,
+      [requestIds],
+    )
+  ).rows
+  expect(records).toHaveLength(4)
+  for (const record of records)
+    expect(record).toMatchObject({
+      project_id: 'connector-project',
+      api_key_id: 'connector-key',
+      connection_id: connectionId,
+      price_version_id: null,
+      execution_mode: 'byok',
+    })
 })
 
 it('rejects cross-project, cross-tenant and unconfigured models without reaching Ollama', async () => {
