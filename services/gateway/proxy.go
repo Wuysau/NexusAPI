@@ -864,11 +864,12 @@ func (p *Proxy) attempt(
 
 		canonical := canonicalChatRequest(req, model)
 		call, err := candidate.Adapter.BuildRequest(canonical, credential, provider.Endpoint{
-			BaseURL:    candidate.Channel.BaseURL,
-			Protocol:   candidate.Channel.Protocol,
-			AuthScheme: candidate.Channel.AuthScheme,
-			Region:     candidate.Channel.Region,
-			Timeout:    p.limits.UpstreamTimeout,
+			BaseURL:      candidate.Channel.BaseURL,
+			ProviderCode: candidate.Channel.Provider,
+			Protocol:     candidate.Channel.Protocol,
+			AuthScheme:   candidate.Channel.AuthScheme,
+			Region:       candidate.Channel.Region,
+			Timeout:      p.limits.UpstreamTimeout,
 		})
 		if err != nil {
 			// A request the adapter cannot build is a client-side problem with
