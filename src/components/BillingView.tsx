@@ -2,6 +2,7 @@
 
 import { CreditCard, Receipt, ShieldCheck, Wallet } from 'lucide-react'
 import { HelpDetails } from '@/components/HelpDetails'
+import { PurchasePanel } from './PurchasePanel'
 import { useApiData } from './lib/useApiData'
 import { Badge, fullDate, money, num, type BadgeTone } from './ui'
 import { EmptyState, ErrorState, PermissionDenied, SkeletonRows } from './States'
@@ -42,6 +43,8 @@ interface BillingResponse {
     amount: string
     currency: string
     paymentProvider: string
+    checkoutMode: 'test' | 'live' | null
+    subscriptionActivation: string | null
     createdAt: string
     paidAt: string | null
   }[]
@@ -80,6 +83,7 @@ export function BillingView() {
 
   return (
     <>
+      <PurchasePanel onRefresh={state.reload} />
       <div className="billing-hero">
         <div>
           <span>账本余额 · {data?.currency ?? '币种未知'}</span>
@@ -198,9 +202,22 @@ export function BillingView() {
                     <td>{order.kind === 'subscription' ? '订阅' : '托管额度'}</td>
                     <td>
                       <Badge tone={ORDER_TONE[order.status] ?? 'muted'}>{order.status}</Badge>
+                      {order.subscriptionActivation === 'reconciliation_required' && (
+                        <p>款项已记录，套餐待财务核对；较新购买保持生效。</p>
+                      )}
                     </td>
                     <td className="tabular">{money(order.amount, 2, order.currency)}</td>
-                    <td className="muted">{order.paymentProvider}</td>
+                    <td className="muted">
+                      {order.paymentProvider}
+                      {order.checkoutMode && (
+                        <>
+                          {' '}
+                          <Badge tone={order.checkoutMode === 'test' ? 'warn' : 'good'}>
+                            {order.checkoutMode === 'test' ? '测试 · 非真实付款' : '正式'}
+                          </Badge>
+                        </>
+                      )}
+                    </td>
                     <td className="muted">{fullDate(order.createdAt)}</td>
                   </tr>
                 ))}

@@ -3,6 +3,8 @@
 
 import { MOCK_PROVIDER_NAME, MockPaymentProvider } from './mock'
 import { PaymentError, type PaymentProvider } from './types'
+import { StripePaymentProvider } from './stripe'
+export { StripePaymentProvider, stripeConfiguration, microsToMinorUnits } from './stripe'
 
 export * from './types'
 export {
@@ -19,10 +21,11 @@ export {
   type SandboxWebhookOptions,
 } from './mock'
 
-export type PaymentProviderName = 'mock'
+export type PaymentProviderName = 'mock' | 'stripe'
 
 const FACTORIES: Record<string, () => PaymentProvider> = {
   [MOCK_PROVIDER_NAME]: () => new MockPaymentProvider(),
+  stripe: () => new StripePaymentProvider(),
 }
 
 /** Resolve a provider by name. Throws PaymentError for anything unknown. */

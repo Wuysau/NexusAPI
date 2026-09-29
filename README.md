@@ -4,7 +4,7 @@
 
 NexusAPI 是以项目为核心的 AI Resource Control Plane。统一查看 API 渠道、官方订阅、本地工具、任务、会话、配额与用量；Go 网关继续提供兼容 OpenAI 的 API 数据面。本地订阅执行与网关 API 调用遵守不同的凭据和计费边界。
 
-项目使用 [MIT License](LICENSE)，可修改、分发和商业使用，需保留许可证及版权声明。当前仍在持续开发，支付使用沙箱流程；源码公开不代表已经完成生产环境验收。
+项目使用 [MIT License](LICENSE)，可修改、分发和商业使用，需保留许可证及版权声明。当前仍在持续开发；Stripe 托管支付需管理员配置商户密钥、发布套餐并设置回调后启用。源码公开及自动化测试不代表已完成真实收款或生产环境验收。
 
 ## 功能
 
@@ -13,7 +13,11 @@ NexusAPI 是以项目为核心的 AI Resource Control Plane。统一查看 API �
 - **渠道与密钥**：配置上游地址、模型和 API Key，使用 Nexus API Key 调用已配置渠道。桌面本地模式支持界面录入上游密钥并加密保存。
 - **项目与用量**：按组织、项目、连接查看实际请求、Token、价格来源和对账状态；未知价格保持未知，不自动记为免费。
 - **订阅观测**：独立 Observer 读取 Codex 本地会话中允许的用量字段，并展示账户与官方配额观测。订阅会话不经 Nexus 转发，不产生 Nexus 扣费。
+- **多服务订阅与账号池**：连接目录覆盖 Claude Code、Gemini、Copilot、Cursor、Kimi、GLM、MiniMax 等常见服务，逐项说明原生使用、独立 API 和监控能力。Codex 保留原生观测；其他受支持产品通过 CodexBar dashboard-v1 快照导入或已配置的服务同步额度。账号池显示多个额度窗口、数据新鲜度、耗尽及异常状态，第三方监控与官方调度依据分别展示。
+- **兼容代理与付费入口**：渠道配置提供官方 API 与 CLIProxyAPI / New API / Sub2API 兼容入口模板；用量与计费页面提供已发布套餐、Stripe Checkout 与订单状态。价格在服务端读取，只有验签回调可入账。第三方订阅购买仍在相应服务商完成，不会把平台套餐当作上游订阅出售。
 - **任务监督**：通过独立 Codex Profile 执行持久任务，在安全边界按兼容性和额度交接，提供资源池、策略与执行历史。配置与入口见 [任务级资源切换](docs/operations/task-resource-handoff.md)。
+
+新增接入说明：[订阅服务覆盖](docs/provider-coverage.md) · [多服务额度监控](docs/operations/subscription-monitor.md) · [Stripe 商户与套餐配置](docs/operations/stripe-payments.md) · [开源项目借鉴记录](docs/operations/open-source-research.md)。
 - **管理控制台**：成员权限、审计、账单、模型目录和价格审批。
 
 ## Performance Benchmark (2026-09-28)

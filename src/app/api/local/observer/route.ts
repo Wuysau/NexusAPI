@@ -36,6 +36,7 @@ function response(value: Response) {
 }
 const connectionQuery = `SELECT c.id,c.provider,c.capabilities FROM owned_connections c
   WHERE ${connectionVisibility} AND c.id=$5 AND c.mode='subscription_interactive'
+  AND c.provider='openai' AND COALESCE(c.capabilities->>'subscription_product','openai_codex')='openai_codex'
   AND c.status IN ('active','pending') AND c.revoked_at IS NULL
   AND c.credential_ref IS NULL AND c.credential_fingerprint IS NULL`
 async function connection(ctx: ControlPlaneContext, id: unknown) {

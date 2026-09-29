@@ -10,6 +10,7 @@ export type OrderErrorCode =
   | 'missing_original_transaction'
   | 'duplicate_idempotency_key'
   | 'payment_provider_error'
+  | 'payment_identity_mismatch'
 
 export class OrderError extends Error {
   readonly status: number

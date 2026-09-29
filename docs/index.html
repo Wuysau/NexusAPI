@@ -66,6 +66,8 @@
           <a href="#paths">选择使用方式</a>
           <a href="#api">02 · API 渠道</a>
           <a href="#codex">03 · Codex 订阅</a>
+          <a href="#subscriptions">多服务订阅与账号池</a>
+          <a href="#payments">套餐与支付</a>
           <a href="#tasks">04 · 编程任务</a>
           <a href="#pages">05 · 功能导览</a>
           <a href="#concepts">06 · 关键概念</a>
@@ -380,6 +382,104 @@ npm run nexus -- continue --project PROJECT_ID --task TASK_ID --instruction "继
             </div>
           </section>
 
+          <section id="subscriptions" class="chapter">
+            <div class="chapter-head">
+              <span>SUBSCRIPTIONS</span>
+              <h2>管理不同服务的订阅与额度</h2>
+              <p>在“我的连接”登记订阅服务，绑定项目，并按该产品实际支持的方式查看额度或配置 API。</p>
+            </div>
+            <ol class="steps">
+              <li>
+                <strong>选择你的服务</strong>
+                <p>
+                  点击“添加连接”，选择订阅类型及产品。目录包括 Codex、Claude
+                  Code、Gemini、Copilot、Cursor、Windsurf、Kiro、JetBrains
+                  AI、Trae、Qwen、Kimi、GLM、MiniMax、百炼、火山方舟、腾讯、DeepSeek、Grok 和
+                  Perplexity。详情会显示官方使用说明和实际接入能力。
+                </p>
+              </li>
+              <li>
+                <strong>绑定项目与监控账号</strong>
+                <p>
+                  一个项目可关联多个连接。Codex 使用原生账户同步；其他支持监控的产品可在详情中导入 CodexBar 的
+                  dashboard-v1 JSON，或同步管理员配置的 CodexBar
+                  服务。预览后明确选择对应账号；同一供应商的不同账号不会自动合并。
+                </p>
+              </li>
+              <li>
+                <strong>查看账号池</strong>
+                <p>
+                  打开“资源”查看账号池和每个额度窗口。有效观测会标出使用比例、重置时间和数据来源；过期、登录异常、耗尽与未知状态分别显示。页面可见时每
+                  30
+                  秒重新读取已保存的数据，外部采集需要在连接详情执行同步。重置时间到达也需重新观测，不能直接视为额度已恢复。
+                </p>
+              </li>
+              <li>
+                <strong>需要 API 时配置渠道</strong>
+                <p>
+                  “渠道管理”中的接入模板可填写官方 API 地址，或连接你已部署的 CLIProxyAPI、New API、Sub2API
+                  等兼容服务。填写该服务的访问密钥与实际模型 ID（每行一个），再按 API 章节创建 Nexus
+                  密钥。不同订阅的登录凭据与开放平台 API Key 不可互换；仅限编程工具的套餐按官方说明在原生工具中使用。
+                </p>
+              </li>
+            </ol>
+            <div class="callout">
+              <strong>监控能力以详情为准</strong>
+              <p>
+                登记成功不代表可自动读取额度或调用模型。CodexBar 报告是第三方监控数据，不会转化为 Nexus
+                钱包余额，也不会直接决定任务调度。没有兼容采集器的产品保留登记及官方使用指引。
+              </p>
+            </div>
+            <p>
+              具体产品能力见
+              <a href="https://github.com/Wuysau/NexusAPI/blob/main/docs/provider-coverage.md">服务覆盖说明</a
+              >，管理员配置见
+              <a href="https://github.com/Wuysau/NexusAPI/blob/main/docs/operations/subscription-monitor.md"
+                >多服务监控配置</a
+              >。
+            </p>
+          </section>
+
+          <section id="payments" class="chapter">
+            <div class="chapter-head">
+              <span>PAYMENTS</span>
+              <h2>购买平台套餐与查看支付结果</h2>
+              <p>
+                “用量与计费”管理 NexusAPI 自身的平台套餐、托管额度订单和账本。Claude、ChatGPT
+                等第三方订阅仍在各自官方平台购买。
+              </p>
+            </div>
+            <ol class="steps">
+              <li>
+                <strong>查看可购套餐</strong>
+                <p>
+                  进入“用量与计费”，查看管理员已发布的套餐、价格及币种。没有套餐或商户尚未配置时，页面会说明当前无法购买的原因。当前在线购买仅支持平台套餐，不提供钱包充值；普通
+                  BYOK 调用与上游订阅费用单独核算。
+                </p>
+              </li>
+              <li>
+                <strong>进入托管收银台</strong>
+                <p>
+                  有购买权限的成员选择套餐后，跳转到 Stripe
+                  完成付款。测试模式会明确标识；真实付款须由管理员配置正式商户。银行卡等付款信息在 Stripe 收银台填写。
+                </p>
+              </li>
+              <li>
+                <strong>确认订单状态</strong>
+                <p>
+                  回到 NexusAPI
+                  后刷新订单。回到页面不表示支付成功；系统收到并验证支付通知后才会更新订单、激活对应权益并写入账本。通知延迟时请保留订单号，稍后刷新，不要重复购买。
+                </p>
+              </li>
+            </ol>
+            <p>
+              管理员请阅读
+              <a href="https://github.com/Wuysau/NexusAPI/blob/main/docs/operations/stripe-payments.md"
+                >Stripe 支付配置</a
+              >，完成密钥、套餐发布和回调设置。
+            </p>
+          </section>
+
           <section id="concepts" class="chapter">
             <div class="chapter-head">
               <span>06 / CONCEPTS</span>
@@ -417,8 +517,8 @@ npm run nexus -- continue --project PROJECT_ID --task TASK_ID --instruction "继
             <div class="callout amber">
               <strong>其他厂商 Coding Plan</strong>
               <p>
-                “OpenAI Codex · 本地订阅观测”只针对 OpenAI Codex。其他 Coding Plan
-                不能通过选择这一项直接接通；受监督执行需要相应的兼容 Profile、明确的供应商标识与可信额度观测。
+                为其他 Coding Plan 选择其对应产品，不要登记为 Codex。连接详情会说明原生工具、独立 API
+                与第三方额度监控的区别；受监督执行仍需相应的兼容 Profile 和可信额度观测。
               </p>
             </div>
           </section>

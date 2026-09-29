@@ -35,6 +35,7 @@ interface OrderRow {
   amount: string | number
   currency: string
   payment_provider: string
+  external_order_id: string | null
   status: string
   kind: 'subscription' | 'managed_credits'
   plan_version_id: string | null
@@ -52,7 +53,7 @@ function toOrderRecord(r: OrderRow): OrderRecord {
     amountMicros: BigInt(r.amount),
     currency: r.currency,
     paymentProvider: r.payment_provider,
-    externalOrderId: null,
+    externalOrderId: r.external_order_id,
     status: r.status,
     kind: r.kind,
     planVersionId: r.plan_version_id,
@@ -88,6 +89,11 @@ export async function processPaymentWebhook(providerName: string, req: Request):
     return errorResponse(500, 'internal_error', 'Webhook could not be verified.', ids)
   }
 
+  if (event.type === 'ignored') {
+    const res = Response.json({ received: true, status: 'ignored' })
+    stampHeaders(res, ids)
+    return res
+  }
   if (!event.orderId) {
     return errorResponse(400, 'malformed_event', 'Webhook does not identify an order.', ids)
   }
@@ -117,13 +123,8 @@ export async function processPaymentWebhook(providerName: string, req: Request):
     if (e instanceof OrderError) {
       return errorResponse(e.status, e.code, e.message, ids)
     }
-    // A unique-violation means a concurrent handler already recorded this
-    // event: that is an idempotent success, not an error.
-    if (isUniqueViolation(e)) {
-      const res = Response.json({ received: true, status: 'duplicate' }, { status: 200 })
-      stampHeaders(res, ids)
-      return res
-    }
+    // Do not acknowledge arbitrary unique violations: the transaction rolled
+    // back, so Stripe must retry. Legitimate duplicates use the row-lock guard.
     return errorResponse(500, 'internal_error', 'Webhook processing failed.', ids)
   }
 }
@@ -140,6 +141,22 @@ async function applyOnClient(
   }
   const order = toOrderRecord(row)
   const base = { order_id: order.id, tenant_id: order.tenantId, kind: order.kind }
+
+  if (
+    order.paymentProvider !== providerName ||
+    event.provider !== providerName ||
+    (event.tenantId !== undefined && event.tenantId !== order.tenantId) ||
+    (event.mode !== undefined && order.metadata.checkoutMode !== event.mode)
+  ) {
+    throw new OrderError('payment_identity_mismatch', 'Payment identity does not match this order.', 400)
+  }
+  // A webhook can arrive before checkout persistence. Fail retryably instead
+  // of crediting an unbound session, or falsely acknowledging the callback.
+  if (!order.externalOrderId)
+    throw new OrderError('payment_provider_error', 'Checkout session is not persisted yet; retry delivery.', 409)
+  if (event.externalOrderId !== null && event.externalOrderId !== order.externalOrderId) {
+    throw new OrderError('payment_identity_mismatch', 'Payment session does not match this order.', 400)
+  }
 
   // The provider-reported amount must match the server-side order. A tampered
   // webhook amount is rejected outright and never credited.
@@ -205,12 +222,13 @@ async function applyOnClient(
     return { status: 200, body: { received: true, status: 'duplicate', reason: 'lost_race', ...base } }
   }
 
-  await activateSubscriptionForOrder(client, order)
+  const subscriptionActivation = await activateSubscriptionForOrder(client, order)
   await recordPayment(client, order, providerName, event, 'completed')
   await enqueueOutbox(client, order, 'order.paid', {
     amountMicros: event.amount.toString(),
     currency: order.currency,
     ledgerTransactionId,
+    subscriptionActivation,
   })
 
   return {
@@ -221,6 +239,7 @@ async function applyOnClient(
       ledger_transaction_id: ledgerTransactionId,
       amount_micros: event.amount.toString(),
       currency: order.currency,
+      subscription_activation: subscriptionActivation,
       ...base,
     },
   }
@@ -236,6 +255,10 @@ async function applyOnClient(
  */
 async function postRecharge(client: PoolClient, order: OrderRecord): Promise<string | null> {
   if (order.amountMicros <= 0n) return null
+  // The ledger's tenant lock must cover first-account bootstrap too. Two
+  // different paid orders may otherwise both observe missing system accounts
+  // before postTransaction takes this same lock.
+  await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [order.tenantId])
   const clearingAccountId = await ensureSystemLedgerAccount(order.tenantId, 'clearing', order.currency, client)
   const creditAccountId =
     order.kind === 'managed_credits'
@@ -305,10 +328,6 @@ async function enqueueOutbox(
       orderOutboxKey(order.id, eventType.replace('order.', '')),
     ],
   )
-}
-
-function isUniqueViolation(e: unknown): boolean {
-  return typeof e === 'object' && e !== null && (e as { code?: string }).code === '23505'
 }
 
 /**

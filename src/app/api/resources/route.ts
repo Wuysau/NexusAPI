@@ -2,6 +2,7 @@ import { pool } from '@/db'
 import { buildResourceCatalog, type ChannelFact, type ConnectionFact, type QuotaFact } from '@/lib/resources/catalog'
 import { connectionVisibility, workspaceParams } from '@/lib/workspace/management'
 import { jsonOk, requireContext, routeError } from '../_lib/control-plane'
+import { readCollectorObservation } from '@/lib/subscriptions/collector'
 
 export const dynamic = 'force-dynamic'
 
@@ -33,13 +34,24 @@ export async function GET(req: Request) {
     const quotas = ids.length
       ? await pool.query<QuotaFact>(
           `SELECT DISTINCT ON (connection_id,window_type) connection_id,window_type,observation_id,source,availability,used,remaining,
-            observed_at,stale_at,reset_at,source_kind,confidence,scope,metadata
+            observed_at,stale_at,reset_at,source_kind,confidence,scope,metadata,provenance_version
            FROM quota_snapshots WHERE tenant_id=$1 AND connection_id=ANY($2::text[])
            ORDER BY connection_id,window_type,observed_at DESC,created_at DESC,id DESC`,
           [ctx.tenantId, ids],
         )
       : { rows: [] as QuotaFact[] }
-    const response = jsonOk({ resources: buildResourceCatalog(connections.rows, channels.rows, quotas.rows) })
+    const now = new Date()
+    const observations = new Map(
+      connections.rows.map((connection) => [
+        connection.id,
+        readCollectorObservation(connection.account_observation, ctx.organizationId, now),
+      ]),
+    )
+    const resources = buildResourceCatalog(connections.rows, channels.rows, quotas.rows, now).map((resource) => ({
+      ...resource,
+      collectorObservation: resource.connectionId ? (observations.get(resource.connectionId) ?? null) : null,
+    }))
+    const response = jsonOk({ resources })
     response.headers.set('cache-control', 'no-store')
     return response
   } catch (error) {

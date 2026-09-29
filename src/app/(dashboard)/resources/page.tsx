@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { Layers3, RefreshCw } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
@@ -8,6 +8,7 @@ import { EmptyState, ErrorBanner, ErrorState, LoadingState, PermissionDenied } f
 import { useApiData } from '@/components/lib/useApiData'
 import type { ExecutionResourceView } from '@/lib/resources/catalog'
 import styles from '@/components/workspace/workspace.module.css'
+import { SubscriptionPools, ResourceQuotaWindows } from '@/components/workspace/SubscriptionPools'
 
 const kinds: Record<ExecutionResourceView['resourceType'], string> = {
   api: 'API',
@@ -30,6 +31,12 @@ export default function ResourcesPage() {
     '/api/resources',
   )
   const resources = (data?.resources ?? []).filter((resource) => type === 'all' || resource.resourceType === type)
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') reload()
+    }, 30_000)
+    return () => window.clearInterval(timer)
+  }, [reload])
   return (
     <div className={styles.shell}>
       <PageHeader
@@ -47,10 +54,11 @@ export default function ResourcesPage() {
       {loading && !data ? <LoadingState label="加载资源…" /> : null}
       {data ? (
         <>
+          <SubscriptionPools resources={data.resources} />
           <div className={styles.toolbar}>
             <div>
               共 {resources.length} 个资源{' '}
-              <small>· 最近读取 {loadedAt ? new Date(loadedAt).toLocaleString() : '—'}</small>
+              <small>· 页面可见时每 30 秒刷新 · 最近读取 {loadedAt ? new Date(loadedAt).toLocaleString() : '—'}</small>
             </div>
             <label>
               类型{' '}
@@ -114,6 +122,7 @@ export default function ResourcesPage() {
                         {resource.usedPercent !== null ? ` · ${resource.usedPercent.toFixed(1)}%` : ''}
                         <br />
                         <small>{resource.resetAt ? new Date(resource.resetAt).toLocaleString() : '重置时间未知'}</small>
+                        <ResourceQuotaWindows resource={resource} />
                       </td>
                       <td>
                         {resource.temporaryBlock ? '暂不可调度' : healthLabels[resource.health]}

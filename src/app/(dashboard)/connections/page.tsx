@@ -21,16 +21,24 @@ import styles from '@/components/workspace/workspace.module.css'
 import { ObserverPathField } from '@/components/workspace/ObserverPathField'
 import { CodexAccountPanel, accountStatusLabels } from '@/components/workspace/CodexAccountPanel'
 import { ObserverPanel } from '@/components/workspace/ObserverPanel'
+import { SubscriptionProductGuide } from '@/components/workspace/SubscriptionProductGuide'
+import SubscriptionMonitor from '@/components/connections/SubscriptionMonitor'
+import {
+  SUBSCRIPTION_PRODUCTS,
+  connectionSubscriptionProduct,
+  getSubscriptionProduct,
+  isCodexSubscription,
+} from '@/lib/subscriptions/catalog'
 
 const modes: Record<string, string> = {
-  subscription_interactive: 'Codex 账户与订阅观测',
+  subscription_interactive: '订阅与产品账户',
   direct_api: 'API 连接登记',
   local_sidecar: '本地连接器',
   customer_vpc_runner: '私有网络连接器',
   external_endpoint: '外部服务登记',
 }
 function title(c: WorkspaceConnection) {
-  return c.subscription_product === 'openai_codex' ? 'OpenAI Codex' : c.provider
+  return connectionSubscriptionProduct(c)?.label ?? c.provider
 }
 function revoked(c: WorkspaceConnection) {
   return Boolean(c.revoked_at) || c.status === 'revoked'
@@ -40,6 +48,7 @@ function state(c: WorkspaceConnection) {
   if (c.status === 'blocked') return '已阻止'
   if (c.status === 'expired') return '已过期'
   if (c.channelId) return c.channelEnabled ? '已关联渠道' : '渠道已停用'
+  if (c.mode === 'subscription_interactive' && !isCodexSubscription(c)) return '已登记'
   if (c.mode === 'subscription_interactive')
     return c.accountStatus
       ? (accountStatusLabels[c.accountStatus] ?? '尚未同步')
@@ -65,6 +74,8 @@ export default function ConnectionsPage() {
   const [mode, setMode] = useState('subscription_interactive')
   const [provider, setProvider] = useState('openai')
   const [identifier, setIdentifier] = useState('openai')
+  const [subscriptionProduct, setSubscriptionProduct] = useState('openai_codex')
+  const selectedProduct = getSubscriptionProduct(subscriptionProduct)!
   const [projectId, setProjectId] = useState('')
   const [setupProjectId, setSetupProjectId] = useState('')
   const [source, setSource] = useState('')
@@ -87,13 +98,18 @@ export default function ConnectionsPage() {
     setFormError('')
     try {
       await apiSend('/api/connections', 'POST', {
-        provider: mode === 'subscription_interactive' ? 'openai' : provider.trim(),
+        provider: mode === 'subscription_interactive' ? selectedProduct.provider : provider.trim(),
         mode,
         projectId: projectId || null,
-        ...(mode === 'subscription_interactive' ? { providerIdentifier: identifier.trim() } : {}),
+        ...(mode === 'subscription_interactive'
+          ? {
+              subscriptionProduct,
+              providerIdentifier: subscriptionProduct === 'openai_codex' ? identifier.trim() : selectedProduct.provider,
+            }
+          : {}),
       })
       setCreating(false)
-      setNotice('连接已登记。完成配置并收到实际观测或连接器心跳后，页面会更新对应状态。')
+      setNotice('连接已登记。请打开“配置与详情”查看此产品支持的能力和接入步骤。')
       await reload()
     } catch (e) {
       setFormError(errorMessage(e))
@@ -108,7 +124,7 @@ export default function ConnectionsPage() {
     try {
       await apiSend('/api/connections/' + encodeURIComponent(revoking.id), 'DELETE')
       setRevoking(null)
-      setNotice('连接已撤销。历史观测仍然保留；Nexus 中的撤销不会退出你本机的 Codex 账号。')
+      setNotice('连接已撤销。历史记录仍然保留；Nexus 中的撤销不会退出官方客户端账号。')
       await reload()
     } catch (e) {
       setFormError(errorMessage(e))
@@ -150,7 +166,7 @@ export default function ConnectionsPage() {
   }
   function download(e: FormEvent) {
     e.preventDefault()
-    if (!session || !setup) return
+    if (!session || !setup || !isCodexSubscription(setup)) return
     const path = source.trim()
     if (!/^(?:[a-zA-Z]:[\\/]|\/|\\\\)/.test(path) || /[\x00-\x1f]/.test(path)) {
       setFormError('请填写本机 Codex sessions 目录或 rollout 文件的绝对路径。')
@@ -190,6 +206,7 @@ export default function ConnectionsPage() {
               setMode('subscription_interactive')
               setProvider('openai')
               setIdentifier('openai')
+              setSubscriptionProduct('openai_codex')
               setProjectId('')
             }}
           >
@@ -206,11 +223,7 @@ export default function ConnectionsPage() {
         <div>
           <span title="已由本地 Observer 导入过 Codex 会话用量；上游 API 渠道不计入">已有 Codex 会话记录</span>
           <strong>
-            {
-              connections.filter(
-                (c) => !revoked(c) && c.mode === 'subscription_interactive' && BigInt(c.observedEvents) > 0n,
-              ).length
-            }
+            {connections.filter((c) => !revoked(c) && isCodexSubscription(c) && BigInt(c.observedEvents) > 0n).length}
           </strong>
         </div>
         <div>
@@ -276,7 +289,7 @@ export default function ConnectionsPage() {
                 </span>
               </div>
               <div className={styles.cardBody}>
-                {!c.channelId && (
+                {!c.channelId && (c.mode !== 'subscription_interactive' || isCodexSubscription(c)) && (
                   <div className={styles.metrics}>
                     <div>
                       <strong>{count(c.observedSessions)}</strong>
@@ -290,16 +303,14 @@ export default function ConnectionsPage() {
                 )}
                 <dl className={styles.details}>
                   <dt>绑定项目</dt>
-                  <dd>
-                    {c.project_name ?? (c.mode === 'subscription_interactive' ? '未绑定 · 按工作目录归属' : '未绑定')}
-                  </dd>
+                  <dd>{c.project_name ?? (isCodexSubscription(c) ? '未绑定 · 按工作目录归属' : '未绑定')}</dd>
                   {c.channelId && (
                     <>
                       <dt>关联渠道</dt>
                       <dd>{c.channelName ?? c.channelId}</dd>
                     </>
                   )}
-                  {!c.channelId && (
+                  {!c.channelId && (c.mode !== 'subscription_interactive' || isCodexSubscription(c)) && (
                     <>
                       <dt>最近观测</dt>
                       <dd>{localDate(c.lastObservedAt)}</dd>
@@ -365,29 +376,46 @@ export default function ConnectionsPage() {
               <select value={mode} onChange={(e) => setMode(e.target.value)}>
                 {Object.entries(modes).map(([value, label]) => (
                   <option key={value} value={value}>
-                    {value === 'subscription_interactive' ? 'OpenAI Codex · 本地订阅观测' : label}
+                    {label}
                   </option>
                 ))}
               </select>
             </label>
             {mode === 'subscription_interactive' ? (
               <>
-                <WorkspaceNotice>使用本机已登录的 Codex，无需填写账号或密钥。</WorkspaceNotice>
                 <label className={styles.field}>
-                  Codex 供应商标识
-                  <input
-                    required
-                    maxLength={80}
-                    pattern="[a-zA-Z0-9][a-zA-Z0-9_.\-]*"
-                    value={identifier}
-                    aria-label="Codex 供应商标识"
-                    aria-describedby="provider-identifier-help"
-                    onChange={(e) => setIdentifier(e.target.value)}
-                  />
-                  <span className={styles.hint} id="provider-identifier-help">
-                    官方订阅保留 openai；自定义配置需与 model_provider 一致。
-                  </span>
+                  订阅产品
+                  <select
+                    aria-label="订阅产品"
+                    value={subscriptionProduct}
+                    onChange={(e) => setSubscriptionProduct(e.target.value)}
+                  >
+                    {SUBSCRIPTION_PRODUCTS.map((product) => (
+                      <option key={product.id} value={product.id}>
+                        {product.label}
+                      </option>
+                    ))}
+                  </select>
                 </label>
+                <WorkspaceNotice>登记无需账号密码、Cookie 或密钥。不同产品支持的观测和 API 能力如下。</WorkspaceNotice>
+                <SubscriptionProductGuide product={selectedProduct} />
+                {subscriptionProduct === 'openai_codex' && (
+                  <label className={styles.field}>
+                    Codex 供应商标识
+                    <input
+                      required
+                      maxLength={80}
+                      pattern="[a-zA-Z0-9][a-zA-Z0-9_.\-]*"
+                      value={identifier}
+                      aria-label="Codex 供应商标识"
+                      aria-describedby="provider-identifier-help"
+                      onChange={(e) => setIdentifier(e.target.value)}
+                    />
+                    <span className={styles.hint} id="provider-identifier-help">
+                      官方订阅保留 openai；自定义配置需与 model_provider 一致。
+                    </span>
+                  </label>
+                )}
               </>
             ) : (
               <>
@@ -421,7 +449,7 @@ export default function ConnectionsPage() {
                 ))}
               </select>
               <span className={styles.hint} id="connection-project-help">
-                绑定项目控制访问范围；订阅用量按工作目录归属。
+                绑定项目控制访问范围；Codex 本地会话用量按工作目录归属。
               </span>
             </label>
             {projectData.error && <WorkspaceNotice error>项目加载失败。请关闭弹窗刷新后重试。</WorkspaceNotice>}
@@ -526,7 +554,10 @@ export default function ConnectionsPage() {
                   </button>
                 </form>
               )}
-            {setup.mode === 'subscription_interactive' && (
+            {setup.mode === 'subscription_interactive' && connectionSubscriptionProduct(setup) && (
+              <SubscriptionProductGuide product={connectionSubscriptionProduct(setup)!} />
+            )}
+            {isCodexSubscription(setup) && (
               <CodexAccountPanel
                 key={`account:${setup.id}`}
                 connectionId={setup.id}
@@ -535,8 +566,20 @@ export default function ConnectionsPage() {
                 onSynced={() => void reload()}
               />
             )}
+            {!isCodexSubscription(setup) && connectionSubscriptionProduct(setup)?.capabilities.collectorObservation && (
+              <SubscriptionMonitor
+                key={`monitor:${setup.id}`}
+                connectionId={setup.id}
+                providerType={connectionSubscriptionProduct(setup)!.id}
+                canManage={
+                  !revoked(setup) &&
+                  can('credential:create') &&
+                  Boolean(session && ['owner', 'admin'].includes(session.role))
+                }
+              />
+            )}
             {!revoked(setup) &&
-              setup.mode === 'subscription_interactive' &&
+              isCodexSubscription(setup) &&
               can('credential:create') &&
               session &&
               ['owner', 'admin'].includes(session.role) && (
@@ -568,13 +611,15 @@ export default function ConnectionsPage() {
                 <dd>{state(connections.find((c) => c.id === setup.id) ?? setup)}</dd>
                 <dt>数据来源</dt>
                 <dd>
-                  {setup.mode === 'subscription_interactive'
+                  {isCodexSubscription(setup)
                     ? 'Codex App Server + Codex local telemetry'
-                    : setup.channelId
-                      ? 'NexusAPI 网关请求（非本地会话）'
-                      : '连接登记 / 自报心跳'}
+                    : setup.mode === 'subscription_interactive'
+                      ? '产品登记；官方账户与额度尚未同步'
+                      : setup.channelId
+                        ? 'NexusAPI 网关请求（非本地会话）'
+                        : '连接登记 / 自报心跳'}
                 </dd>
-                {!setup.channelId && (
+                {!setup.channelId && (setup.mode !== 'subscription_interactive' || isCodexSubscription(setup)) && (
                   <>
                     <dt>历史本地观测</dt>
                     <dd>
@@ -584,7 +629,7 @@ export default function ConnectionsPage() {
                 )}
               </dl>
             </HelpDetails>
-            {!revoked(setup) && setup.mode === 'subscription_interactive' && can('credential:create') && (
+            {!revoked(setup) && isCodexSubscription(setup) && can('credential:create') && (
               <HelpDetails label="本地同步配置">
                 <form className={styles.form} onSubmit={download}>
                   <ObserverPathField value={source} onChange={setSource} onBusyChange={setPickingPath} />

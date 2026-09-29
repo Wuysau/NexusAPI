@@ -47,7 +47,8 @@ export default function DocsPage() {
             <div>
               <h3>添加渠道</h3>
               <p>
-                本机控制台可在渠道管理中填写上游地址、协议、API Key，以及每行一个的模型 ID。其他部署方式需先通过独立凭据流程录入并授权上游密钥，再登记凭据引用；由部署方发布有效的模型路由与价格快照。
+                本机控制台可在渠道管理中填写上游地址、协议、API Key，以及每行一个的模型
+                ID。其他部署方式需先通过独立凭据流程录入并授权上游密钥，再登记凭据引用；由部署方发布有效的模型路由与价格快照。
               </p>
               <Link className="text-link" href="/channels">
                 前往渠道管理 <ArrowRight size={14} />
@@ -147,6 +148,27 @@ export default function DocsPage() {
             <code>Authorization: Bearer sk-nx-...</code>
             <small>计费货币</small>
             <strong>以已生效的价格快照与账本币种为准</strong>
+          </section>
+          <section className="panel">
+            <h3>订阅与账号池</h3>
+            <p>在连接页选择订阅产品并绑定项目。Codex 使用原生观测，支持的其他服务可导入或同步 CodexBar 快照。</p>
+            <Link className="text-link" href="/connections">
+              管理订阅连接 <ArrowRight size={14} />
+            </Link>
+            <p>
+              <Link className="text-link" href="/resources">
+                查看额度窗口与连接池状态 <ArrowRight size={14} />
+              </Link>
+            </p>
+          </section>
+          <section className="panel">
+            <h3>购买平台套餐</h3>
+            <p>
+              商户与套餐配置后，可通过 Stripe 收银台付款；支付通知验证完成后激活权益。第三方模型订阅仍在供应商处购买。
+            </p>
+            <Link className="text-link" href="/billing">
+              用量、订单与支付 <ArrowRight size={14} />
+            </Link>
           </section>
           <div className="info-banner">
             <ShieldCheck size={20} />

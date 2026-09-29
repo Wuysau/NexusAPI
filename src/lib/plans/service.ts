@@ -464,8 +464,15 @@ async function scheduleOnClient(
 /** Interval → default period end (used when a paid order activates a plan). */
 export function periodEndFor(interval: string, from: Date): Date {
   const end = new Date(from)
+  const day = end.getUTCDate()
+  // Move from day 1 so Jan 31 and leap-day anniversaries cannot overflow
+  // into a second month. Preserve UTC time and clamp to the target month.
+  end.setUTCDate(1)
   if (interval === 'year') end.setUTCFullYear(end.getUTCFullYear() + 1)
   else end.setUTCMonth(end.getUTCMonth() + 1)
+  const lastDay = new Date(end)
+  lastDay.setUTCMonth(lastDay.getUTCMonth() + 1, 0)
+  end.setUTCDate(Math.min(day, lastDay.getUTCDate()))
   return end
 }
 

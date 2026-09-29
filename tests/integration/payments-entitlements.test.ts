@@ -671,7 +671,7 @@ describe('payment webhooks', () => {
   it('returns 404 for an unknown provider and for an unknown order', async () => {
     const { order } = await pendingOrder()
     const unknownProvider = await webhookPOST(webhookRequest(successEvent(order)), {
-      params: Promise.resolve({ provider: 'stripe' }),
+      params: Promise.resolve({ provider: 'unregistered-processor' }),
     })
     expect(unknownProvider.status).toBe(404)
 

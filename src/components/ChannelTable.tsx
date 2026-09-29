@@ -12,6 +12,7 @@ import { Modal } from './Modal'
 import { ReauthDialog } from './ReauthDialog'
 import { Badge, ProviderMark, fullDate } from './ui'
 import { EmptyState, ErrorState, PermissionDenied, SkeletonRows } from './States'
+import { SUBSCRIPTION_PRODUCTS, getSubscriptionProduct } from '@/lib/subscriptions/catalog'
 
 interface Channel {
   id: string
@@ -76,6 +77,8 @@ export function ChannelTable({ compact = false }: { compact?: boolean }) {
   const [testingId, setTestingId] = useState<string | null>(null)
   const [baseUrl, setBaseUrl] = useState('')
   const [protocol, setProtocol] = useState<'openai' | 'anthropic'>('openai')
+  const [providerRef, setProviderRef] = useState('')
+  const [presetId, setPresetId] = useState('')
 
   const canCreate = can('credential:create')
   const canRotate = can('credential:rotate')
@@ -90,8 +93,14 @@ export function ChannelTable({ compact = false }: { compact?: boolean }) {
   }
 
   function openCreate() {
-    setBaseUrl('')
-    setProtocol('openai')
+    const product = getSubscriptionProduct(new URLSearchParams(window.location.search).get('subscriptionProduct') ?? '')
+    const preset = localKeyInput ? product?.channelPreset : undefined
+    setBaseUrl(preset?.baseUrl ?? '')
+    setProtocol(preset?.protocol ?? 'openai')
+    setProviderRef(
+      preset ? (state.data?.providers.find((provider) => provider.code === product?.provider)?.id ?? 'custom') : '',
+    )
+    setPresetId(preset ? product!.id : '')
     setDialog('create')
   }
 
@@ -391,6 +400,49 @@ export function ChannelTable({ compact = false }: { compact?: boolean }) {
         <Modal title="添加上游渠道" onClose={closeDialog} busy={actionBusy}>
           <form onSubmit={createChannel}>
             <fieldset className="form-body" disabled={actionBusy} style={{ border: 0, margin: 0, minWidth: 0 }}>
+              {localKeyInput && (
+                <label>
+                  接入模板
+                  <select
+                    value={presetId}
+                    onChange={(event) => {
+                      const id = event.target.value
+                      setPresetId(id)
+                      const product = getSubscriptionProduct(id)
+                      const preset = product?.channelPreset
+                      setProviderRef(
+                        providers.find((provider) => provider.code === product?.provider)?.id ?? (id ? 'custom' : ''),
+                      )
+                      setBaseUrl(preset?.baseUrl ?? (id === 'cliproxyapi' ? 'http://127.0.0.1:8317/v1' : ''))
+                      setProtocol(preset?.protocol ?? 'openai')
+                    }}
+                  >
+                    <option value="">手动配置</option>
+                    <optgroup label="官方 API（使用独立开放平台密钥）">
+                      {SUBSCRIPTION_PRODUCTS.filter((product) => product.channelPreset).map((product) => (
+                        <option key={product.id} value={product.id}>
+                          {product.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="已部署的兼容代理">
+                      <option value="cliproxyapi">CLIProxyAPI · 本地 OpenAI 兼容入口</option>
+                      <option value="compatible_proxy">New API / Sub2API / 其他兼容服务</option>
+                    </optgroup>
+                  </select>
+                  <small>
+                    {getSubscriptionProduct(presetId)?.channelPreset?.note ??
+                      (presetId
+                        ? '填写你已部署服务的 API 地址与访问密钥。代理账号与授权由该服务管理；NexusAPI 不导入登录 Cookie 或 OAuth 令牌。'
+                        : '模板仅填写地址和协议，模型 ID 请按实际授权填写。')}
+                  </small>
+                  {getSubscriptionProduct(presetId)?.apiGuideUrl && (
+                    <a href={getSubscriptionProduct(presetId)!.apiGuideUrl} target="_blank" rel="noreferrer">
+                      查看官方接入文档 ↗
+                    </a>
+                  )}
+                </label>
+              )}
               <label>
                 渠道名称
                 <input name="name" required maxLength={80} placeholder="例如：OpenAI 备用渠道" autoFocus />
@@ -400,9 +452,11 @@ export function ChannelTable({ compact = false }: { compact?: boolean }) {
                   上游供应商
                   <select
                     name="provider"
-                    defaultValue=""
+                    value={providerRef}
                     required
                     onChange={(event) => {
+                      setProviderRef(event.target.value)
+                      setPresetId('')
                       const provider = providers.find((item) => item.id === event.target.value)
                       setBaseUrl(provider?.baseUrl ?? '')
                       setProtocol(provider?.code === 'anthropic' ? 'anthropic' : 'openai')

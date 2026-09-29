@@ -100,11 +100,13 @@ export async function GET(req: Request) {
             amount: string
             currency: string
             payment_provider: string
+            checkout_mode: 'test' | 'live' | null
+            subscription_activation: string | null
             plan_version_id: string | null
             created_at: Date
             paid_at: Date | null
           }>(
-            `SELECT id,kind,status,amount::text,currency,payment_provider,plan_version_id,created_at,paid_at FROM orders
+            `SELECT id,kind,status,amount::text,currency,payment_provider,metadata->>'checkoutMode' AS checkout_mode,metadata->'subscriptionActivation'->>'status' AS subscription_activation,plan_version_id,created_at,paid_at FROM orders
            WHERE tenant_id=$1 AND organization_id=$2 ORDER BY created_at DESC,id DESC LIMIT 50`,
             [access.tenantId, access.financialOrganizationId],
           )
@@ -115,6 +117,8 @@ export async function GET(req: Request) {
           amount: money(row.amount),
           currency: row.currency,
           paymentProvider: row.payment_provider,
+          checkoutMode: row.checkout_mode,
+          subscriptionActivation: row.subscription_activation,
           planVersionId: row.plan_version_id,
           createdAt: row.created_at.toISOString(),
           paidAt: row.paid_at?.toISOString() ?? null,

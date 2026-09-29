@@ -112,6 +112,7 @@ export function serverOrderAmount(kind: OrderKind, version: PlanVersionRecord): 
 
 export interface CreateOrderInput {
   tenantId: string
+  organizationId?: string
   kind: OrderKind
   planVersionId: string
   idempotencyKey: string
@@ -153,8 +154,8 @@ export async function createOrder(input: CreateOrderInput): Promise<CreatedOrder
       }
 
       const org = await client.query<{ id: string }>(
-        `SELECT id FROM organizations WHERE tenant_id = $1 AND deleted_at IS NULL LIMIT 1`,
-        [tenantId],
+        `SELECT id FROM organizations WHERE tenant_id = $1 AND deleted_at IS NULL AND ($2::text IS NULL OR id = $2) LIMIT 1`,
+        [tenantId, input.organizationId ?? null],
       )
       if (!org.rows.length) throw new OrderError('tenant_not_found', `tenant ${tenantId} not found`, 404)
 
@@ -162,6 +163,12 @@ export async function createOrder(input: CreateOrderInput): Promise<CreatedOrder
       if (!version) throw new OrderError('plan_version_not_found', `plan version ${input.planVersionId} not found`, 404)
       if (version.status !== 'published') {
         throw new OrderError('plan_version_not_published', `plan version ${input.planVersionId} is not published`, 409)
+      }
+      if (
+        (version.effectiveFrom && version.effectiveFrom.getTime() > Date.now()) ||
+        (version.effectiveTo && version.effectiveTo.getTime() <= Date.now())
+      ) {
+        throw new OrderError('plan_version_not_published', 'Plan version is outside its purchase window.', 409)
       }
 
       const amount = serverOrderAmount(input.kind, version)
@@ -182,7 +189,7 @@ export async function createOrder(input: CreateOrderInput): Promise<CreatedOrder
           idempotencyKey,
           input.kind,
           version.id,
-          JSON.stringify({ planCode: version.planCode, planVersion: version.version }),
+          JSON.stringify({ planCode: version.planCode, planVersion: version.version, checkoutMode: provider.mode }),
         ],
       )
       return { row: inserted.rows[0], replayed: false }
@@ -200,8 +207,32 @@ export async function createOrder(input: CreateOrderInput): Promise<CreatedOrder
   }
 
   const order = toOrderRecord(created.row)
-  if (created.replayed) {
+  if (
+    order.kind !== input.kind ||
+    order.planVersionId !== input.planVersionId ||
+    order.paymentProvider !== provider.name ||
+    (input.organizationId && order.organizationId !== input.organizationId)
+  ) {
+    throw new OrderError('duplicate_idempotency_key', 'Idempotency key is already bound to a different purchase.', 409)
+  }
+  if (provider.mode && order.metadata.checkoutMode !== provider.mode) {
+    throw new OrderError(
+      'payment_provider_error',
+      'This order belongs to a different payment mode. Contact billing support.',
+      409,
+    )
+  }
+  if (created.replayed && (order.externalOrderId || order.status !== 'pending')) {
     return { order, checkout: storedCheckout(order), replayed: true }
+  }
+  // Stripe retains idempotency keys for at least 24h. Never create a second
+  // processor session after an ambiguous checkout has aged beyond that bound.
+  if (created.replayed && Date.now() - order.createdAt.getTime() > 23 * 60 * 60 * 1000) {
+    throw new OrderError(
+      'payment_provider_error',
+      'Checkout recovery window expired. Contact billing support before retrying.',
+      409,
+    )
   }
 
   // 2) Ask the provider to prepare a checkout. This is deliberately outside the
@@ -215,12 +246,7 @@ export async function createOrder(input: CreateOrderInput): Promise<CreatedOrder
 
   await pool.query(
     `UPDATE orders SET external_order_id = $3, metadata = metadata || $4::jsonb WHERE id = $1 AND tenant_id = $2`,
-    [
-      order.id,
-      tenantId,
-      checkout.externalOrderId,
-      JSON.stringify({ checkout: { provider: checkout.provider, status: checkout.status, sandbox: checkout.sandbox } }),
-    ],
+    [order.id, tenantId, checkout.externalOrderId, JSON.stringify({ checkout })],
   )
 
   await safeLogAudit({
@@ -242,7 +268,7 @@ export async function createOrder(input: CreateOrderInput): Promise<CreatedOrder
   return {
     order: { ...order, externalOrderId: checkout.externalOrderId },
     checkout,
-    replayed: false,
+    replayed: created.replayed,
   }
 }
 
@@ -508,15 +534,20 @@ function isUniqueViolation(e: unknown): boolean {
 }
 
 function storedCheckout(order: OrderRecord): CheckoutResult {
-  const stored = (order.metadata.checkout ?? {}) as { provider?: string; status?: string; sandbox?: boolean }
+  const stored = (order.metadata.checkout ?? {}) as Partial<CheckoutResult>
   const provider = stored.provider ?? order.paymentProvider
   return {
     provider,
     status: (stored.status as CheckoutResult['status']) ?? 'pending',
     sandbox: stored.sandbox === true,
     externalOrderId: order.externalOrderId,
-    checkoutUrl: null,
+    checkoutUrl:
+      order.status === 'pending' && (!stored.expiresAt || stored.expiresAt > Date.now() / 1000)
+        ? (stored.checkoutUrl ?? null)
+        : null,
     confirmation: 'webhook_only',
+    expiresAt: stored.expiresAt,
+    mode: stored.mode,
   }
 }
 
@@ -525,23 +556,71 @@ export async function activateSubscriptionForOrder(
   client: PoolClient,
   order: OrderRecord,
   actorUserId?: string | null,
-): Promise<void> {
-  if (order.kind !== 'subscription' || !order.planVersionId) return
+): Promise<'active' | 'reconciliation_required' | null> {
+  if (order.kind !== 'subscription' || !order.planVersionId) return null
+  // Stripe delivers across orders out of sequence. A server-created purchase
+  // has deterministic precedence (creation timestamp, ID as tie-break), not
+  // webhook arrival time or Stripe's second-resolution event timestamp.
+  await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`subscriptions:${order.tenantId}`])
+  const newer = await client.query<{ id: string }>(
+    `SELECT id FROM orders WHERE tenant_id=$1 AND kind='subscription' AND paid_at IS NOT NULL
+       AND (created_at,id) > (SELECT created_at,id FROM orders WHERE tenant_id=$1 AND id=$2)
+     ORDER BY created_at DESC,id DESC LIMIT 1`,
+    [order.tenantId, order.id],
+  )
+  if (newer.rows[0]) {
+    const reconciliation = await client.query<{ id: string }>(
+      `INSERT INTO reconciliation_cases (id,tenant_id,status,reason,expected_amount,actual_amount,currency,resolution)
+       VALUES (gen_random_uuid(),$1,'open','subscription_payment_superseded',$2,$2,$3,$4) RETURNING id`,
+      [
+        order.tenantId,
+        order.amountMicros.toString(),
+        order.currency,
+        `Paid order ${order.id} requires fulfillment/refund review: newer paid purchase ${newer.rows[0].id} retains plan precedence. No automatic refund or wallet credit.`,
+      ],
+    )
+    await client.query('UPDATE orders SET metadata=metadata || $3::jsonb WHERE tenant_id=$1 AND id=$2', [
+      order.tenantId,
+      order.id,
+      JSON.stringify({
+        subscriptionActivation: {
+          status: 'reconciliation_required',
+          caseId: reconciliation.rows[0].id,
+          supersededByOrderId: newer.rows[0].id,
+        },
+      }),
+    ])
+    return 'reconciliation_required'
+  }
   const version = await getPlanVersion(order.planVersionId, client)
   if (!version) throw new OrderError('plan_version_not_found', `plan version ${order.planVersionId} not found`, 404)
   const now = new Date()
-  await scheduleSubscriptionChange(
+  const periodEnd = periodEndFor(version.billingInterval, now)
+  const subscription = await scheduleSubscriptionChange(
     {
       tenantId: order.tenantId,
       organizationId: order.organizationId,
       planVersionId: version.id,
       effectiveFrom: now,
-      status: version.trialDays > 0 ? 'trialing' : 'active',
-      currentPeriodEnd: periodEndFor(version.billingInterval, now),
+      status: 'active',
+      currentPeriodEnd: periodEnd,
       createdBy: actorUserId ?? null,
     },
     client,
   )
+  // Hosted Checkout is a one-time purchase, not a recurring Stripe
+  // subscription. Make the paid access end explicit for entitlement queries.
+  await client.query('UPDATE subscriptions SET effective_to = $3 WHERE id = $1 AND tenant_id = $2', [
+    subscription.id,
+    order.tenantId,
+    periodEnd,
+  ])
+  await client.query('UPDATE orders SET metadata=metadata || $3::jsonb WHERE tenant_id=$1 AND id=$2', [
+    order.tenantId,
+    order.id,
+    JSON.stringify({ subscriptionActivation: { status: 'active', subscriptionId: subscription.id } }),
+  ])
+  return 'active'
 }
 
 /** Used by the webhook module to type-check the provider it is handling. */

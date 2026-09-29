@@ -1,4 +1,5 @@
 import { pool } from '@/db'
+import { getSubscriptionProduct } from '@/lib/subscriptions/catalog'
 import { resolveQuotaProject } from '@/lib/quota/access'
 import { connectionVisibility, observedVisibility, workspaceParams } from '@/lib/workspace/management'
 import { apiError, auditControlPlane, jsonOk, readJsonBody, requireContext, routeError } from '../_lib/control-plane'
@@ -45,9 +46,15 @@ export async function POST(req: Request) {
       Array.isArray(body) ||
       Object.keys(body).some(
         (key) =>
-          !['provider', 'mode', 'projectId', 'providerIdentifier', 'credentialFingerprint', 'capabilities'].includes(
-            key,
-          ),
+          ![
+            'provider',
+            'mode',
+            'projectId',
+            'providerIdentifier',
+            'subscriptionProduct',
+            'credentialFingerprint',
+            'capabilities',
+          ].includes(key),
       )
     )
       return apiError(400, 'invalid_connection', '连接参数无效，请勿提交密钥')
@@ -70,23 +77,31 @@ export async function POST(req: Request) {
     const projectId = typeof body.projectId === 'string' ? body.projectId : null
     let capabilities: Record<string, unknown> = {}
     if (mode === 'subscription_interactive') {
-      const identifier = body.providerIdentifier ?? 'openai'
+      const product = getSubscriptionProduct(
+        body.subscriptionProduct === undefined ? 'openai_codex' : body.subscriptionProduct,
+      )
+      const identifier = body.providerIdentifier ?? product?.provider
       if (
-        provider !== 'openai' ||
+        !product ||
+        provider !== product.provider ||
         typeof identifier !== 'string' ||
         !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,79}$/.test(identifier) ||
         body.credentialFingerprint !== undefined ||
         body.capabilities !== undefined
       )
-        return apiError(400, 'invalid_subscription', 'Codex 观测连接只接受供应商标识和项目，不接受凭据或路由能力')
+        return apiError(400, 'invalid_subscription', '订阅产品或供应商无效；登记不接受凭据或自定义能力')
       capabilities = {
         connection_type: 'subscription',
         execution_mode: 'interactive',
         routing: false,
         provider_identifier: identifier,
-        subscription_product: 'openai_codex',
+        subscription_product: product.id,
+        native_account_observation: product.capabilities.nativeAccountObservation,
+        native_usage_observation: product.capabilities.nativeUsageObservation,
       }
     } else {
+      if (body.subscriptionProduct !== undefined)
+        return apiError(400, 'invalid_subscription', '订阅产品仅用于订阅连接登记')
       if (
         body.capabilities !== undefined &&
         (!body.capabilities || typeof body.capabilities !== 'object' || Array.isArray(body.capabilities))

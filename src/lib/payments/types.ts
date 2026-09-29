@@ -37,9 +37,11 @@ export interface CheckoutResult {
   checkoutUrl: string | null
   /** The only settlement path is the webhook. */
   confirmation: 'webhook_only'
+  expiresAt?: number
+  mode?: 'test' | 'live'
 }
 
-export type VerifiedPaymentEventType = 'payment.succeeded' | 'payment.failed'
+export type VerifiedPaymentEventType = 'payment.succeeded' | 'payment.failed' | 'ignored'
 
 export interface VerifiedPaymentEvent {
   provider: string
@@ -49,6 +51,8 @@ export interface VerifiedPaymentEvent {
   /** Our order id, echoed back by the provider. */
   orderId: string | null
   externalOrderId: string | null
+  tenantId?: string
+  mode?: 'test' | 'live'
   /** Amount the provider reports. Verified against the server-side order. */
   amount: Micros
   currency: string
@@ -80,6 +84,7 @@ export interface RefundResult {
 
 export interface PaymentProvider {
   readonly name: string
+  readonly mode?: 'test' | 'live'
   createCheckout(params: CheckoutParams): Promise<CheckoutResult>
   verifyWebhook(req: Request): Promise<VerifiedPaymentEvent>
   refund(params: RefundParams): Promise<RefundResult>
@@ -94,6 +99,9 @@ export type PaymentErrorCode =
   | 'timestamp_out_of_window'
   | 'malformed_event'
   | 'unsupported_event_type'
+  | 'invalid_amount'
+  | 'processor_error'
+  | 'refund_not_supported'
 
 export class PaymentError extends Error {
   readonly status: number

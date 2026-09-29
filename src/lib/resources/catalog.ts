@@ -1,3 +1,5 @@
+import type { CollectorObservation } from '@/lib/subscriptions/collector'
+
 /** A read model over existing connections, gateway channels and quota facts. */
 export interface ConnectionFact {
   id: string
@@ -24,6 +26,7 @@ export interface ChannelFact {
 }
 
 export interface QuotaFact {
+  provenance_version?: number | null
   connection_id: string
   window_type?: string
   observation_id?: string | null
@@ -60,6 +63,18 @@ export interface ExecutionResourceView {
   health: 'healthy' | 'unhealthy' | 'unknown'
   temporaryBlock: { reason: string; blockedAt: string; recheckAt: string } | null
   routingStatus: 'configured' | 'not_configured'
+  quotaWindows?: QuotaWindowView[]
+  collectorObservation?: CollectorObservation | null
+}
+
+export interface QuotaWindowView {
+  window: string
+  source: string
+  observedAt: string | null
+  staleAt: string | null
+  resetAt: string | null
+  freshness: 'fresh' | 'stale' | 'unknown'
+  usedPercent: number | null
 }
 
 const timestamp = (value: Date | string | null) => (value === null ? NaN : new Date(value).getTime())
@@ -76,6 +91,7 @@ function quotaProjection(rows: QuotaFact[], now: Date) {
   const latestByWindow = new Map<string, QuotaFact>()
   for (const row of rows) {
     if (
+      row.provenance_version !== 1 ||
       row.source_kind !== 'official' ||
       !['reported', 'authoritative'].includes(row.confidence ?? '') ||
       !['account', 'connection'].includes(row.scope ?? '')
@@ -88,13 +104,36 @@ function quotaProjection(rows: QuotaFact[], now: Date) {
   let state: ExecutionResourceView['quotaState'] = 'unknown'
   let usedPercent: number | null = null
   let resetAt: string | null = null
-  if (!latestByWindow.size) return { quotaState: state, usedPercent, resetAt }
+  const quotaWindows: QuotaWindowView[] = []
+  if (!latestByWindow.size) return { quotaState: state, usedPercent, resetAt, quotaWindows }
   const states: ExecutionResourceView['quotaState'][] = []
   const resets: number[] = []
+  const blockingResets: (number | null)[] = []
   for (const row of latestByWindow.values()) {
     const observed = timestamp(row.observed_at)
     const stale = timestamp(row.stale_at)
     const reset = row.reset_at === null ? null : timestamp(row.reset_at)
+    const valid = Number.isFinite(observed) && observed <= now.getTime() && Number.isFinite(stale)
+    const fresh =
+      valid && stale > now.getTime() && (reset === null || (Number.isFinite(reset) && reset > now.getTime()))
+    const used = percent(row.used),
+      remaining = percent(row.remaining)
+    const rawRatio =
+      row.metadata?.unit === 'percent'
+        ? used
+        : used !== null && remaining !== null && used + remaining > 0
+          ? (used / (used + remaining)) * 100
+          : null
+    const ratio = rawRatio !== null && rawRatio >= 0 && rawRatio <= 100 ? rawRatio : null
+    quotaWindows.push({
+      window: row.window_type ?? 'default',
+      source: row.source ?? row.source_kind ?? 'unknown',
+      observedAt: Number.isFinite(observed) ? new Date(observed).toISOString() : null,
+      staleAt: Number.isFinite(stale) ? new Date(stale).toISOString() : null,
+      resetAt: reset !== null && Number.isFinite(reset) ? new Date(reset).toISOString() : null,
+      freshness: fresh ? 'fresh' : valid ? 'stale' : 'unknown',
+      usedPercent: ratio,
+    })
     if (
       !Number.isFinite(observed) ||
       !Number.isFinite(stale) ||
@@ -108,32 +147,36 @@ function quotaProjection(rows: QuotaFact[], now: Date) {
     if (reset !== null) resets.push(reset)
     if (row.availability === 'unavailable') {
       states.push('unavailable')
+      blockingResets.push(reset)
       continue
     }
     if (row.availability !== 'available') {
       states.push('unknown')
       continue
     }
-    const used = percent(row.used),
-      remaining = percent(row.remaining)
-    const ratio =
-      row.metadata?.unit === 'percent'
-        ? used
-        : used !== null && remaining !== null && used + remaining > 0
-          ? (used / (used + remaining)) * 100
-          : null
     if (ratio !== null) usedPercent = Math.max(usedPercent ?? 0, ratio)
-    states.push(remaining === 0 ? 'exhausted' : ratio === null ? 'unknown' : ratio >= 90 ? 'near_limit' : 'available')
+    if (remaining === 0 || ratio === 100) blockingResets.push(reset)
+    states.push(
+      remaining === 0 || ratio === 100
+        ? 'exhausted'
+        : ratio === null
+          ? 'unknown'
+          : ratio >= 90
+            ? 'near_limit'
+            : 'available',
+    )
   }
   state =
     (['exhausted', 'unavailable', 'unknown', 'near_limit', 'available'] as const).find((candidate) =>
       states.includes(candidate),
     ) ?? 'unknown'
-  if (state !== 'unknown' && resets.length === states.length && resets.length > 0)
-    resetAt = new Date(
-      state === 'exhausted' || state === 'unavailable' ? Math.max(...resets) : Math.min(...resets),
-    ).toISOString()
-  return { quotaState: state, usedPercent, resetAt }
+  if (!states.includes('unknown')) {
+    if (blockingResets.length && blockingResets.every((reset): reset is number => reset !== null))
+      resetAt = new Date(Math.max(...blockingResets)).toISOString()
+    else if (!blockingResets.length && resets.length === states.length && resets.length > 0)
+      resetAt = new Date(Math.min(...resets)).toISOString()
+  }
+  return { quotaState: state, usedPercent, resetAt, quotaWindows }
 }
 
 /** No secrets are accepted or returned. A channel linked to a connection is one API resource, not two. */
@@ -175,7 +218,10 @@ export function buildResourceCatalog(
     const health =
       freshHealth && observation?.status === 'connected'
         ? 'healthy'
-        : freshHealth && observation?.status === 'authentication_required'
+        : freshHealth &&
+            ['authentication_required', 'logged_out', 'sync_error', 'app_server_unavailable'].includes(
+              String(observation?.status),
+            )
           ? 'unhealthy'
           : 'unknown'
     const observedIds = (observation?.quota as Record<string, unknown> | undefined)?.observationIds

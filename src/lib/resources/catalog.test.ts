@@ -2,6 +2,121 @@ import { describe, expect, it } from 'vitest'
 import { buildResourceCatalog } from './catalog'
 
 describe('unified execution resource catalog', () => {
+  it('uses only blocking window reset times when quota is exhausted', () => {
+    const connection = {
+      id: 'a',
+      provider: 'openai',
+      mode: 'subscription_interactive',
+      status: 'active',
+      project_id: null,
+      revoked_at: null,
+      capabilities: {},
+      account_observation: null,
+    }
+    const row = {
+      connection_id: 'a',
+      availability: 'available',
+      used: '100',
+      remaining: '0',
+      observed_at: '2026-09-24T00:59:00Z',
+      stale_at: '2026-09-24T01:04:00Z',
+      reset_at: '2026-09-24T02:00:00Z',
+      provenance_version: 1,
+      source_kind: 'official',
+      confidence: 'reported',
+      scope: 'account',
+      metadata: { unit: 'percent' },
+    }
+    const windows = [
+      { ...row, window_type: 'hourly' },
+      { ...row, window_type: 'weekly', used: '20', remaining: '80', reset_at: '2026-09-30T00:00:00Z' },
+    ]
+    expect(buildResourceCatalog([connection], [], windows, new Date('2026-09-24T01:00:00Z'))[0].resetAt).toBe(
+      '2026-09-24T02:00:00.000Z',
+    )
+    expect(
+      buildResourceCatalog(
+        [connection],
+        [],
+        [windows[0], { ...windows[1], stale_at: '2026-09-24T00:59:00Z' }],
+        new Date('2026-09-24T01:00:00Z'),
+      )[0].resetAt,
+    ).toBeNull()
+  })
+  it('exposes stale window evidence without advertising its capacity and recognizes logged-out accounts', () => {
+    const connection = {
+      id: 'a',
+      provider: 'openai',
+      mode: 'subscription_interactive',
+      status: 'active',
+      project_id: null,
+      revoked_at: null,
+      capabilities: {},
+      account_observation: { status: 'logged_out', lastAttemptAt: '2026-09-24T00:59:00Z' },
+    }
+    const rows = [
+      {
+        connection_id: 'a',
+        window_type: 'weekly',
+        source: 'provider_api',
+        availability: 'available',
+        used: '40',
+        remaining: '60',
+        observed_at: '2026-09-24T00:00:00Z',
+        stale_at: '2026-09-24T00:30:00Z',
+        reset_at: null,
+        provenance_version: 1,
+        source_kind: 'official',
+        confidence: 'reported',
+        scope: 'account',
+        metadata: { unit: 'percent' },
+      },
+    ]
+    const resource = buildResourceCatalog([connection], [], rows, new Date('2026-09-24T01:00:00Z'))[0]
+    expect(resource).toMatchObject({
+      health: 'unhealthy',
+      quotaState: 'unknown',
+      usedPercent: null,
+      quotaWindows: [{ window: 'weekly', source: 'provider_api', usedPercent: 40, freshness: 'stale' }],
+    })
+  })
+
+  it('recognizes a full percent window even when remaining was omitted', () => {
+    const connection = {
+      id: 'a',
+      provider: 'openai',
+      mode: 'subscription_interactive',
+      status: 'active',
+      project_id: null,
+      revoked_at: null,
+      capabilities: {},
+      account_observation: null,
+    }
+    const row = {
+      connection_id: 'a',
+      availability: 'available',
+      used: '100',
+      remaining: null,
+      observed_at: '2026-09-24T00:59:00Z',
+      stale_at: '2026-09-24T01:04:00Z',
+      reset_at: null,
+      provenance_version: 1,
+      source_kind: 'official',
+      confidence: 'reported',
+      scope: 'account',
+      metadata: { unit: 'percent' },
+    }
+    expect(buildResourceCatalog([connection], [], [row], new Date('2026-09-24T01:00:00Z'))[0].quotaState).toBe(
+      'exhausted',
+    )
+    expect(
+      buildResourceCatalog([connection], [], [{ ...row, used: '900' }], new Date('2026-09-24T01:00:00Z'))[0].quotaState,
+    ).toBe('unknown')
+    expect(
+      buildResourceCatalog([connection], [], [{ ...row, provenance_version: 0 }], new Date('2026-09-24T01:00:00Z'))[0]
+        .quotaState,
+    ).toBe('unknown')
+  })
   it('projects an observed subscription without treating its credential as a gateway key', () => {
     const items = buildResourceCatalog(
       [
@@ -26,6 +141,7 @@ describe('unified execution resource catalog', () => {
           observed_at: '2026-09-24T00:00:00Z',
           stale_at: '2026-09-25T00:00:00Z',
           reset_at: '2026-09-25T01:00:00Z',
+          provenance_version: 1,
           source_kind: 'official',
           confidence: 'reported',
           scope: 'account',
@@ -143,6 +259,7 @@ describe('unified execution resource catalog', () => {
       observed_at: '2026-09-24T00:00:00Z',
       stale_at: '2026-09-24T00:30:00Z',
       reset_at: null,
+      provenance_version: 1,
       source_kind: 'official',
       confidence: 'reported',
       scope: 'account',
@@ -180,6 +297,7 @@ describe('unified execution resource catalog', () => {
       observed_at: '2026-09-24T00:58:00Z',
       stale_at: '2026-09-24T01:03:00Z',
       reset_at: '2026-09-24T02:00:00Z',
+      provenance_version: 1,
       source_kind: 'official',
       confidence: 'reported',
       scope: 'account',
@@ -218,6 +336,7 @@ describe('unified execution resource catalog', () => {
       observed_at: '2026-09-24T00:00:00Z',
       stale_at: '2026-09-25T00:00:00Z',
       reset_at: null,
+      provenance_version: 1,
       source_kind: 'official',
       confidence: 'reported',
       scope: 'account',
@@ -280,6 +399,7 @@ describe('unified execution resource catalog', () => {
           observed_at: '2026-09-24T00:58:00Z',
           stale_at: '2026-09-24T01:03:00Z',
           reset_at: null,
+          provenance_version: 1,
           source_kind: 'official',
           confidence: 'reported',
           scope: 'account',
