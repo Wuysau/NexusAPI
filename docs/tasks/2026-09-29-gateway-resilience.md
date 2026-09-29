@@ -277,3 +277,25 @@ Apply the version-local indexing pattern from [Envoy's resource groups](https://
 - Full native `go test ./...` and `go vet ./...` passed (Gateway 27.345 seconds); the additional authentication file passed its focused checks and repeated concurrent-refresh run. Six TypeScript contract files passed all 70 tests. The independent-process PostgreSQL/TLS connector suite passed all nine groups (16.36 seconds).
 - Final Linux `go test -race ./...` passed (Gateway 96.651 seconds), including the added concurrent authentication and signed-generation refresh tests.
 - Go formatting, secret scan and diff checks passed. Independent production review found no blocking issues. No migration, dependency, signed-wire-format, TypeScript production or deployment change was made.
+
+Round 12 was committed as `21476b3` and merged/pushed to main (`03dfbfa`).
+
+## Round 13 design
+
+`GATEWAY_UPSTREAM_TIMEOUT_SECONDS` reaches the adapter endpoint metadata but is never applied to execution. A real HTTP reproduction configured a 40 ms upstream attempt timeout, an 80 ms idle timeout and a one-second total timeout. An upstream that delayed its headers for 200 ms still returned a successful Gateway response after 220 ms. The existing endpoint contract describes this setting as the bound for one upstream attempt.
+
+Use the separation of timeout responsibilities described in [Envoy's timeout guide](https://www.envoyproxy.io/docs/envoy/latest/faq/configuration/timeouts), retaining NexusAPI's documented whole-attempt semantics:
+
+- Create the per-attempt context immediately before dispatch and keep it active through response streaming. Its parent retains the total execution deadline, client cancellation and channel lease cancellation. Release its timer with the attempt's load/probe/concurrency resources, including errors and safe pre-connection fallback.
+- Preserve the separate idle timer and downstream write deadline. A stream making continued progress still respects its whole-attempt limit. Earlier parent deadlines win. Local connector transport observes the same request context.
+- Report deadline expiry as the existing upstream-timeout error, including failures after streaming starts. Preserve observed usage, unknown execution state when work may have run, immutable accounting and the no-replay boundary after connection assignment. Do not turn timeout into permission to resend inference.
+- Verify real delayed headers and ongoing streams through both public APIs, completion before the deadline, client cancellation and safe pre-connection fallback. No new environment variable, migration or dependency is required.
+
+## Round 13 validation
+
+- Four real HTTP delayed-header cases cover Chat/Responses and buffered/streaming requests. The former 200 responses after roughly 180–200 ms now return 504 under a 40 ms attempt limit, cancel the connected upstream, preserve one unknown execution and nullable v2 usage, and refuse the same idempotency key with 409. An eligible fallback is present but never receives the ambiguous request.
+- Four continuously progressing streams previously ran about 900 ms despite a 150 ms attempt limit. They now stop at that limit, preserve partial output and the observed input count, leave missing output/total counts unknown, and record exactly one unknown terminal. Additional cases verify an earlier parent deadline, successful context release, a stalled 503 error body retaining known-failure status, and a pre-connection timeout followed by one actual execution with a fresh attempt deadline.
+- Responses streaming retains its existing `server_error` enum with a static timeout message. The [official ResponseError contract](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/response_error.py) and existing truncation test were checked during review; internal accounting retains `upstream_timeout`. Arbitrary provider error messages are not relayed.
+- The twelve new scenarios plus the existing Responses truncation check passed together (3.638 seconds). Full native `go test ./...` and `go vet ./...` passed (Gateway 29.833 seconds). Six TypeScript contract files passed all 70 tests. The independent-process PostgreSQL/TLS connector suite passed all nine groups (18.68 seconds), including cancellation, timeout and midstream failure.
+- Final Linux `go test -race ./...` passed (Gateway 98.352 seconds), including independent attempt budgets, continuous output, parent cancellation and the existing connector lifecycle tests.
+- Go formatting, secret scan and diff checks passed. Independent review found no remaining blocking issues. No migration, dependency, TypeScript production change or deployment was performed.

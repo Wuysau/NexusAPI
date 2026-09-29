@@ -269,6 +269,7 @@ type responsesWriter struct {
 	usage                                       any
 	finishReason                                string
 	started, done, failed                       bool
+	timedOut                                    bool
 	writeErr                                    error
 	validationChecked                           bool
 	validationErr                               error
@@ -530,6 +531,12 @@ func (w *responsesWriter) consume(payload []byte) error {
 	}
 	if len(chunk.Error) > 0 && string(chunk.Error) != "null" {
 		w.failed = true
+		// Preserve the known internal timeout cause using our static message.
+		// Never relay arbitrary error messages from a provider or stream frame.
+		var failure struct{ Code string }
+		if json.Unmarshal(chunk.Error, &failure) == nil && failure.Code == CodeUpstreamTimeout {
+			w.timedOut = true
+		}
 		return nil
 	}
 	if len(chunk.Usage) > 0 {
@@ -703,7 +710,13 @@ func (w *responsesWriter) finish() error {
 func (w *responsesWriter) failStream() error {
 	// Deltas already delivered remain visible, but do not duplicate a possibly
 	// oversized partial object in the failure event.
-	response := map[string]any{"id": w.id, "object": "response", "created_at": w.created, "model": w.request.Model, "status": "failed", "output": []any{}, "usage": w.usage, "incomplete_details": nil, "error": map[string]string{"code": "server_error", "message": "The response did not complete successfully."}}
+	failure := map[string]string{"code": "server_error", "message": "The response did not complete successfully."}
+	if w.timedOut {
+		// ResponseError has its own closed code set. Describe the timeout while
+		// retaining its compatible server_error code.
+		failure["message"] = errUpstreamTimeout().Message
+	}
+	response := map[string]any{"id": w.id, "object": "response", "created_at": w.created, "model": w.request.Model, "status": "failed", "output": []any{}, "usage": w.usage, "incomplete_details": nil, "error": failure}
 	if err := w.event("response.failed", map[string]any{"response": response}); err != nil {
 		return err
 	}

@@ -146,7 +146,7 @@ type Endpoint struct {
 	// QueryParam is the parameter name for query auth (e.g. "key" for Gemini).
 	QueryParam string
 	Region     string
-	// Timeout bounds a single upstream attempt.
+	// Timeout records the core-enforced bound for a single upstream attempt.
 	Timeout time.Duration
 }
 

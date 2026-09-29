@@ -97,9 +97,8 @@ func NewProxy(deps ProxyDeps) *Proxy {
 	client := deps.HTTPClient
 	if client == nil {
 		client = &http.Client{
-			// No client-level timeout: the per-request context (total duration
-			// and idle timeout) is the authority, and a client timeout would
-			// truncate a long but healthy stream.
+			// Execution contexts own total and per-attempt deadlines; the relay
+			// owns idle/write budgets. Do not add a separate client-level timer.
 			Transport: &http.Transport{
 				MaxIdleConns:        256,
 				MaxIdleConnsPerHost: 64,
@@ -898,7 +897,19 @@ func (p *Proxy) attempt(
 			continue
 		}
 		releaseLoad := p.router.BeginRequest(candidate.Channel.ID, model.ID)
-		releaseAttempt = sync.OnceFunc(func() { releaseLoad(); p.breaker.ReleaseProbe(breakerKey); channelLease.Release() })
+		// One attempt includes waiting for headers and consuming the response.
+		// The parent still bounds all attempts and carries client/lease cancellation.
+		attemptCtx := channelLease.Context()
+		cancelAttempt := func() {}
+		if p.limits.UpstreamTimeout > 0 {
+			attemptCtx, cancelAttempt = context.WithTimeout(attemptCtx, p.limits.UpstreamTimeout)
+		}
+		releaseAttempt = sync.OnceFunc(func() {
+			cancelAttempt()
+			releaseLoad()
+			p.breaker.ReleaseProbe(breakerKey)
+			channelLease.Release()
+		})
 		// Once a socket is assigned, neither a transport error nor an HTTP
 		// rejection proves that the provider did not execute the request.
 		// Retry only failures before connection assignment.
@@ -906,7 +917,7 @@ func (p *Proxy) attempt(
 		if candidate.Channel.Transport == "local_sidecar" {
 			connectionAssigned.Store(true)
 		}
-		attemptCtx := httptrace.WithClientTrace(channelLease.Context(), &httptrace.ClientTrace{GotConn: func(httptrace.GotConnInfo) { connectionAssigned.Store(true) }})
+		attemptCtx = httptrace.WithClientTrace(attemptCtx, &httptrace.ClientTrace{GotConn: func(httptrace.GotConnInfo) { connectionAssigned.Store(true) }})
 		dispatchStart := p.now()
 		stream, err := candidate.Adapter.Stream(attemptCtx, client, call)
 		if err != nil {
@@ -934,7 +945,7 @@ func (p *Proxy) attempt(
 			}
 			result.channel = candidate.Channel
 			result.errorCode = publicCodeFor(classification.Kind)
-			if candidate.Channel.Transport == "local_sidecar" && errors.Is(err, context.DeadlineExceeded) {
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(attemptCtx.Err(), context.DeadlineExceeded) {
 				result.errorCode = CodeUpstreamTimeout
 			}
 			result.err = err
@@ -989,6 +1000,9 @@ func (p *Proxy) attempt(
 			result.wroteHeader = streaming
 			result.outcome = OutcomeUnknown
 			result.errorCode = CodeUpstreamProtocol
+			if errors.Is(writeErr, context.DeadlineExceeded) {
+				result.errorCode = CodeUpstreamTimeout
+			}
 			result.err = writeErr
 			result.body = nil
 			var downstream *downstreamWriteError
