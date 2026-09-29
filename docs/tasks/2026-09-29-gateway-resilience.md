@@ -90,3 +90,28 @@ No new migration or dependency is planned. Deploy all current migrations before 
 - `npm run typecheck` passed. Six TypeScript contract files passed all 70 tests, and the independent-process TLS local-connector suite passed all 8 groups. Go formatting, Compose formatting, secret scan and diff checks passed.
 - Independent review found no blocking defects. No production deployment, schema change, additional subscription credentials or provider pricing assumptions were introduced.
 - The intentional historical-schema fixture `TestBudgetPostgresControlPlaneOutage` passed against disposable `convergence_gateway27` and Redis. Explicit-key BYOK rejected before upstream dispatch; no-key BYOK and managed reservations continued through Control Plane outage. Compiled Budget and Worker processes plus `scripts/verify-budget-worker.mjs` verified five events, three releases, fixture managed charges of 201 micros and unchanged ledger postings after replay. Temporary service processes were stopped.
+
+Round 3 was committed as `a543b21` and merged/pushed to main (`7c8d463`).
+
+## Round 4 design
+
+The connector currently retries polls every second, can spin on malformed successful responses, and checks expired leases only on a 20-second renewal tick. Its internal cancellation also returns success to the CLI. Adopt bounded reconnect scheduling inspired by [cloudflared's backoff lifecycle](https://github.com/cloudflare/cloudflared/blob/master/retry/backoffhandler.go), using original code and no added dependency.
+
+- Give the active lease its own deadline watcher, independent of blocked renewal, local model discovery and job polling. Re-check the current lease when a timer fires so a completed renewal cannot be canceled by an old deadline. On failure, cancel all work before waiting for workers; distinguish explicit caller cancellation from lease expiry and rejected connector identity.
+- Keep direct Control Plane lease 401/403 as terminal authorization failures. Gateway transport 401/403 can also represent a temporary Control Plane failure, so retry them within the known lease instead of claiming permanent revocation.
+- Use separate bounded exponential backoff with jitter for renewal and polling failures, starting at a 500 ms envelope and capped at 15 seconds. Keep normal renewal at 20 seconds, renew short leases earlier, and stop waits at cancellation or lease expiry. Add a minimum interval for immediate empty polls to avoid a busy loop.
+- Reject malformed, oversized or incomplete job envelopes before scheduling local work. Read a complete bounded JSON envelope rather than accepting a valid prefix. Each new poll reads the current lease; assigned jobs retain their original token.
+- Retry only polling and renewal. Pairing, local model execution and result uploads remain single attempts. An upload or cancellation-watch failure must never replay a model invocation.
+
+Validation uses real HTTP listeners for transient recovery, blocked renewal, exact expiry cancellation, malformed response bounds and one-attempt execution, plus CLI process exit and the existing independent-process TLS connector suite. No Control Plane schema, routing authorization, credential scope or deployment replica support changes are planned.
+
+Review refinements: bound the entire poll, including its response body, to 35 seconds; renewing the lease must not keep a broken body reader alive indefinitely. Check lease expiry under the same lock used to publish renewals, so a stale snapshot cannot cancel a newer valid lease. Pace immediate successful cancellation-watch responses while still canceling immediately on watch failure. Pairing input must also observe interruption before making its one-time HTTP call; the one-shot CLI process must return without waiting for Windows console reads to unblock.
+
+## Round 4 validation
+
+- Reproduced the old malformed-response loop with real HTTP: 3,047 polls in a 350 ms fixture run. Eight independent network test groups now pass, including blocked renewal at a 450 ms lease deadline, direct CP authorization rejection, transient Gateway 401 recovery, token rotation, stalled response body, bounded immediate 202/invalid 200 polling and exactly one model call after failed upload.
+- Full native Go tests and `go vet ./...` passed. Final combined Linux `go test -race ./...` passed: connector client 6.374 seconds and CLI 3.771 seconds; unchanged packages reused validated cache entries. Go formatting, secret scan and diff checks passed.
+- CLI subprocess tests verify exit code 1 for rejected identity and expired lease, sanitized output, and exit code 0 for explicit termination while running or waiting to paste a pairing token. Waiting-input cancellation makes zero pairing requests. Native CLI tests passed ten repetitions; Linux race CLI tests passed three repetitions.
+- Windows redirected input cancellation is tested with an actual pipe. Physical Windows console Ctrl+C delivery was not automated. The CLI cancellation branch deliberately returns without waiting for the console's blocking read or close; this process-scoped behavior is kept out of the reusable client library.
+- The existing TLS connector end-to-end suite passed all eight groups (16.89 seconds), using independent Gateway and connector processes, mock Ollama, canonical migrations and real PostgreSQL attribution/unknown-price handling.
+- Independent review found no blocking issues. Initial startup still reports failure if its first lease cannot be acquired; an operator or process manager can restart it. Within an acquired lease, temporary network failures retry under the documented bounds. Single-Gateway deployment remains required.
