@@ -63,6 +63,9 @@ func NewHTTPRouter(proxy *Proxy, snapshots *SnapshotCache, limiter *Limiter, sto
 
 	router.Post("/v1/chat/completions", proxy.ServeChatCompletions)
 	router.Get("/v1/models", proxy.ServeModels)
+	if proxy.connectors != nil {
+		router.Handle("/connector/*", proxy.connectors)
+	}
 
 	if options.EnableResponses {
 		router.Post("/v1/responses", proxy.ServeResponses)

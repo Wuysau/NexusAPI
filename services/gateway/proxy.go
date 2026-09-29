@@ -44,6 +44,7 @@ import (
 // Proxy is the gateway core. Every dependency is an interface so the hot path
 // can be tested without a control plane, a database or a provider.
 type Proxy struct {
+	connectors    *ConnectorHub
 	enableUsageV2 bool
 	env           *Env
 	limits        Limits
@@ -68,6 +69,7 @@ type Proxy struct {
 // ProxyDeps is the constructor input; a struct keeps the wiring readable and
 // makes missing dependencies a compile error rather than a nil panic in prod.
 type ProxyDeps struct {
+	Connectors *ConnectorHub
 	// Explicit canonical v2 opt-in; main enables this for the local credential profile.
 	EnableUsageV2 bool
 	Env           *Env
@@ -111,6 +113,7 @@ func NewProxy(deps ProxyDeps) *Proxy {
 		maxAttempts = 2
 	}
 	return &Proxy{
+		connectors:    deps.Connectors,
 		enableUsageV2: deps.EnableUsageV2,
 		env:           deps.Env,
 		limits:        deps.Limits,
@@ -196,6 +199,28 @@ func (p *Proxy) ServeModels(w http.ResponseWriter, r *http.Request) {
 	for _, model := range bundle.Models {
 		if model.Status != "" && model.Status != "active" {
 			continue
+		}
+		// Connector models require both existing routing policy and live authorization.
+		hasConnector := false
+		for _, channel := range bundle.Channels {
+			if containsString(channel.Models, model.ID) {
+				if channel.Transport == "local_sidecar" {
+					hasConnector = true
+				}
+			}
+		}
+		if hasConnector {
+			candidates, _ := p.router.Select(bundle, RouteRequest{TenantID: identity.TenantID, ProjectID: identity.ProjectID, ResolvedModel: model.ID, RequiredCapabilities: RequiredCapabilitiesForChat()})
+			available := false
+			for _, candidate := range candidates {
+				if candidate.Channel.Transport != "local_sidecar" || p.connectors.Available(r.Context(), candidate.Channel, identity, model.ID, ScopeModelsRead) {
+					available = true
+					break
+				}
+			}
+			if !available {
+				continue
+			}
 		}
 		data = append(data, modelEntry{
 			ID: model.ID, Object: "model", OwnedBy: model.Provider,
@@ -467,6 +492,8 @@ func apiErrorForResult(result *attemptResult) *APIError {
 		return errUpstreamTimeout()
 	}
 	switch result.errorCode {
+	case CodeUpstreamTimeout:
+		return errUpstreamTimeout()
 	case CodeConcurrencyExceeded:
 		return errConcurrency()
 	case CodeRateLimitExceeded:
@@ -505,6 +532,7 @@ func (p *Proxy) route(
 	staleManagedForbidden bool,
 ) (*routedCredentials, *APIError) {
 	routeReq := RouteRequest{
+		ProjectID:             identity.ProjectID,
 		TenantID:              identity.TenantID,
 		RequestedModel:        req.Model,
 		ResolvedModel:         model.ID,
@@ -524,10 +552,13 @@ func (p *Proxy) route(
 	// canonical BYOK may record an unknown price.
 	billable := candidates[:0]
 	for _, candidate := range candidates {
+		if candidate.Channel.Transport == "local_sidecar" && !p.connectors.Available(ctx, candidate.Channel, identity, model.ID, ScopeChatWrite) {
+			continue
+		}
 		if p.enableUsageV2 && (candidate.Channel.ProviderID == "" || candidate.Channel.CredentialRef == "" || (candidate.Channel.CredentialMode == "byok" && candidate.Channel.ConnectionID == "") || (candidate.Channel.CredentialMode != "managed" && candidate.Channel.CredentialMode != "byok")) {
 			continue
 		}
-		if (candidate.Price != nil && candidate.Price.ID != "") || (candidate.Price == nil && p.enableUsageV2 && p.env != nil && p.env.LocalCredentialDir != "" && p.env.Environment != "production" && candidate.Channel.CredentialMode == "byok") {
+		if (candidate.Price != nil && candidate.Price.ID != "") || (candidate.Price == nil && p.enableUsageV2 && candidate.Channel.CredentialMode == "byok" && (candidate.Channel.Transport == "local_sidecar" || (p.env != nil && p.env.LocalCredentialDir != "" && p.env.Environment != "production"))) {
 			if p.enableUsageV2 && !validV2Routing(candidate, model) {
 				continue
 			}
@@ -561,7 +592,7 @@ func (p *Proxy) route(
 		candidates = pinned
 	}
 
-	credential, credErr := p.credentials.Resolve(ctx, CredentialRef{
+	credential, credErr := p.resolveChannelCredential(ctx, first.Channel, CredentialRef{
 		TenantID:          identity.TenantID,
 		CredentialID:      first.Channel.CredentialRef,
 		CredentialVersion: first.Channel.CredentialVersion,
@@ -766,7 +797,7 @@ func (p *Proxy) attempt(
 		releaseAttempt = channelLease.Release
 		credential := rc.credential
 		if candidate.Channel.ID != rc.channel.ID || index > 0 || p.limits.ConcurrencyWait > 0 {
-			resolved, err := p.credentials.Resolve(ctx, CredentialRef{
+			resolved, err := p.resolveChannelCredential(ctx, candidate.Channel, CredentialRef{
 				TenantID:          identity.TenantID,
 				CredentialID:      candidate.Channel.CredentialRef,
 				CredentialVersion: candidate.Channel.CredentialVersion,
@@ -820,6 +851,10 @@ func (p *Proxy) attempt(
 		}
 
 		client, policyErr := p.providerHTTPClient(CredentialRef{TenantID: identity.TenantID, CredentialID: candidate.Channel.CredentialRef, CredentialVersion: candidate.Channel.CredentialVersion, ProviderID: candidate.Channel.ProviderID, Mode: candidate.Channel.CredentialMode, BaseURL: candidate.Channel.BaseURL, Protocol: candidate.Channel.Protocol, Model: model.ID}, credential)
+		if candidate.Channel.Transport == "local_sidecar" {
+			client = &http.Client{Transport: connectorTransport{hub: p.connectors, channel: candidate.Channel, identity: identity, model: model.ID}}
+			policyErr = nil
+		}
 		if policyErr != nil {
 			result.outcome = OutcomeFailed
 			result.errorCode = CodeInvalidParameter
@@ -837,6 +872,9 @@ func (p *Proxy) attempt(
 		// rejection proves that the provider did not execute the request.
 		// Retry only failures before connection assignment.
 		var connectionAssigned atomic.Bool
+		if candidate.Channel.Transport == "local_sidecar" {
+			connectionAssigned.Store(true)
+		}
 		attemptCtx := httptrace.WithClientTrace(channelLease.Context(), &httptrace.ClientTrace{GotConn: func(httptrace.GotConnInfo) { connectionAssigned.Store(true) }})
 		dispatchStart := p.now()
 		stream, err := candidate.Adapter.Stream(attemptCtx, client, call)
@@ -854,6 +892,9 @@ func (p *Proxy) attempt(
 			}
 			result.channel = candidate.Channel
 			result.errorCode = publicCodeFor(classification.Kind)
+			if candidate.Channel.Transport == "local_sidecar" && errors.Is(err, context.DeadlineExceeded) {
+				result.errorCode = CodeUpstreamTimeout
+			}
 			result.err = err
 
 			status := statusOf(err)

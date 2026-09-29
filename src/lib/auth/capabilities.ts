@@ -147,7 +147,15 @@ export interface Principal {
   serviceAccountId?: string
 }
 
-export type AuthzErrorCode = 'unauthenticated' | 'forbidden' | 'tenant_isolation'
+export type AuthzErrorCode =
+  | 'unauthenticated'
+  | 'forbidden'
+  | 'tenant_isolation'
+  | 'connector_unauthorized'
+  | 'invalid_models'
+  | 'not_found'
+  | 'invalid_project'
+  | 'invalid_provider'
 
 export class AuthzError extends Error {
   readonly status: number

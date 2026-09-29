@@ -3,6 +3,8 @@ import { buildSnapshotPayload, canonicalJson } from '@/lib/catalog/snapshot'
 
 /** Already scope-validated channel configuration; never contains plaintext credentials. */
 export interface LocalSnapshotChannel {
+  transport?: string
+  project_id?: string
   tenant_id?: string | null
   id: string
   provider_id: string
@@ -45,6 +47,7 @@ export function buildLocalSnapshot(tenantId: string | null, input: LocalSnapshot
         capabilities.push('text', 'streaming')
       return {
         ...c,
+        ...(c.transport === 'local_sidecar' ? { tenant_id: tenantId } : {}),
         models: [...c.models].sort(),
         capabilities: [...new Set(capabilities)].sort(),
       }

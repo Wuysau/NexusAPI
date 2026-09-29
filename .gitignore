@@ -20,6 +20,10 @@ next-env.d.ts
 config/nexus-observer.json
 config/nexus-observer.json.*.tmp
 config/nexus-supervisor.json
+connector.json
+connector-identity*.json
+services/gateway/nexus-connector
+services/gateway/nexus-connector.exe
 .nexus/
 
 # test artifacts

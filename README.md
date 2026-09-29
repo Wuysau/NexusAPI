@@ -4,6 +4,8 @@
 
 NexusAPI 是以项目为核心的 AI Resource Control Plane。统一查看 API 渠道、官方订阅、本地工具、任务、会话、配额与用量；Go 网关继续提供兼容 OpenAI 的 API 数据面。本地订阅执行与网关 API 调用遵守不同的凭据和计费边界。
 
+**远端网关调用本机 Ollama**：使用[本地连接器两机指南](docs/operations/local-connector.md)，在连接页配置多个模型、一次性配对并启动独立 CLI。本机无需开放入站端口；Coding Agent 使用远端 Gateway 地址与项目 API Key。首版限定单 Gateway，支持普通与流式 Chat Completions。
+
 项目使用 [MIT License](LICENSE)，可修改、分发和商业使用，需保留许可证及版权声明。当前仍在持续开发；Stripe 托管支付需管理员配置商户密钥、发布套餐并设置回调后启用。源码公开及自动化测试不代表已完成真实收款或生产环境验收。
 
 ## 功能

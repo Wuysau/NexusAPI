@@ -400,6 +400,28 @@ export const ownedConnections = pgTable(
   }),
 )
 
+export const connectorPairings = pgTable('connector_pairings', {
+  connectionId: text('connection_id')
+    .primaryKey()
+    .references(() => ownedConnections.id, { onDelete: 'cascade' }),
+  tenantId: text('tenant_id').notNull(),
+  tokenHash: text('token_hash').notNull().unique(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  consumedAt: timestamp('consumed_at', { withTimezone: true }),
+})
+export const connectorIdentities = pgTable('connector_identities', {
+  id: text('id')
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  connectionId: text('connection_id')
+    .notNull()
+    .unique()
+    .references(() => ownedConnections.id, { onDelete: 'cascade' }),
+  tenantId: text('tenant_id').notNull(),
+  credentialHash: text('credential_hash').notNull().unique(),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
 export const connectorLeases = pgTable(
   'connector_leases',
   {
@@ -411,6 +433,9 @@ export const connectorLeases = pgTable(
       .notNull()
       .references(() => ownedConnections.id, { onDelete: 'cascade' }),
     leaseTokenHash: text('lease_token_hash').notNull(),
+    connectorId: text('connector_id').references(() => connectorIdentities.id),
+    readyModels: jsonb('ready_models').$type<string[]>().notNull().default([]),
+    transportSeenAt: timestamp('transport_seen_at', { withTimezone: true }),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     lastHeartbeatAt: timestamp('last_heartbeat_at', { withTimezone: true }),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
@@ -418,6 +443,7 @@ export const connectorLeases = pgTable(
   },
   (t) => ({
     leaseConnIdx: uniqueIndex('connector_leases_connection_idx').on(t.connectionId),
+    leaseTokenIdx: uniqueIndex('connector_leases_token_idx').on(t.leaseTokenHash),
     leaseTenantIdx: index('connector_leases_tenant_idx').on(t.tenantId, t.expiresAt),
   }),
 )

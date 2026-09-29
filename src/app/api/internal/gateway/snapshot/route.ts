@@ -21,6 +21,7 @@ import { canonicalJson, signSnapshot, signingKeyIdFor } from '@/lib/catalog/snap
 import { snapshotSigningKeyring } from '@/lib/secrets/snapshot-signing'
 import { localConnectionConfig, localKeyInputAllowed, localModelIds } from '@/lib/channels/local-credentials'
 import { buildLocalSnapshot } from '@/lib/channels/local-snapshot'
+import { connectorChannels } from '@/lib/connectors/snapshot'
 import { internalError, normalizeTenantScope, requireGatewayToken } from '../_shared'
 
 export const dynamic = 'force-dynamic'
@@ -94,7 +95,7 @@ export async function GET(req: Request): Promise<Response> {
         tenantId ? loadChannels(tenantId, true) : Promise.resolve([]),
         tenantId ? loadKeys(tenantId) : loadAllKeys(),
       ])
-      const local = buildLocalSnapshot(tenantId, localChannels)
+      const local = buildLocalSnapshot(tenantId, [...localChannels, ...(await connectorChannels(tenantId))])
       const signed = signSnapshot(local.payload, snapshotKeyring())
       return signedBundleResponse(
         tenantId,
@@ -135,7 +136,20 @@ export async function GET(req: Request): Promise<Response> {
       [tenantId],
     )
     if (!snapshot.rows.length) {
-      return internalError(404, 'not_found', 'No published snapshot for this scope.')
+      if (process.env.NEXUS_CONNECTORS_ENABLED !== 'true')
+        return internalError(404, 'not_found', 'No published snapshot for this scope.')
+      const local = buildLocalSnapshot(tenantId, await connectorChannels(tenantId))
+      const signed = signSnapshot(local.payload, snapshotKeyring())
+      return signedBundleResponse(
+        tenantId,
+        { ...local.payload },
+        signed.signature,
+        signed.signingKeyId,
+        local.payload.sequence_number,
+        local.channels,
+        local.models,
+        tenantId ? await loadKeys(tenantId) : await loadAllKeys(),
+      )
     }
     const row = snapshot.rows[0]
     payload = row.payload
@@ -153,6 +167,11 @@ export async function GET(req: Request): Promise<Response> {
       loadModels(),
       tenantId ? loadKeys(tenantId) : loadAllKeys(),
     ])
+    const sidecars = buildLocalSnapshot(tenantId, await connectorChannels(tenantId))
+    channels.push(...sidecars.channels)
+    models.push(
+      ...sidecars.models.filter((model) => !models.some((existing) => (existing as { id: string }).id === model.id)),
+    )
   } catch {
     return internalError(500, 'internal_error', 'Snapshot identity validation failed.')
   }
@@ -253,6 +272,7 @@ async function loadChannels(tenantId: string | null, localOnly = false) {
      LEFT JOIN organizations credential_org ON credential_org.id = cred.organization_id
      LEFT JOIN owned_connections connection ON connection.id = c.metadata->>'connection_id'
      WHERE c.enabled = true
+       AND COALESCE(c.metadata->>'transport','') <> 'local_sidecar'
        AND p.enabled = true
        AND (connection.mode IS NULL OR connection.mode <> 'subscription_interactive')
        AND (c.tenant_id IS NOT DISTINCT FROM $1 OR c.tenant_id IS NULL)

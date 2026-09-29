@@ -26,6 +26,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         'UPDATE connector_leases SET revoked_at=now() WHERE connection_id=$1 AND tenant_id=$2 AND revoked_at IS NULL',
         [id, ctx.tenantId],
       )
+      await client.query('UPDATE connector_identities SET revoked_at=now() WHERE connection_id=$1 AND tenant_id=$2', [
+        id,
+        ctx.tenantId,
+      ])
+      await client.query('DELETE FROM connector_pairings WHERE connection_id=$1 AND tenant_id=$2', [id, ctx.tenantId])
+      await client.query(
+        `UPDATE channels SET enabled=false,updated_at=now() WHERE tenant_id=$1 AND metadata->>'connection_id'=$2 AND metadata->>'transport'='local_sidecar'`,
+        [ctx.tenantId, id],
+      )
       await client.query('COMMIT')
     } catch (error) {
       await client.query('ROLLBACK')

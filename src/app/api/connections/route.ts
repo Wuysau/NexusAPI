@@ -1,5 +1,6 @@
 import { pool } from '@/db'
 import { getSubscriptionProduct } from '@/lib/subscriptions/catalog'
+import { connectorState } from '@/lib/connectors/control'
 import { resolveQuotaProject } from '@/lib/quota/access'
 import { connectionVisibility, observedVisibility, workspaceParams } from '@/lib/workspace/management'
 import { apiError, auditControlPlane, jsonOk, readJsonBody, requireContext, routeError } from '../_lib/control-plane'
@@ -31,7 +32,12 @@ export async function GET(req: Request) {
        ) observed ON true WHERE ${connectionVisibility} ORDER BY c.created_at DESC`,
       workspaceParams(ctx),
     )
-    return jsonOk({ connections: result.rows })
+    const connections = await Promise.all(
+      result.rows.map(async (row) =>
+        row.mode === 'local_sidecar' ? { ...row, connector: await connectorState(ctx, row.id) } : row,
+      ),
+    )
+    return jsonOk({ connections })
   } catch (error) {
     return routeError(error)
   }
@@ -75,6 +81,14 @@ export async function POST(req: Request) {
     )
       return apiError(400, 'invalid_project', '项目参数无效')
     const projectId = typeof body.projectId === 'string' ? body.projectId : null
+    if (
+      mode === 'local_sidecar' &&
+      (provider !== 'ollama' ||
+        !projectId ||
+        body.capabilities !== undefined ||
+        body.credentialFingerprint !== undefined)
+    )
+      return apiError(400, 'invalid_connector', '本地连接器需要 Ollama 供应商和绑定项目；能力由配对流程配置')
     let capabilities: Record<string, unknown> = {}
     if (mode === 'subscription_interactive') {
       const product = getSubscriptionProduct(

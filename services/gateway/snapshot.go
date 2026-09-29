@@ -99,6 +99,9 @@ type SnapshotPayload struct {
 // reference, never the credential itself: the secret is resolved through the
 // control plane's Secret Plane at request time and is never persisted here.
 type SnapshotChannel struct {
+	Transport    string `json:"transport,omitempty"`
+	TenantID     string `json:"tenant_id,omitempty"`
+	ProjectID    string `json:"project_id,omitempty"`
 	ID           string `json:"id"`
 	ConnectionID string `json:"connection_id"`
 	// ProviderID is the control-plane providers.id, needed for the foreign key

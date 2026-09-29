@@ -97,6 +97,18 @@ export default function DocsPage() {
           )}
 
           <h3 className="doc-subtitle">接口与支持范围</h3>
+          <h3 className="doc-subtitle">远端 NexusAPI + 本机 Ollama</h3>
+          <p>
+            在“连接”添加本地连接器并绑定项目，配置多个模型 ID、生成一次性配对令牌。在运行 Ollama 的电脑上启动
+            nexus-connector，按提示配对并运行。本机只发起 HTTPS 出站连接，不需要开放 Ollama 入站端口。
+          </p>
+          <p>
+            连接详情提供构建命令、配置示例、在线与模型就绪状态，以及通过项目 API Key
+            的真实测试调用。模型就绪仍需实际调用验证；未知用量和价格保留未定状态。首版要求单 Gateway 部署。
+          </p>
+          <Link className="text-link" href="/connections">
+            创建本地连接器 <ArrowRight size={14} />
+          </Link>
           <div className="doc-endpoint">
             <span>POST</span>
             <code>/v1/chat/completions</code>
