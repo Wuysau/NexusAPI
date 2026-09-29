@@ -198,6 +198,10 @@ type GatewayBundle struct {
 	Keys            []SnapshotKey     `json:"keys"`
 	RevocationEpoch int64             `json:"revocation_epoch"`
 	Limits          SnapshotLimits    `json:"limits"`
+
+	// Derived only after verification and immutable with this generation.
+	// Store positions so lookup returns the original signed directory entry.
+	keyIndex map[string]int
 }
 
 // ResolveModel maps a client-supplied model name (id or alias) to the published
@@ -219,9 +223,28 @@ func (b *GatewayBundle) ResolveModel(requested string) (*SnapshotModel, bool) {
 	return nil, false
 }
 
-// KeyByHash indexes the signed key directory by the sha256 of the presented
-// key. Built once per snapshot swap, read-only afterwards.
+// indexKeys builds derived state before the verified bundle is published.
+// Preserve the directory's first-match semantics even for duplicate hashes.
+func (b *GatewayBundle) indexKeys() {
+	b.keyIndex = make(map[string]int, len(b.Keys))
+	for i := range b.Keys {
+		hash := b.Keys[i].HashSHA256
+		if _, exists := b.keyIndex[hash]; !exists {
+			b.keyIndex[hash] = i
+		}
+	}
+}
+
+// KeyByHash reads this generation's index without caching authorization.
 func (b *GatewayBundle) KeyByHash(hashHex string) *SnapshotKey {
+	if b.keyIndex != nil {
+		if i, ok := b.keyIndex[hashHex]; ok {
+			return &b.Keys[i]
+		}
+		return nil
+	}
+	// Manually constructed bundles can still be inspected without verification.
+	// Never lazily mutate them here: concurrent readers must remain read-only.
 	for i := range b.Keys {
 		if b.Keys[i].HashSHA256 == hashHex {
 			return &b.Keys[i]
@@ -367,6 +390,7 @@ func VerifySnapshotResponse(body []byte, keyring *Keyring, expectedTenant string
 	if !now.Before(expiresAt) {
 		return nil, &SnapshotError{Reason: ReasonSnapshotExpired}
 	}
+	bundle.indexKeys()
 
 	return &VerifiedBundle{
 		Bundle:       &bundle,
