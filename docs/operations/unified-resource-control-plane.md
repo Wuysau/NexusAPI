@@ -17,6 +17,10 @@ The product is project-centric. An API request goes through the Go Gateway; an o
 
 `GET /api/resources` and `/resources` are read-only projections over these facts. They do not create `execution_resources` or `resource_accounts` tables, since doing so before migration would duplicate live identities. The view distinguishes `resourceType`, `executionMode`, quota and health, account reference, channel, project and routing configuration. A local API channel linked to a Connection is shown once; an unlinked direct-provider Connection remains visible as pending. Any unattested capability, model, priority, health or quota remains unknown. Recent runtime failures are separate from official quota observations. The `/routing` page combines existing project task-policy previews with visible API channel configuration, but does not claim that a configured channel is published or that the UI preview is an actual dispatch decision.
 
+When the selected project changes, `/routing` clears the previous project's policy and shows loading until the new result arrives. A failure cannot leave the old policy labeled as the new project's result. Refreshing the same query can retain its last successful data and timestamp alongside an error; disabling a query clears them.
+
+After installing repository dependencies and Playwright Chromium, run `node tests/e2e/api-data-scope.mjs` to check this browser behavior. The test imports the actual React hook, providers and routing page against loopback HTTP fixtures; it requires no database and does not test server authorization or model execution.
+
 ## Reference review, 2026-09-24
 
 - [New API channel model](https://github.com/QuantumNous/new-api/blob/main/model/channel.go) and [channel administration](https://github.com/QuantumNous/new-api-docs-v1/blob/main/content/docs/en/guide/feature-guide/admin/channel.mdx): priority, weight, model mapping, per-channel health and keys are useful gateway-plane patterns. Nexus already has channels, versioned model aliases, signed snapshots, health scoring and isolated billing; they remain authoritative.

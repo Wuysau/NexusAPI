@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { ApiError, apiGet, errorMessage } from './api'
 import { useRefresh } from '../RefreshProvider'
 import { useSession } from '../SessionProvider'
@@ -15,6 +15,12 @@ export interface ApiDataState<T> {
   reload: () => void
 }
 
+type LoadState<T> = Omit<ApiDataState<T>, 'reload'> & { path: string | null }
+
+function initialState<T>(path: string | null): LoadState<T> {
+  return { path, data: null, loading: Boolean(path), error: null, forbidden: false, loadedAt: null }
+}
+
 /**
  * Read a control-plane endpoint with the four states every page must handle:
  * loading, error, permission-denied and (on refresh failure) stale data.
@@ -25,16 +31,15 @@ export interface ApiDataState<T> {
 export function useApiData<T>(path: string | null): ApiDataState<T> {
   const { tick } = useRefresh()
   const { refresh: refreshSession } = useSession()
-  const [data, setData] = useState<T | null>(null)
-  const [loading, setLoading] = useState(Boolean(path))
-  const [error, setError] = useState<string | null>(null)
-  const [forbidden, setForbidden] = useState(false)
-  const [loadedAt, setLoadedAt] = useState<number | null>(null)
+  const [state, setState] = useState<LoadState<T>>(() => initialState(path))
   const [localTick, setLocalTick] = useState(0)
-  const hadData = useRef(false)
+
+  // Reset before children commit so a new query never renders the previous result.
+  const current = state.path === path ? state : initialState<T>(path)
+  if (state.path !== path) setState(current)
 
   const reload = useCallback(() => {
-    if (!hadData.current) setLoading(true)
+    setState((previous) => (previous.path && previous.loadedAt === null ? { ...previous, loading: true } : previous))
     setLocalTick((n) => n + 1)
   }, [])
 
@@ -46,21 +51,23 @@ export function useApiData<T>(path: string | null): ApiDataState<T> {
       try {
         const result = await apiGet<T>(path, controller.signal)
         if (cancelled) return
-        setData(result)
-        setError(null)
-        setForbidden(false)
-        setLoadedAt(Date.now())
-        hadData.current = true
+        const loadedAt = Date.now()
+        setState((previous) =>
+          previous.path === path ? { ...previous, data: result, error: null, forbidden: false, loadedAt } : previous,
+        )
       } catch (err) {
         if (cancelled || controller.signal.aborted) return
         if (err instanceof ApiError && err.status === 401) {
           await refreshSession()
           return
         }
-        setForbidden(err instanceof ApiError && err.status === 403)
-        setError(errorMessage(err))
+        const forbidden = err instanceof ApiError && err.status === 403
+        const error = errorMessage(err)
+        setState((previous) => (previous.path === path ? { ...previous, forbidden, error } : previous))
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!cancelled) {
+          setState((previous) => (previous.path === path ? { ...previous, loading: false } : previous))
+        }
       }
     })()
     return () => {
@@ -69,5 +76,12 @@ export function useApiData<T>(path: string | null): ApiDataState<T> {
     }
   }, [path, tick, localTick, refreshSession])
 
-  return { data, loading, error, forbidden, loadedAt, reload }
+  return {
+    data: current.data,
+    loading: current.loading,
+    error: current.error,
+    forbidden: current.forbidden,
+    loadedAt: current.loadedAt,
+    reload,
+  }
 }

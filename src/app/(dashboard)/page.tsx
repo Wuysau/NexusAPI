@@ -8,7 +8,6 @@ import { PageHeader } from '@/components/PageHeader'
 import { StatCard } from '@/components/StatCard'
 import { TrendChart } from '@/components/TrendChart'
 import { useApiData } from '@/components/lib/useApiData'
-import { useRefresh } from '@/components/RefreshProvider'
 import { EmptyState, ErrorBanner, PermissionDenied, SkeletonRows } from '@/components/States'
 import { ChannelTable } from '@/components/ChannelTable'
 import { LogTable } from '@/components/LogTable'
@@ -34,8 +33,7 @@ interface Overview {
 
 export default function OverviewPage() {
   const [range, setRange] = useState(7)
-  const { tick } = useRefresh()
-  const state = useApiData<Overview>(`/api/overview?days=${range}&_=${tick}`)
+  const state = useApiData<Overview>(`/api/overview?days=${range}`)
 
   if (state.forbidden) return <PermissionDenied capability="usage:read" />
 
