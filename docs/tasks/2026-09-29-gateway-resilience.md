@@ -217,3 +217,22 @@ Apply the received-configuration validation and bounded-lifetime principles docu
 - Deterministic native cases cover the exclusive signed-expiry boundary at nanosecond precision, expiry during retrieval and verification, the local maximum-age ceiling, actual receipt timestamps, successful source returns after cancellation, and authentication checking both the cache error and its own current time.
 - Full native `go test ./...` and `go vet ./...` passed (Gateway 25.782 seconds). Linux `go test -race ./...` passed (Gateway 77.954 seconds). Six TypeScript contract files passed all 70 tests. The independent-process PostgreSQL/TLS connector suite passed all nine groups (18.57 seconds).
 - Go formatting, secret scan and diff checks passed. Independent production-code review found no blocking issue. No migration, dependency, TypeScript production change or production deployment was performed.
+
+Round 9 was committed as `edae702` and merged/pushed to main (`d01d0c9`).
+
+## Round 10 design
+
+Request parsing silently changes stopping behavior: `stop: null` becomes a one-element empty-string array, while booleans, numbers, objects and malformed arrays can reach upstream inference. `top_p` has no range check. Real mock-upstream tests reproduce the changed null semantics and seven invalid stop shapes executing successfully with accounting side effects.
+
+Use the explicit-input principle documented by [LiteLLM](https://docs.litellm.ai/docs/completion/drop_params) and the [Chat Completions parameter contract](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create):
+
+- Parse `stop` once at ingress into canonical sequences. Accept a string, up to four string elements, or null; reject mixed/null array members and other types with the existing 400 error. Null, omission and empty arrays mean no stop sequences. Preserve explicit strings exactly.
+- Validate `top_p` in the inclusive 0–1 range, using the shared Chat path for Responses. Preserve null/omission and the existing invalid-JSON response for wrong types. Reject before authentication, rate admission, idempotency ownership or budget reservation.
+- Verify actual upstream wire values and zero side effects for rejected requests. A later valid call with the same idempotency key remains possible. Keep adapter capability work separate; no dependency, migration or pricing change is needed.
+
+## Round 10 validation
+
+- Thirteen real Chat/upstream cases verify null/omitted/empty-array behavior, exact explicit strings, the four-sequence boundary and rejection of seven malformed shapes. Rejected inputs create no reservation, provider call, terminal record or outbox event.
+- Twenty-two real HTTP sampling cases cover Chat and Responses, negative/greater-than-one values, wrong types, exact 0/1 boundaries, fractional values, null/omission and corrected retries under the same idempotency key. Before the fix, out-of-range calls executed and made the corrected retry conflict; now only the valid operation executes.
+- Full native `go test ./...` and `go vet ./...` passed (Gateway 22.939 seconds). Linux `go test -race ./...` passed (Gateway 78.171 seconds). Six TypeScript contract files passed all 70 tests. The independent-process PostgreSQL/TLS connector suite passed all nine groups (16.76 seconds).
+- Go formatting, secret scan and diff checks passed. Independent production-code review found no blocking issue. No migration, dependency, TypeScript production change or deployment was performed.

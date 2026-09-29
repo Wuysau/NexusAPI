@@ -54,6 +54,10 @@ The first local-connector transport forwards status and response body but does n
 
 Unverified connector models are omitted; other confirmed candidates can still be returned. Results are not cached between requests, do not refresh transport liveness, and do not authorize later inference. Chat retains its per-call live authorization. Update Control Plane before Gateway when deploying this batch protocol; an older Control Plane rejects it safely.
 
+## Request parameter validation
+
+Chat `stop` accepts a string, an array of at most four strings, or `null`. Omitted/null/empty-array values add no stop sequences; explicit strings, including an empty string, retain their supplied value. Other types and null/non-string array elements return HTTP 400 with `param: "stop"` before rate admission, reservation or execution. Both Chat and Responses require numeric `top_p` values in the inclusive range 0–1; null and omission leave it unset. Out-of-range values return 400 with `param: "top_p"`, and wrong JSON types retain the existing `invalid_json` response. Provider-specific restrictions may be stricter.
+
 ## Streaming, output and accounting
 
 The SSE parser enforces a 1 MiB event budget while reading, including line bytes, comments and framing. The relay uses one reader per request and bounded handoff to the response writer. Chat streaming forwards deltas without retaining the full output. Buffered chat accumulates text, reasoning and function calls only up to `GATEWAY_MAX_RESPONSE_BYTES`. Responses also bounds the output retained for its final response object, including streamed requests.

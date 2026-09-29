@@ -156,6 +156,8 @@ type chatRequest struct {
 	ToolChoice          json.RawMessage    `json:"tool_choice"`
 	ResponseFormat      json.RawMessage    `json:"response_format"`
 	User                string             `json:"user"`
+	// Parsed once at ingress, before rate admission or budget reservation.
+	stopSequences []string
 }
 
 type chatStreamOptions struct {
@@ -848,7 +850,7 @@ func (p *Proxy) attempt(
 			MaxTokens:      effectiveMaxTokens(req, model),
 			Temperature:    req.Temperature,
 			TopP:           req.TopP,
-			Stop:           parseStop(req.Stop),
+			Stop:           req.stopSequences,
 			Tools:          req.Tools,
 			ToolChoice:     req.ToolChoice,
 			ResponseFormat: req.ResponseFormat,
@@ -1468,6 +1470,14 @@ func parseChatRequest(body []byte, maxTokensEstimate int) (*chatRequest, *APIErr
 	if req.Temperature != nil && (*req.Temperature < 0 || *req.Temperature > 2) {
 		return nil, errInvalidParam("temperature", "temperature must be between 0 and 2.")
 	}
+	if req.TopP != nil && (*req.TopP < 0 || *req.TopP > 1) {
+		return nil, errInvalidParam("top_p", "top_p must be between 0 and 1.")
+	}
+	var stopErr *APIError
+	req.stopSequences, stopErr = parseStop(req.Stop)
+	if stopErr != nil {
+		return nil, stopErr
+	}
 	return &req, nil
 }
 
@@ -1481,20 +1491,30 @@ func effectiveMaxTokens(req *chatRequest, model *SnapshotModel) *int {
 	return nil
 }
 
-// parseStop accepts both the string and array forms of `stop`.
-func parseStop(raw json.RawMessage) []string {
-	if len(raw) == 0 {
-		return nil
+// parseStop preserves explicit strings and treats null as no stop sequences.
+// Null array members cannot be decoded as empty strings; malformed input must
+// fail before it changes the request's stopping behavior or incurs a charge.
+func parseStop(raw json.RawMessage) ([]string, *APIError) {
+	value := strings.TrimSpace(string(raw))
+	if value == "" || value == "null" {
+		return nil, nil
 	}
 	var single string
 	if err := json.Unmarshal(raw, &single); err == nil {
-		return []string{single}
+		return []string{single}, nil
 	}
-	var many []string
-	if err := json.Unmarshal(raw, &many); err == nil {
-		return many
+	var many []*string
+	if err := json.Unmarshal(raw, &many); err != nil || len(many) > 4 {
+		return nil, errInvalidParam("stop", "stop must be a string, an array of up to 4 strings, or null.")
 	}
-	return nil
+	var sequences []string
+	for _, item := range many {
+		if item == nil {
+			return nil, errInvalidParam("stop", "stop array elements must be strings.")
+		}
+		sequences = append(sequences, *item)
+	}
+	return sequences, nil
 }
 
 // estimateInputTokens is the pre-flight estimate used for limits and holds. It
