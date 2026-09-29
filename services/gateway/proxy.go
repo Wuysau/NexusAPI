@@ -445,7 +445,7 @@ func (p *Proxy) ServeChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dispatched = true
-	result := p.attempt(upstreamCtx, w, credentials, req, model, identity, requestID, streaming, bundle, startedAt, cancelUpstream)
+	result := p.attempt(upstreamCtx, w, credentials, req, model, identity, requestID, streaming, bundle, startedAt)
 	if result.captureFailed && len(result.attempts) == 0 {
 		writeAPIError(w, requestID, errStorageUnavailable())
 		return
@@ -768,7 +768,6 @@ func (p *Proxy) attempt(
 	streaming bool,
 	bundle *GatewayBundle,
 	startedAt time.Time,
-	cancelUpstream context.CancelFunc,
 ) *attemptResult {
 	result := &attemptResult{outcome: OutcomeFailed, channel: rc.channel, startedAt: startedAt}
 	attemptNumber := 0
@@ -900,9 +899,11 @@ func (p *Proxy) attempt(
 		// One attempt includes waiting for headers and consuming the response.
 		// The parent still bounds all attempts and carries client/lease cancellation.
 		attemptCtx := channelLease.Context()
-		cancelAttempt := func() {}
+		var cancelAttempt context.CancelFunc
 		if p.limits.UpstreamTimeout > 0 {
 			attemptCtx, cancelAttempt = context.WithTimeout(attemptCtx, p.limits.UpstreamTimeout)
+		} else {
+			attemptCtx, cancelAttempt = context.WithCancel(attemptCtx)
 		}
 		releaseAttempt = sync.OnceFunc(func() {
 			cancelAttempt()
@@ -980,7 +981,9 @@ func (p *Proxy) attempt(
 		// From here on the upstream has accepted the request. There is no
 		// switching: a second provider would duplicate work we cannot undo.
 		result.channel = candidate.Channel
-		usage, buffered, writeErr := p.relayWithOptions(attemptCtx, w, stream, req.Model, requestID, streaming, cancelUpstream, relayOptions{deferDone: true, streamOptions: req.StreamOptions, firstToken: func() { p.breaker.RecordTTFT(breakerKey, p.now().Sub(dispatchStart)) }})
+		// Relay cleanup must not cancel the parent execution context: that signal
+		// distinguishes caller/total-budget cancellation from upstream failure.
+		usage, buffered, writeErr := p.relayWithOptions(attemptCtx, w, stream, req.Model, requestID, streaming, cancelAttempt, relayOptions{deferDone: true, streamOptions: req.StreamOptions, firstToken: func() { p.breaker.RecordTTFT(breakerKey, p.now().Sub(dispatchStart)) }})
 		// Wire adapters must validate their terminal representation before the
 		// shared path persists a successful execution fact.
 		if writeErr == nil {

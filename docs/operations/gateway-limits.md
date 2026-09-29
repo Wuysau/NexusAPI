@@ -53,6 +53,8 @@ The container runs `/app/nexus-healthcheck`, which probes the configured `GATEWA
 
 An upstream 429 immediately cools down its channel/model for later requests. `Retry-After` (seconds or HTTP date), `retry-after-ms` and `x-ms-retry-after-ms` are parsed as positive durations and capped at 60 seconds. Invalid hints are ignored; a 429 without a valid hint uses the existing breaker duration (30 seconds in the default runtime). A 503 with a valid hint also enters cooldown. The same channel's other models keep their independent state. Cooldown expires into the existing limited half-open probing path, and a concurrent earlier success cannot clear an active cooldown.
 
+Incomplete or malformed upstream streams, idle expiry and single-attempt expiry count toward that channel/model's existing failure threshold. Client cancellation, the parent total deadline and downstream delivery failures do not count as upstream health failures. Reaching the threshold affects later requests; partial or ambiguous execution still has one terminal record and is never replayed automatically. Stream cleanup cancels only its own attempt, preserving the original cancellation cause for this distinction.
+
 Invalid request and content-policy refusals do not count as upstream health failures. This avoids one caller's bad input removing capacity for other callers. Cooldown affects subsequent routing and does not sleep, retry, or fail over a request whose upstream execution may already have started. These states are per Gateway process; they are not a new distributed rate limiter.
 
 The first local-connector transport forwards status and response body but does not forward retry headers. Its 429 responses use the default cooldown; per-provider hints apply to direct API channels.
