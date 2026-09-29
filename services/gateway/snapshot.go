@@ -291,6 +291,8 @@ type HTTPSnapshotSource struct {
 	Client  *http.Client
 }
 
+const maxSnapshotResponseBytes = 8 << 20
+
 func (s *HTTPSnapshotSource) Fetch(ctx context.Context, tenantID string) ([]byte, error) {
 	url := s.BaseURL + "/api/internal/gateway/snapshot"
 	if tenantID != "" {
@@ -308,9 +310,12 @@ func (s *HTTPSnapshotSource) Fetch(ctx context.Context, tenantID string) ([]byte
 	}
 	defer func() { _ = resp.Body.Close() }()
 	// Bounded read: a snapshot is configuration, not a payload stream.
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxSnapshotResponseBytes+1))
 	if err != nil {
 		return nil, err
+	}
+	if len(body) > maxSnapshotResponseBytes {
+		return nil, errors.New("snapshot response exceeds size limit")
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("snapshot http %d", resp.StatusCode)
@@ -342,9 +347,10 @@ type snapshotEnvelope struct {
 // confused-deputy replay). Signed expiry must be strictly later than `now`.
 func VerifySnapshotResponse(body []byte, keyring *Keyring, expectedTenant string, now time.Time) (*VerifiedBundle, error) {
 	var env snapshotEnvelope
-	dec := json.NewDecoder(strings.NewReader(string(body)))
-	dec.UseNumber()
-	if err := dec.Decode(&env); err != nil {
+	// The transport is one complete document. A valid signed prefix cannot
+	// make trailing JSON or malformed bytes into a successful refresh.
+	// RawMessage retains the signed bundle's exact numbers for canonicalization.
+	if err := json.Unmarshal(body, &env); err != nil {
 		return nil, &SnapshotError{Reason: ReasonSnapshotRejected, Err: errors.New("malformed envelope")}
 	}
 	if len(env.Bundle) == 0 {

@@ -361,3 +361,21 @@ Apply the duplicate-work sharing pattern documented by [Go singleflight](https:/
 - The original 30 ms delayed-503 HTTP fixture now performs one fetch for sixteen callers, measuring 52.83 ms cold and 30.54 ms expired on the shared host, versus the original 517.53/495.96 ms. Separate waiting callers still cancel in about 10 ms. These are local fault-fixture measurements, not production latency claims.
 - Full native `go test ./...` and `go vet ./...` passed (Gateway 26.629 seconds). Linux `go test -race ./...` passed (Gateway 94.872 seconds). Seventy TypeScript contract tests and all eleven independent-process PostgreSQL/TLS connector groups passed (17.04 seconds). Go formatting, secret scan and diff checks passed.
 - No migration, dependency, TypeScript production change, deployment or authorization-policy change was made. Completed failures are not cached and successful shared results retain signed freshness checks.
+
+Round 16 was committed as `edf02bb` and merged/pushed to main (`7f7d7fb`).
+
+## Round 17 design
+
+A real HTTP reproduction accepts a valid signed envelope followed by a second JSON value or garbage. It also accepts 8 MiB plus one byte by truncating the response before verification. The first envelope still requires a valid signature; the defect is accepting malformed or truncated transport as a successful configuration refresh.
+
+- Read at most the existing size limit plus one byte and explicitly reject overflow. Apply the bound to the HTTP response body, including automatic decompression, independently of Content-Length or chunked transfer. Close every response body.
+- Decode the entire envelope as one JSON document. Preserve whitespace, unknown envelope fields and the raw signed bundle's numeric representation. Keep signature, tenant, schema, expiry and last-good-state checks unchanged.
+- Verify exact-limit acceptance, over-limit rejection, fixed-length/chunked/gzip transfers, bounded reading of an endless source, malformed tails and retained accepted generations. Error messages contain no response content.
+- This completes the current configuration-validation boundary inspired by Envoy xDS; it does not introduce a new wire format, limit, dependency or migration. Go's [LimitReader](https://pkg.go.dev/io#LimitReader) stops at its configured byte count, so an extra byte is necessary to distinguish overflow from a complete body at the limit.
+
+## Round 17 validation
+
+- Fourteen HTTP/transport cases cover 8 MiB minus one byte, exactly 8 MiB and one byte over for Content-Length, chunked and gzip bodies; extra JSON/junk over both ordinary transfer forms; and bounded reads plus closure of an endless source. Eight assertions failed against the previous behavior, including all three oversized valid-prefix responses. All now pass, with the six within-limit controls remaining accepted.
+- Thirteen independent envelope/cache scenarios cover malformed and multiple documents, safe error text, legal whitespace, additive envelope metadata, signed numeric literals and exact integers above float64 precision. Two actual authentication cases verify that rejected candidates cannot replace the prior key index, add keys, change accepted permissions or extend generation expiry. Existing fresh authority remains usable; expired authority refuses new authentication. Independent review found no blocking issue.
+- Full native `go test ./...` and `go vet ./...` passed (Gateway 26.774 seconds). Linux `go test -race ./...` passed (Gateway 100.518 seconds). Seventy TypeScript contract tests passed. All eleven independent-process PostgreSQL/TLS connector groups passed (17.80 seconds). Go formatting, secret scan and diff checks passed.
+- No migration, dependency, TypeScript production, protocol-version or deployment change was made. The 8 MiB limit is unchanged; it now rejects overflow explicitly instead of accepting a truncated prefix.
