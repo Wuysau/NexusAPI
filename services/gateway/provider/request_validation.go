@@ -31,7 +31,7 @@ func (a *Anthropic) ValidateRequest(req *CanonicalRequest) error {
 	}
 	conversationMessages := 0
 	for _, message := range req.Messages {
-		if message.ReasoningContent != nil || message.Refusal != nil {
+		if message.Name != "" || message.ReasoningContent != nil || message.Refusal != nil {
 			return &UnsupportedParameterError{Param: "messages"}
 		}
 		if message.Role == "system" || message.Role == "developer" {
@@ -73,10 +73,17 @@ func (g *Gemini) ValidateRequest(req *CanonicalRequest) error {
 	if !textOnlyResponseFormat(req.ResponseFormat) {
 		return &UnsupportedParameterError{Param: "response_format"}
 	}
+	conversationMessages := 0
 	for _, message := range req.Messages {
-		if message.ReasoningContent != nil || message.Refusal != nil || message.Role == "tool" || message.ToolCallID != "" || !emptyJSONList(message.ToolCalls) || !textOnlyContent(message.Content) {
+		if message.Name != "" || message.ReasoningContent != nil || message.Refusal != nil || message.Role == "tool" || message.ToolCallID != "" || !emptyJSONList(message.ToolCalls) || !textOnlyContent(message.Content) {
 			return &UnsupportedParameterError{Param: "messages"}
 		}
+		if message.Role != "system" && message.Role != "developer" {
+			conversationMessages++
+		}
+	}
+	if conversationMessages == 0 {
+		return &UnsupportedParameterError{Param: "messages"}
 	}
 	return nil
 }

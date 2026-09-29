@@ -165,7 +165,7 @@ func TestCompletionLimitAdapterVersionIsObservable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]string{"openai": "1.0.3", "deepseek": "1.0.3", "qwen": "1.0.3", "anthropic": "1.0.5", "gemini": "1.0.3"}
+	want := map[string]string{"openai": "1.0.3", "deepseek": "1.0.3", "qwen": "1.0.3", "anthropic": "1.0.6", "gemini": "1.0.4"}
 	if got := registry.Versions(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("adapter versions = %v, want %v", got, want)
 	}

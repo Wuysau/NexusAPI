@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	geminiAdapterVersion = "1.0.3"
+	geminiAdapterVersion = "1.0.4"
 	geminiAPIVersion     = "v1beta"
 )
 
