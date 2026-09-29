@@ -7,7 +7,7 @@ import (
 
 // anthropicTools translates the canonical Chat Completions tool contract.
 func anthropicTools(tools, choice json.RawMessage) (json.RawMessage, json.RawMessage, error) {
-	if len(tools) > 0 && string(tools) != "null" {
+	if !missingOrNull(tools) {
 		var definitions []struct {
 			Type     string `json:"type"`
 			Function struct {
@@ -18,15 +18,15 @@ func anthropicTools(tools, choice json.RawMessage) (json.RawMessage, json.RawMes
 			} `json:"function"`
 		}
 		if err := json.Unmarshal(tools, &definitions); err != nil {
-			return nil, nil, fmt.Errorf("anthropic: invalid tools")
+			return nil, nil, &UnsupportedParameterError{Param: "tools"}
 		}
 		converted := make([]map[string]any, 0, len(definitions))
 		for _, tool := range definitions {
 			if tool.Type != "function" || tool.Function.Name == "" {
-				return nil, nil, fmt.Errorf("anthropic: unsupported tool definition")
+				return nil, nil, &UnsupportedParameterError{Param: "tools"}
 			}
 			parameters := tool.Function.Parameters
-			if len(parameters) == 0 || string(parameters) == "null" {
+			if missingOrNull(parameters) {
 				parameters = json.RawMessage(`{"type":"object","properties":{}}`)
 			}
 			definition := map[string]any{"name": tool.Function.Name, "input_schema": parameters}
@@ -40,7 +40,7 @@ func anthropicTools(tools, choice json.RawMessage) (json.RawMessage, json.RawMes
 		}
 		tools, _ = json.Marshal(converted)
 	}
-	if len(choice) > 0 && string(choice) != "null" {
+	if !missingOrNull(choice) {
 		var name string
 		var converted map[string]string
 		if json.Unmarshal(choice, &name) == nil {
@@ -50,7 +50,7 @@ func anthropicTools(tools, choice json.RawMessage) (json.RawMessage, json.RawMes
 			case "required":
 				converted = map[string]string{"type": "any"}
 			default:
-				return nil, nil, fmt.Errorf("anthropic: unsupported tool choice")
+				return nil, nil, &UnsupportedParameterError{Param: "tool_choice"}
 			}
 		} else {
 			var function struct {
@@ -60,7 +60,7 @@ func anthropicTools(tools, choice json.RawMessage) (json.RawMessage, json.RawMes
 				} `json:"function"`
 			}
 			if err := json.Unmarshal(choice, &function); err != nil || function.Type != "function" || function.Function.Name == "" {
-				return nil, nil, fmt.Errorf("anthropic: invalid tool choice")
+				return nil, nil, &UnsupportedParameterError{Param: "tool_choice"}
 			}
 			converted = map[string]string{"type": "tool", "name": function.Function.Name}
 		}
@@ -78,12 +78,12 @@ func anthropicMessageContent(msg Message) (json.RawMessage, error) {
 		if msg.ToolCallID == "" {
 			return nil, fmt.Errorf("anthropic: tool result missing call id")
 		}
-		if len(content) == 0 || string(content) == "null" {
+		if missingOrNull(content) {
 			content = json.RawMessage(`""`)
 		}
 		return json.Marshal([]any{map[string]any{"type": "tool_result", "tool_use_id": msg.ToolCallID, "content": content}})
 	}
-	if len(msg.ToolCalls) == 0 || string(msg.ToolCalls) == "null" {
+	if missingOrNull(msg.ToolCalls) {
 		return content, nil
 	}
 	if msg.Role != "assistant" {
@@ -101,7 +101,7 @@ func anthropicMessageContent(msg Message) (json.RawMessage, error) {
 		return nil, fmt.Errorf("anthropic: invalid tool calls")
 	}
 	var blocks []json.RawMessage
-	if len(content) > 0 && string(content) != "null" {
+	if !missingOrNull(content) {
 		var text string
 		if json.Unmarshal(content, &text) == nil {
 			if text != "" {

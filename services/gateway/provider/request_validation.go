@@ -29,6 +29,7 @@ func (a *Anthropic) ValidateRequest(req *CanonicalRequest) error {
 	if req == nil {
 		return errNilRequest
 	}
+	conversationMessages := 0
 	for _, message := range req.Messages {
 		if message.ReasoningContent != nil || message.Refusal != nil {
 			return &UnsupportedParameterError{Param: "messages"}
@@ -37,14 +38,23 @@ func (a *Anthropic) ValidateRequest(req *CanonicalRequest) error {
 			if !textOnlyContent(message.Content) {
 				return &UnsupportedParameterError{Param: "messages"}
 			}
-		} else if _, err := anthropicImageContent(message.Content); err != nil {
-			return err
+		} else {
+			conversationMessages++
+			// Reuse the actual pure translation before credentials or reservation.
+			// Unsupported local history must never create an execution attempt.
+			if _, err := anthropicMessageContent(message); err != nil {
+				return &UnsupportedParameterError{Param: "messages"}
+			}
 		}
 	}
 	if !textOnlyResponseFormat(req.ResponseFormat) {
 		return &UnsupportedParameterError{Param: "response_format"}
 	}
-	return nil
+	if conversationMessages == 0 {
+		return &UnsupportedParameterError{Param: "messages"}
+	}
+	_, _, err := anthropicTools(req.Tools, req.ToolChoice)
+	return err
 }
 
 func (g *Gemini) ValidateRequest(req *CanonicalRequest) error {
