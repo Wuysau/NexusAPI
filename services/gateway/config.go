@@ -28,6 +28,7 @@ type Env struct {
 	Addr               string
 	ControlPlaneURL    string
 	InternalToken      string
+	MetricsToken       string
 	DatabaseURL        string
 	RedisURL           string
 
@@ -107,6 +108,7 @@ func LoadEnv(getenv func(string) string) (*Env, error) {
 		Addr:                  pick("GATEWAY_ADDR", defaultAddr),
 		ControlPlaneURL:       strings.TrimRight(pick("CONTROL_PLANE_URL", defaultControlPlaneURL), "/"),
 		InternalToken:         strings.TrimSpace(getenv("GATEWAY_INTERNAL_TOKEN")),
+		MetricsToken:          strings.TrimSpace(getenv("GATEWAY_METRICS_TOKEN")),
 		DatabaseURL:           strings.TrimSpace(getenv("DATABASE_URL")),
 		RedisURL:              strings.TrimSpace(getenv("REDIS_URL")),
 		UpstreamEncryptionKey: strings.TrimSpace(getenv("SNAPSHOT_SIGNING_KEY")),
@@ -126,6 +128,9 @@ func LoadEnv(getenv func(string) string) (*Env, error) {
 
 	if env.Environment != "development" && env.Environment != "test" && env.Environment != "production" {
 		return nil, errors.New("[fail-closed] GATEWAY_ENV must be development, test, or production")
+	}
+	if env.MetricsToken != "" && len(env.MetricsToken) < minProductionTokenLength {
+		return nil, fmt.Errorf("[fail-closed] GATEWAY_METRICS_TOKEN must be at least %d chars", minProductionTokenLength)
 	}
 
 	prevVersion := strings.TrimSpace(getenv("SNAPSHOT_SIGNING_KEY_PREVIOUS_VERSION"))

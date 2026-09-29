@@ -48,11 +48,32 @@ Once upstream execution may have occurred, the gateway does not switch providers
 
 Every Gateway call receives a new server-generated `x-request-id`. That ID is used by response/error bodies, budget authorization, request/attempt records and usage events, including calls through the Responses adapter. Repeating a caller's `x-request-id` no longer causes a database primary-key collision. A safe caller correlation (at most 128 letters, digits, dots, underscores or hyphens) is echoed separately as `x-client-request-id`; this value is not an accounting or authorization identity. Prefer sending it in `x-client-request-id`; legacy incoming `x-request-id` is accepted as correlation only.
 
-Use `Idempotency-Key` to identify an operation explicitly. The v2 BYOK path captures identity before dispatch and returns 409 for same-tenant durable duplicates, including after the in-memory guard was lost. A correlation header has no deduplication semantics. The legacy v1 BYOK path still depends on the shared/local admission claim before terminal persistence; its durable replay protection after claim expiry is under separate review.
+Use `Idempotency-Key` to identify an operation explicitly. Both v2 capture and legacy v1 BYOK with an explicit key persist ownership before dispatch. Same-tenant durable duplicates return 409, including after the admission cache was lost or on another instance. A correlation header has no deduplication semantics. The existing managed path retains its reservation rules.
+
+An explicit legacy BYOK key requires the canonical database schema and an available durable store; missing schema or a failed/ambiguous claim returns 503 before calling the provider. Apply all existing migrations before deploying this behavior. Legacy BYOK requests without an explicit key retain the existing database-degradation policy and have no cross-process deduplication guarantee. No new migration is required.
+
+Claims do not expire automatically. A process crash after claiming may leave a `created` request with no terminal usage. That state blocks reuse of the key because provider execution is uncertain; it does not create token usage, charges, project facts or a synthetic completion. Inspect and reconcile the original operation before deliberately starting a new operation with a different key. Retries after any possible upstream execution remain prohibited.
 
 Shutdown stops admission and allows active requests 30 seconds to complete. When grace expires, request contexts are canceled and sockets closed. A separate cleanup window of up to 12 seconds lets handlers finish detached terminal persistence (which has a 10-second deadline) before dependencies close. Canceled or partial execution stays unknown with its available usage evidence. Shutdown reports a missed grace deadline even when cleanup succeeds. If a handler remains stuck beyond cleanup, an explicit incomplete-cleanup error is returned; process exit remains an emergency boundary, not a claim that all usage was persisted.
 
 The production Compose Gateway has a 60-second `stop_grace_period`. Give other orchestrators at least 30 + 12 seconds plus teardown margin (telemetry flush has a separate two-second bound), or they may kill the process during terminal persistence. Main transfers dependency ownership to Server and skips blocking dependency closes when emergency cleanup remains incomplete. Keep the database and Redis available while the Gateway drains.
+
+## Operational metrics
+
+Set a separate random `GATEWAY_METRICS_TOKEN` of at least 24 characters to enable `GET /metrics`. An empty token returns 404; a missing or incorrect `Authorization: Bearer ...` returns 401. Responses disable caching. Configure the scraper's Bearer credential through its secret store and use verified HTTPS whenever traffic crosses a trusted local network boundary. The production Compose file passes this optional value only to the Gateway.
+
+The Prometheus endpoint exposes these process-local observations:
+
+| Metric | Meaning |
+| --- | --- |
+| `nexus_requests_total` | Requests reaching the four fixed `/v1` endpoints: Chat, Responses, embeddings and models. |
+| `nexus_request_errors_total` | Those requests whose committed HTTP status is at least 400. |
+| `nexus_request_duration_seconds` | Histogram of handler lifetime, including response streaming and terminal persistence. |
+| `nexus_first_byte_duration_seconds` | Histogram of time until the first response body bytes accepted by the writer. Header-only flushes do not count. |
+
+Metrics have no tenant, model, request, arbitrary path or credential labels. Request and response content is not retained by instrumentation. Scrapes and health probes do not increase these counters. Each Gateway restart resets its observations; let the scraper attach its normal instance label when aggregating replicas.
+
+First body byte is not time to first model token: it may be a JSON error or a stream lifecycle event. A stream that fails after HTTP 200 does not increment the HTTP error counter. Use request/attempt facts for execution outcomes and the existing ledger for financial reporting. Unwired provider, billing and worker counters are not published as misleading zero values.
 
 ## Credential-bound connection reuse
 

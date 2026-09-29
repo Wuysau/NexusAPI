@@ -2,11 +2,9 @@ package main
 
 // Gateway metrics — in-process counters and histograms.
 //
-// This is a lightweight, dependency-free metrics registry that the gateway
-// uses for the same metric names as the TS observability package
-// (packages/observability/metrics.ts). A production deployment should
-// replace the collector with a real Prometheus or OTel backend; the
-// interface is stable so the swap is a one-place change.
+// The authenticated /metrics endpoint exposes the four wired HTTP metrics.
+// The registry retains additional observation helpers for explicit future
+// instrumentation; unobserved provider and Worker signals are not exported.
 //
 // Metric names (aligned with ADR-0005 and the TS package):
 //   nexus_requests_total
@@ -89,7 +87,7 @@ func (m *Metrics) Histogram(name string, buckets []float64) *Histogram {
 		return h
 	}
 	h = &Histogram{
-		buckets: buckets,
+		buckets: append([]float64(nil), buckets...),
 		values:  make([]int64, len(buckets)),
 	}
 	m.histos[name] = h
@@ -166,21 +164,14 @@ type GatewayMetrics struct {
 	registry *Metrics
 }
 
-// NewGatewayMetrics creates the named metric set.
+// NewGatewayMetrics creates only the metric set wired to HTTP observations.
 func NewGatewayMetrics(registry *Metrics) *GatewayMetrics {
-	// Pre-register all named metrics so they appear in the first render even
-	// at zero.
+	// HTTP zero counters are meaningful before requests arrive. Do not expose
+	// uninstrumented provider, billing or Worker metrics as measured zero.
 	registry.Counter("nexus_requests_total")
 	registry.Counter("nexus_request_errors_total")
 	registry.Histogram("nexus_request_duration_seconds", DefaultBuckets())
 	registry.Histogram("nexus_first_byte_duration_seconds", DefaultBuckets())
-	registry.Counter("nexus_provider_errors_total")
-	registry.Counter("nexus_fallback_total")
-	registry.Histogram("nexus_snapshot_age_seconds", DefaultBuckets())
-	registry.Histogram("nexus_outbox_age_seconds", DefaultBuckets())
-	registry.Counter("nexus_outbox_dead_letters_total")
-	registry.Counter("nexus_outbox_duplicates_total")
-	registry.Counter("nexus_kms_failures_total")
 	return &GatewayMetrics{registry: registry}
 }
 

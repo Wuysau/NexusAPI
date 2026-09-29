@@ -4,8 +4,9 @@ package main
 //
 // The request terminal state, its attempt row and the outbox usage event are
 // written in ONE transaction. That is the whole point of the outbox: a crash
-// either loses nothing or leaves a complete, replayable billing fact. A partial
-// write (request without event, or event without request) is not representable.
+// either loses nothing or leaves a complete, replayable terminal billing fact.
+// A pending identity may already exist from a reservation or pre-dispatch claim;
+// publishing its terminal state without the usage event is not representable.
 //
 // The gateway uses PostgreSQL ONLY for these three tables. Configuration never
 // comes from here — it comes from the signed snapshot — so the data plane can
@@ -30,8 +31,8 @@ import (
 )
 
 // ErrDuplicateRequest is returned when the (tenant, idempotency key) pair was
-// already persisted. It is a success from the caller's point of view: the first
-// delivery owns the billing fact.
+// already claimed or persisted. The original request owns that operation;
+// subsequent callers must not dispatch it again.
 var ErrDuplicateRequest = errors.New("outbox: duplicate request")
 
 var ErrReservationConflict = errors.New("outbox: reserved identity or state conflict")
@@ -104,7 +105,9 @@ type TerminalRecord struct {
 	ReservationReleased  bool
 	ReservationExpiresAt *time.Time
 
-	IdempotencyKey    string
+	IdempotencyKey string
+	// LegacyBYOKClaimed is internal dispatch state, never part of a usage event.
+	LegacyBYOKClaimed bool
 	ErrorCode         string
 	ErrorDetail       string
 	UpstreamRequestID string
@@ -143,6 +146,11 @@ func (r *TerminalRecord) Validate() error {
 	}
 	if r.RequestModel == "" {
 		return errors.New("outbox: request_model is required")
+	}
+	if r.LegacyBYOKClaimed {
+		if err := validateLegacyBYOKTerminal(r); err != nil {
+			return err
+		}
 	}
 	switch r.Status {
 	case string(OutcomeCompleted), string(OutcomeFailed), string(OutcomeUnknown):
@@ -365,6 +373,8 @@ func (s *PostgresStore) PersistTerminal(ctx context.Context, rec *TerminalRecord
 	var requestID string
 	if rec.EventV2 != nil {
 		err = persistV2Request(ctx, tx, rec, idempotencyKey)
+	} else if rec.LegacyBYOKClaimed {
+		err = persistLegacyBYOKRequest(ctx, tx, rec)
 	} else {
 		err = tx.QueryRow(ctx, insertRequestSQL,
 			rec.RequestID, rec.OrganizationID, rec.TenantID, rec.DownstreamKeyID, rec.RequestModel,
@@ -457,6 +467,8 @@ type MemoryStore struct {
 	capturedAttempts map[string]AttemptRecord
 	captured         map[string]*FrozenRequest
 	capturedByID     map[string]*FrozenRequest
+	legacyClaims     map[string]*LegacyBYOKClaim
+	legacyClaimKeys  map[string]string
 	terminalIDs      map[string]struct{}
 	mu               sync.Mutex
 	requests         map[string]*TerminalRecord
@@ -469,7 +481,7 @@ type MemoryStore struct {
 }
 
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{requests: make(map[string]*TerminalRecord), outbox: make(map[string]int), captured: make(map[string]*FrozenRequest), capturedByID: make(map[string]*FrozenRequest), terminalIDs: make(map[string]struct{}), capturedAttempts: make(map[string]AttemptRecord)}
+	return &MemoryStore{requests: make(map[string]*TerminalRecord), outbox: make(map[string]int), captured: make(map[string]*FrozenRequest), capturedByID: make(map[string]*FrozenRequest), legacyClaims: make(map[string]*LegacyBYOKClaim), legacyClaimKeys: make(map[string]string), terminalIDs: make(map[string]struct{}), capturedAttempts: make(map[string]AttemptRecord)}
 }
 
 // SetHealthy simulates an outbox that cannot commit.
@@ -520,6 +532,13 @@ func (m *MemoryStore) PersistTerminal(ctx context.Context, rec *TerminalRecord) 
 	}
 	if _, exists := m.terminalIDs[rec.RequestID]; exists {
 		return ErrReservationConflict
+	}
+	claim, claimed := m.legacyClaims[rec.RequestID]
+	if claimed != rec.LegacyBYOKClaimed || (claimed && !claim.matches(rec)) {
+		return ErrReservationConflict
+	}
+	if id, exists := m.legacyClaimKeys[key]; exists && id != rec.RequestID {
+		return ErrDuplicateRequest
 	}
 	if captured, exists := m.capturedByID[rec.RequestID]; exists {
 		if captured.TenantID != rec.TenantID || captured.OrganizationID != rec.OrganizationID ||

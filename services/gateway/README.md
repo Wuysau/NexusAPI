@@ -53,6 +53,7 @@ and rejects the local credential profile.
 | `GATEWAY_ADDR` | `:8080` | |
 | `CONTROL_PLANE_URL` | `http://127.0.0.1:3000` | required in production |
 | `GATEWAY_INTERNAL_TOKEN` | — | required in production (≥24 chars); unset closes the internal API |
+| `GATEWAY_METRICS_TOKEN` | — | optional, ≥24 chars in every profile; separate Bearer credential for `/metrics`; empty disables scraping |
 | `SNAPSHOT_SIGNING_KEY` | dev fallback | required in production (≥32 chars); independent of provider encryption |
 | `SNAPSHOT_SIGNING_KEY_PREVIOUS` / `_VERSION` | — | previous snapshot key for verification after rotation |
 | `DATABASE_URL` | — | required in production; used only for the outbox tables |
@@ -80,6 +81,7 @@ and rejects the local credential profile.
 | `GET /healthz` | liveness |
 | `GET /readyz` | readiness: fresh snapshot, responsive database, and live Redis in production; probes share a 2-second deadline |
 | `GET /versionz` | adapter versions + aggregate circuit-breaker counts; no tenant/channel/model identifiers |
+| `GET /metrics` | optional authenticated Prometheus request counts and timing; see [operational metrics](../../docs/operations/gateway-limits.md#operational-metrics) |
 | `POST /v1/responses` | opt-in JSON/SSE text and function-call subset; see [supported fields and exclusions](../../docs/operations/gateway-limits.md#responses-compatibility) |
 | `POST /v1/embeddings` | **501** |
 

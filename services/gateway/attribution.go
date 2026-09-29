@@ -261,6 +261,9 @@ func (m *MemoryStore) CaptureRequest(ctx context.Context, r *FrozenRequest) erro
 	if _, exists := m.terminalIDs[r.RequestID]; exists {
 		return ErrStoreUnavailable
 	}
+	if _, exists := m.legacyClaims[r.RequestID]; exists {
+		return ErrStoreUnavailable
+	}
 	key := r.TenantID + "|" + r.IdempotencyKey
 	if r.IdempotencyKey == "" {
 		key = r.TenantID + "|req:" + r.RequestID
@@ -269,6 +272,9 @@ func (m *MemoryStore) CaptureRequest(ctx context.Context, r *FrozenRequest) erro
 		return ErrDuplicateRequest
 	}
 	if _, ok := m.requests[key]; ok {
+		return ErrDuplicateRequest
+	}
+	if _, ok := m.legacyClaimKeys[key]; ok {
 		return ErrDuplicateRequest
 	}
 	raw, _ := json.Marshal(r)
