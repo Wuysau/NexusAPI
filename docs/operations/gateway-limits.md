@@ -18,6 +18,10 @@ Production requires `REDIS_URL`. Tenant and channel concurrency use expiring Red
 
 Missing or unavailable Redis rejects production admission; adding replicas does not enable a local fallback. Only explicit development/test profiles allow local limits. During a Redis incident, restore Redis connectivity before expecting new production requests to succeed. Expired leases reclaim abandoned capacity; do not delete live lease keys to bypass caps.
 
+RPM and estimated TPM checks each have a one-second Redis operation budget, shortened by request cancellation. A failed or invalid shared rate response returns HTTP 503 before budget reservation or inference, even if concurrency admission succeeded. Production does not consume a local fallback bucket. Development/test fallback uses one tenth of the configured rate capacity, with a minimum capacity of one; cancellation never falls back. Redis server time controls shared token refill, so Gateway clock differences cannot create extra capacity.
+
+Temporary RPM/TPM exhaustion returns HTTP 429 with `Retry-After` rounded up to whole seconds. The hint reflects that bucket's current refill and is not a reservation; competing requests may consume the replenished capacity. A request whose estimated cost exceeds the full bucket cannot become eligible merely by waiting and receives no hint. Backend failures and budget/concurrency errors do not invent a rate recovery time. Chat and the Responses adapter share this behavior, and neither automatically replays inference.
+
 The configured process concurrency cap is applied before the first admission. Startup does not consume a slot; caps below and above the default 256 are supported.
 
 ## Health probes and provider cooldown
@@ -101,6 +105,6 @@ Input may be a string or an array of text messages, `function_call` items and `f
 
 ## Verification
 
-Run `go test ./...` and `go vet ./...` in `services/gateway`; run `go test -race ./...` where cgo and a C compiler are available. Redis lease integration checks require the isolated Redis fixture used by the Go CI gate. Mock-upstream measurements describe only that fixture and do not establish production latency or capacity.
+Run `go test ./...` and `go vet ./...` in `services/gateway`; run `go test -race ./...` where cgo and a C compiler are available. Run `go test -tags redisintegration ./...` with `NEXUS_TEST_REDIS_URL` pointing to an isolated Redis fixture (default `redis://127.0.0.1:56381`) to check shared concurrency and rate admission, partial Redis failures, cancellation and instance coordination. Mock-upstream measurements describe only that fixture and do not establish production latency or capacity.
 
 Responses buffers function IDs, names and arguments within the response limit until successful termination, then emits complete function-call events. New text after pending tools is also buffered to preserve output order; earlier text remains live.

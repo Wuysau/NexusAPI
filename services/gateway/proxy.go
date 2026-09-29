@@ -334,7 +334,7 @@ func (p *Proxy) ServeChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	// 6. Limits: concurrency, then per-minute requests, then token estimate.
 	concurrencyLimit := ConcurrencyFor(p.limits.MaxConcurrent, bundle)
-	lease, acquireErr := p.limiter.AcquireContext(ctx, ConcurrencyRequest{TenantID: identity.TenantID, TenantLimit: concurrencyLimit, WaitTimeout: p.limits.ConcurrencyWait, AllowLocal: p.env == nil || p.env.Environment != "production"})
+	lease, acquireErr := p.limiter.AcquireContext(ctx, ConcurrencyRequest{TenantID: identity.TenantID, TenantLimit: concurrencyLimit, WaitTimeout: p.limits.ConcurrencyWait, AllowLocal: p.allowLocalAdmission()})
 	if acquireErr != nil {
 		if errors.Is(acquireErr, ErrConcurrencyLimit) {
 			writeAPIError(w, requestID, errConcurrency())
@@ -347,19 +347,27 @@ func (p *Proxy) ServeChatCompletions(w http.ResponseWriter, r *http.Request) {
 	ctx = lease.Context()
 
 	limits := bundle.LimitsFor(p.limits)
-	requestDecision := p.limiter.Allow(ctx, RateLimitBucket(identity.TenantID, identity.KeyID, model.ID, "req"),
-		limits.RequestsPerMinute, time.Minute, 1)
+	requestDecision, rateErr := p.limiter.Allow(ctx, RateLimitBucket(identity.TenantID, identity.KeyID, model.ID, "req"),
+		limits.RequestsPerMinute, time.Minute, 1, p.allowLocalAdmission())
+	if rateErr != nil {
+		writeAPIError(w, requestID, errNoHealthyUpstream())
+		return
+	}
 	if !requestDecision.Allowed {
-		writeAPIError(w, requestID, errRateLimited())
+		writeRateLimitError(w, requestID, requestDecision.RetryAfter)
 		return
 	}
 
 	inputEstimate := estimateInputTokens(body)
 	outputEstimate := p.outputEstimate(req)
-	tokenDecision := p.limiter.Allow(ctx, RateLimitBucket(identity.TenantID, identity.KeyID, model.ID, "tok"),
-		limits.TokensPerMinute, time.Minute, inputEstimate+outputEstimate)
+	tokenDecision, rateErr := p.limiter.Allow(ctx, RateLimitBucket(identity.TenantID, identity.KeyID, model.ID, "tok"),
+		limits.TokensPerMinute, time.Minute, inputEstimate+outputEstimate, p.allowLocalAdmission())
+	if rateErr != nil {
+		writeAPIError(w, requestID, errNoHealthyUpstream())
+		return
+	}
 	if !tokenDecision.Allowed {
-		writeAPIError(w, requestID, errRateLimited())
+		writeRateLimitError(w, requestID, tokenDecision.RetryAfter)
 		return
 	}
 
@@ -793,7 +801,7 @@ func (p *Proxy) attempt(
 		if channelLimit <= 0 {
 			channelLimit = 64
 		}
-		channelLease, admissionErr := p.limiter.AcquireContext(ctx, ConcurrencyRequest{TenantID: identity.TenantID, ChannelID: candidate.Channel.ID, ChannelLimit: channelLimit, WaitTimeout: p.limits.ConcurrencyWait, AllowLocal: p.env == nil || p.env.Environment != "production"})
+		channelLease, admissionErr := p.limiter.AcquireContext(ctx, ConcurrencyRequest{TenantID: identity.TenantID, ChannelID: candidate.Channel.ID, ChannelLimit: channelLimit, WaitTimeout: p.limits.ConcurrencyWait, AllowLocal: p.allowLocalAdmission()})
 		if admissionErr != nil {
 			result.errorCode = CodeNoHealthyUpstream
 			if errors.Is(admissionErr, ErrConcurrencyLimit) {

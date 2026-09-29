@@ -5,14 +5,14 @@ package main
 //
 // System caps come from the environment; the signed snapshot may only tighten
 // them per tenant. Rate limiting uses a Redis token bucket so the fleet shares
-// one budget. When Redis is unavailable the gateway degrades to a conservative
-// per-instance bucket rather than removing the limit — losing the shared counter
-// is not a reason to lose the ceiling (GATEWAY_SPEC "降级").
+// one budget. Production rejects requests when shared admission is unavailable.
+// Explicit development/test profiles may use a reduced per-instance bucket.
 
 import (
 	"context"
 	"errors"
 	"log/slog"
+	"math"
 	"sync"
 	"time"
 
@@ -27,6 +27,10 @@ type LimitDecision struct {
 	// Redis was unreachable.
 	Degraded bool
 }
+
+var ErrRateLimitUnavailable = errors.New("shared rate admission unavailable")
+
+const rateOperationTimeout = time.Second
 
 // Limiter enforces request/token rate limits and concurrency caps.
 type Limiter struct {
@@ -50,10 +54,13 @@ type Limiter struct {
 var bucketLua = redis.NewScript(`
 local key = KEYS[1]
 local capacity = tonumber(ARGV[1])
-local refillPerMs = tonumber(ARGV[2])
-local now = tonumber(ARGV[3])
-local cost = tonumber(ARGV[4])
-local ttlMs = tonumber(ARGV[5])
+local windowMs = tonumber(ARGV[2])
+local cost = tonumber(ARGV[3])
+if cost > capacity then return {0, 0} end
+local clock = redis.call('TIME')
+local now = tonumber(clock[1]) * 1000 + math.floor(tonumber(clock[2]) / 1000)
+local refillPerMs = capacity / windowMs
+local ttlMs = windowMs * 2
 local data = redis.call('HMGET', key, 'tokens', 'ts')
 local tokens = tonumber(data[1])
 local ts = tonumber(data[2])
@@ -156,32 +163,48 @@ func (l *Limiter) setDegraded(v bool) {
 
 // Allow consumes `cost` units from a token bucket.
 //
-// A Redis failure degrades to a local bucket at a fraction of the configured
-// limit and reports Degraded=true so callers can apply paid-traffic policy.
-func (l *Limiter) Allow(ctx context.Context, bucket string, capacity int, window time.Duration, cost int) LimitDecision {
+// Shared admission failures return an error unless local fallback is explicitly
+// allowed. Caller cancellation never admits work through the fallback.
+func (l *Limiter) Allow(ctx context.Context, bucket string, capacity int, window time.Duration, cost int, allowLocal bool) (LimitDecision, error) {
+	if err := ctx.Err(); err != nil {
+		return LimitDecision{}, err
+	}
 	if capacity <= 0 || window <= 0 {
-		return LimitDecision{Allowed: true}
+		return LimitDecision{Allowed: true}, nil
 	}
 	if cost < 1 {
 		cost = 1
 	}
-	if l.redis == nil {
-		return l.allowLocal(bucket, capacity, window, cost)
-	}
-	refillPerMs := float64(capacity) / float64(window.Milliseconds())
-	res, err := bucketLua.Run(ctx, l.redis, []string{"nexus:rl:" + bucket},
-		capacity, refillPerMs, time.Now().UnixMilli(), cost, window.Milliseconds()*2).Slice()
-	if err != nil {
+	fallback := func() (LimitDecision, error) {
+		if err := ctx.Err(); err != nil {
+			return LimitDecision{}, err
+		}
 		l.setDegraded(true)
-		return l.allowLocal(bucket, capacity, window, cost)
+		if !allowLocal {
+			return LimitDecision{}, ErrRateLimitUnavailable
+		}
+		return l.allowLocal(bucket, capacity, window, cost), nil
+	}
+	if l.redis == nil {
+		return fallback()
+	}
+	opCtx, cancel := context.WithTimeout(ctx, rateOperationTimeout)
+	defer cancel()
+	res, err := bucketLua.Run(opCtx, l.redis, []string{"nexus:rl:" + bucket},
+		capacity, max(int64(1), window.Milliseconds()), cost).Slice()
+	if ctx.Err() != nil {
+		return LimitDecision{}, ctx.Err()
+	}
+	if err != nil || len(res) != 2 {
+		return fallback()
+	}
+	allowed, allowedOK := res[0].(int64)
+	retryMs, retryOK := res[1].(int64)
+	if !allowedOK || !retryOK || (allowed != 0 && allowed != 1) || retryMs < 0 || retryMs > math.MaxInt64/int64(time.Millisecond) || (allowed == 1 && retryMs != 0) {
+		return fallback()
 	}
 	l.setDegraded(false)
-	allowed, _ := res[0].(int64)
-	if allowed == 1 {
-		return LimitDecision{Allowed: true}
-	}
-	retryMs, _ := res[1].(int64)
-	return LimitDecision{Allowed: false, RetryAfter: time.Duration(retryMs) * time.Millisecond}
+	return LimitDecision{Allowed: allowed == 1, RetryAfter: time.Duration(retryMs) * time.Millisecond}, nil
 }
 
 // allowLocal is the degraded path: a per-instance bucket at a reduced ceiling.
@@ -217,6 +240,9 @@ func newLocalBuckets() *localBuckets {
 }
 
 func (b *localBuckets) allow(key string, capacity int, window time.Duration, cost int) (bool, time.Duration) {
+	if cost > capacity {
+		return false, 0 // Waiting cannot make this request fit the full bucket.
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	now := time.Now()
@@ -225,15 +251,16 @@ func (b *localBuckets) allow(key string, capacity int, window time.Duration, cos
 		bucket = &localBucket{tokens: float64(capacity), lastRefill: now}
 		b.buckets[key] = bucket
 	}
-	refillPerMs := float64(capacity) / float64(window.Milliseconds())
+	refillPerMs := float64(capacity) / float64(max(int64(1), window.Milliseconds()))
 	elapsed := now.Sub(bucket.lastRefill).Milliseconds()
+	bucket.tokens = minFloat(float64(capacity), bucket.tokens)
 	if elapsed > 0 {
 		bucket.tokens = minFloat(float64(capacity), bucket.tokens+float64(elapsed)*refillPerMs)
 		bucket.lastRefill = now
 	}
 	if bucket.tokens < float64(cost) {
 		needMs := (float64(cost) - bucket.tokens) / refillPerMs
-		return false, time.Duration(needMs) * time.Millisecond
+		return false, time.Duration(math.Ceil(needMs)) * time.Millisecond
 	}
 	bucket.tokens -= float64(cost)
 	// Opportunistic sweep so a long-lived process cannot grow this map forever.
