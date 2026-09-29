@@ -297,7 +297,7 @@ func (s *HTTPSnapshotSource) Fetch(ctx context.Context, tenantID string) ([]byte
 
 // ── Verification ──────────────────────────────────────────────────────
 
-// VerifiedBundle is the result of signature + schema validation.
+// VerifiedBundle passed signature, schema and expiry checks at receipt.
 type VerifiedBundle struct {
 	Bundle       *GatewayBundle
 	Signature    string
@@ -316,7 +316,7 @@ type snapshotEnvelope struct {
 // VerifySnapshotResponse validates the signed envelope. `expectedTenant` is the
 // tenant the bundle was requested for; a bundle for a different tenant is
 // rejected even though the signature is valid (defence in depth against a
-// confused-deputy replay).
+// confused-deputy replay). Signed expiry must be strictly later than `now`.
 func VerifySnapshotResponse(body []byte, keyring *Keyring, expectedTenant string, now time.Time) (*VerifiedBundle, error) {
 	var env snapshotEnvelope
 	dec := json.NewDecoder(strings.NewReader(string(body)))
@@ -363,6 +363,9 @@ func VerifySnapshotResponse(body []byte, keyring *Keyring, expectedTenant string
 	expiresAt, err := time.Parse(time.RFC3339Nano, bundle.ExpiresAt)
 	if err != nil {
 		return nil, &SnapshotError{Reason: ReasonSnapshotRejected, Err: errors.New("expires_at missing or malformed")}
+	}
+	if !now.Before(expiresAt) {
+		return nil, &SnapshotError{Reason: ReasonSnapshotExpired}
 	}
 
 	return &VerifiedBundle{
@@ -509,7 +512,7 @@ func (c *SnapshotCache) Get(ctx context.Context, tenantID string) (*SnapshotStat
 		return stale, nil
 	}
 
-	fresh, err := c.fetchAndVerify(ctx, tenantID, now)
+	fresh, err := c.fetchAndVerify(ctx, tenantID)
 	if err == nil {
 		e.state.Store(fresh)
 		return fresh, nil
@@ -519,13 +522,19 @@ func (c *SnapshotCache) Get(ctx context.Context, tenantID string) (*SnapshotStat
 	return snapshotRefreshError(stale, err)
 }
 
-func (c *SnapshotCache) fetchAndVerify(ctx context.Context, tenantID string, now time.Time) (*SnapshotState, error) {
+func (c *SnapshotCache) fetchAndVerify(ctx context.Context, tenantID string) (*SnapshotState, error) {
 	fetchCtx, cancel := context.WithTimeout(ctx, c.cfg.FetchTimeout)
 	defer cancel()
 	body, err := c.source.Fetch(fetchCtx, tenantID)
 	if err != nil {
 		return nil, err
 	}
+	// Network time is part of the signed validity window. A successful HTTP
+	// response cannot revive an expired bundle or a cancelled refresh.
+	if err := fetchCtx.Err(); err != nil {
+		return nil, err
+	}
+	now := c.now()
 	verified, err := VerifySnapshotResponse(body, c.keyring, tenantID, now)
 	if err != nil {
 		return nil, err
@@ -534,13 +543,22 @@ func (c *SnapshotCache) fetchAndVerify(ctx context.Context, tenantID string, now
 	if ceiling := now.Add(c.cfg.MaxAge); ceiling.Before(effective) {
 		effective = ceiling
 	}
+	state := &SnapshotState{Verified: verified, EffectiveExpiry: effective, FetchedAt: now}
+	// Verification itself may cross either the signed expiry or local MaxAge.
+	// Do not publish that candidate over a previously accepted generation.
+	if !state.Fresh(c.now()) {
+		return nil, &SnapshotError{Reason: ReasonSnapshotExpired}
+	}
+	if err := fetchCtx.Err(); err != nil {
+		return nil, err
+	}
 	c.logger.Info("snapshot swapped",
 		"tenant", tenantID,
 		"sequence", verified.Bundle.SequenceNumber,
 		"signing_key_id", verified.SigningKeyID,
 		"expires_at", verified.ExpiresAt.UTC().Format(time.RFC3339),
 	)
-	return &SnapshotState{Verified: verified, EffectiveExpiry: effective, FetchedAt: now}, nil
+	return state, nil
 }
 
 // Ready requires the platform key directory used by every authentication.
@@ -579,7 +597,7 @@ func (c *SnapshotCache) WarmAll(ctx context.Context) {
 		if err := e.acquireRefresh(ctx); err != nil {
 			return
 		}
-		fresh, err := c.fetchAndVerify(ctx, tenant, c.now())
+		fresh, err := c.fetchAndVerify(ctx, tenant)
 		if err == nil {
 			e.state.Store(fresh)
 		} else {

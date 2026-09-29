@@ -126,7 +126,7 @@ func errNoHealthyUpstream() *APIError {
 }
 func errSnapshot(reason string) *APIError {
 	if reason == ReasonSnapshotExpired {
-		return newAPIError(http.StatusServiceUnavailable, CodeSnapshotExpired, TypeServiceUnavail, "Configuration snapshot expired and the control plane is unreachable.")
+		return newAPIError(http.StatusServiceUnavailable, CodeSnapshotExpired, TypeServiceUnavail, "Configuration snapshot expired and no valid replacement is available.")
 	}
 	return newAPIError(http.StatusServiceUnavailable, CodeSnapshotUnavailable, TypeServiceUnavail, "Configuration snapshot is not available.")
 }

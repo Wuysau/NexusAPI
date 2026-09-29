@@ -24,6 +24,14 @@ Temporary RPM/TPM exhaustion returns HTTP 429 with `Retry-After` rounded up to w
 
 The configured process concurrency cap is applied before the first admission. Startup does not consume a slot; caps below and above the default 256 are supported.
 
+## Signed snapshot freshness
+
+A valid signature and HTTP 200 are insufficient to refresh authorization. A fetched bundle must have a signed expiry strictly after receipt, remain valid through verification, and complete within the fetch context. Effective expiry is the earlier of signed expiry and receipt plus the configured maximum age. A bundle that is already expired, expires during retrieval/verification, or arrives after cancellation cannot replace the cached generation.
+
+Failed candidates retain the last accepted snapshot and its original expiry; repeated successful HTTP responses containing an expired bundle do not extend its lifetime. With no previously valid state, requests fail with 503. API key authentication always requires a fresh platform directory. Previously accepted tenant snapshots retain the existing explicit legacy BYOK stale-policy behavior; managed and v2 execution fail closed on expiry. This does not allow a newly received expired bundle to enable that policy.
+
+If the Control Plane responds but requests report snapshot errors, check that its signed `expires_at` is current, Gateway and Control Plane clocks are synchronized, and intermediary caches are not replaying old responses. Readiness remains false when the platform directory is expired. Do not change host time or extend cached expiry to bypass authorization checks.
+
 ## Health probes and provider cooldown
 
 `/healthz` reports process liveness. `/readyz` returns 200 only with a fresh verified platform key directory and a responsive database; production also requires a successful live Redis ping. A fresh tenant bundle cannot mask an expired platform directory, which every API key authentication needs. Database and Redis checks run concurrently with a shared two-second deadline. Development/test may report `admission_mode: "local"` and `checks.redis: false` while remaining ready. A production Redis outage returns 503. Health responses disable caching and omit dependency error details. Probe traffic never calls a model.

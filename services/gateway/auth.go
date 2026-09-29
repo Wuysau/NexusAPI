@@ -115,9 +115,16 @@ func (a *Authenticator) Authenticate(ctx context.Context, presented, requiredSco
 		return nil, errInvalidAPIKey()
 	}
 	state, err := a.snapshots.Get(ctx, "")
-	if err != nil && (state == nil || !state.Fresh(a.now())) {
-		// Expired or absent key directory: fail closed.
+	if err != nil {
+		// The cache's stale/error contract is authoritative for the directory.
 		return nil, errSnapshot(reasonOf(err))
+	}
+	if state == nil {
+		return nil, errSnapshot(ReasonSnapshotUnavailable)
+	}
+	if !state.Fresh(a.now()) {
+		// Expiry can occur after Get returns, even without a fetch error.
+		return nil, errSnapshot(ReasonSnapshotExpired)
 	}
 	bundle := state.Verified.Bundle
 	hash := HashKey(presented)
