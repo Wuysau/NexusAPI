@@ -531,6 +531,7 @@ export default function ConnectionsPage() {
             </dl>
             {setup.mode === 'local_sidecar' && (
               <LocalConnectorPanel
+                key={setup.id}
                 connectionId={setup.id}
                 revoked={revoked(setup)}
                 canManage={Boolean(session && ['owner', 'admin'].includes(session.role))}

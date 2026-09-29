@@ -109,7 +109,9 @@ Gateway 查询模型列表时，先执行现有路由过滤，再按 Channel 批
 
 在详情中选择就绪模型，输入该项目的 Nexus API Key，执行测试。测试经过真实 Gateway 路由并写入归因；如果同名模型实际选中了其他渠道，页面会提示，不能把其他渠道的成功算作本连接器成功。
 
-控制面为测试调用保留 60 秒超时，并将收到的请求取消信号传给 Gateway，包括等待响应正文的阶段。取消不会撤销已经产生的用量；反向代理是否传递断线会影响停止时机。当前关闭页面内的配置面板不保证取消已发出的测试请求。
+测试运行时可点击“取消测试”；关闭连接详情也会取消当前测试请求。取消后项目 Key 输入会清空，可以重新填写并发起新的测试。旧请求的迟到结果不会覆盖新测试。测试成功后，状态列表在后台刷新，不会继续显示取消按钮。
+
+控制面为测试调用保留 60 秒超时，并将收到的请求取消信号传给 Gateway，包括等待响应正文的阶段。取消不会撤销已经产生的用量；反向代理是否传递断线会影响本地模型实际停止的时机。关闭详情不会回滚已发出的配对或轮换操作。
 
 ## 4. Coding Agent 接入
 
@@ -168,6 +170,8 @@ Gateway 传输端点的 401 也可能来自暂时无法完成实时授权；连�
 
 ```sh
 node --env-file=/path/to/disposable-test.env node_modules/vitest/vitest.mjs run tests/integration/local-connector.test.ts
+npx playwright install chromium
+node --env-file=/path/to/disposable-test.env tests/e2e/local-connector-cancel.mjs
 npm run typecheck
 npm run gateway:test
 npm run gateway:vet
@@ -175,6 +179,8 @@ node --env-file=/path/to/disposable-test.env node_modules/vitest/vitest.mjs run 
 ```
 
 该测试调用真实控制面路由与数据库，以不同进程运行编译出的 Gateway 和 CLI，经不同监听端口访问 mock Ollama，检查请求归因及 Worker 未定价处理。Go 单元测试检查 TLS 信任、私有地址、重定向和协议边界。
+
+浏览器取消测试复用刚生成的专用数据库，并自行启动临时 Next.js 和回环 mock Gateway；请先停止当前工作区的 Next 开发服务器。它验证真实控制台请求的取消传播和界面状态，不运行 Go 模型推理，也不写入假用量。正常结束后会停止自建进程、撤销测试租约并停用测试 Key；截图保存在 `output/playwright/local-connector-cancel.png`。已安装 Chromium 时可跳过安装命令。
 
 回退时先撤销连接并停止连接器，再关闭两端 `NEXUS_CONNECTORS_ENABLED`，回退应用。迁移 `0025` 为增量表/字段，不修改历史迁移；保留新增表和归因记录，不需要删除历史数据。
 

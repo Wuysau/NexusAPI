@@ -34,66 +34,111 @@ export function LocalConnectorPanel({
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
+  const [testing, setTesting] = useState(false)
   const [key, setKey] = useState('')
   const [model, setModel] = useState('')
   const modelsInitialized = useRef(false)
-  const refresh = useCallback(async () => {
-    try {
-      const next = await apiGet<State>(base)
-      setState(next)
-      if (!modelsInitialized.current) {
-        if (next.models.length) setModels(next.models.join('\n'))
-        modelsInitialized.current = true
+  const scope = useRef<AbortController | null>(null)
+  const testRequest = useRef<AbortController | null>(null)
+  const refreshVersion = useRef(0)
+  const refresh = useCallback(
+    async (signal: AbortSignal) => {
+      if (signal.aborted) return
+      const version = ++refreshVersion.current
+      try {
+        const next = await apiGet<State>(base, signal)
+        if (signal.aborted || version !== refreshVersion.current) return
+        setState(next)
+        if (!modelsInitialized.current) {
+          if (next.models.length) setModels(next.models.join('\n'))
+          modelsInitialized.current = true
+        }
+      } catch (e) {
+        if (!signal.aborted && version === refreshVersion.current) setError(errorMessage(e))
       }
-    } catch (e) {
-      setError(errorMessage(e))
-    }
-  }, [base])
+    },
+    [base],
+  )
   useEffect(() => {
-    const timer = setTimeout(() => void refresh(), 0)
-    const interval = setInterval(() => void refresh(), 5000)
+    const lifetime = new AbortController()
+    scope.current = lifetime
+    const timer = setTimeout(() => void refresh(lifetime.signal), 0)
+    const interval = setInterval(() => void refresh(lifetime.signal), 5000)
     return () => {
       clearTimeout(timer)
       clearInterval(interval)
+      lifetime.abort()
+      if (scope.current === lifetime) {
+        scope.current = null
+        const pending = testRequest.current
+        testRequest.current = null
+        pending?.abort()
+      }
     }
   }, [refresh])
   async function pair() {
+    const lifetime = scope.current
+    if (!lifetime || lifetime.signal.aborted || busy) return
     setBusy(true)
     setError('')
     setPairing(null)
     try {
-      setPairing(
-        await apiSend(base, 'POST', {
-          models: models
-            .split(/[\n,]/)
-            .map((v) => v.trim())
-            .filter(Boolean),
-        }),
-      )
-      await refresh()
+      const result = await apiSend<{ pairingToken: string; expiresAt: string }>(base, 'POST', {
+        models: models
+          .split(/[\n,]/)
+          .map((v) => v.trim())
+          .filter(Boolean),
+      })
+      if (lifetime.signal.aborted) return
+      setPairing(result)
+      await refresh(lifetime.signal)
     } catch (e) {
-      setError(errorMessage(e))
+      if (!lifetime.signal.aborted) setError(errorMessage(e))
     } finally {
-      setBusy(false)
+      if (!lifetime.signal.aborted) setBusy(false)
     }
   }
   async function test() {
+    const lifetime = scope.current
+    if (!lifetime || lifetime.signal.aborted || busy || testRequest.current) return
+    const controller = new AbortController()
+    testRequest.current = controller
+    const current = () => !lifetime.signal.aborted && !controller.signal.aborted && testRequest.current === controller
     setBusy(true)
+    setTesting(true)
     setError('')
     setNotice('')
     try {
-      const result = await apiSend<{ message: string; requestId: string }>(base + '/test', 'POST', {
-        apiKey: key,
-        model,
-      })
+      const result = await apiSend<{ message: string; requestId: string }>(
+        base + '/test',
+        'POST',
+        { apiKey: key, model },
+        controller.signal,
+      )
+      if (!current()) return
       setNotice(`${result.message} 请求 ID：${result.requestId}`)
-      await refresh()
+      void refresh(lifetime.signal)
     } catch (e) {
-      setError(errorMessage(e))
+      if (current()) setError(errorMessage(e))
     } finally {
-      setKey('')
-      setBusy(false)
+      if (current()) {
+        testRequest.current = null
+        setKey('')
+        setBusy(false)
+        setTesting(false)
+      }
     }
+  }
+  function cancelTest() {
+    const pending = testRequest.current
+    if (!pending) return
+    testRequest.current = null
+    pending.abort()
+    setKey('')
+    setBusy(false)
+    setTesting(false)
+    setError('')
+    setNotice('测试已取消；已产生的用量仍会记录。')
   }
   return (
     <section className={styles.form} aria-label="本地连接器配置">
@@ -205,8 +250,13 @@ export function LocalConnectorPanel({
             disabled={busy || !key || !model}
             onClick={() => void test()}
           >
-            执行测试调用（产生真实用量）
+            {testing ? '测试调用进行中…' : '执行测试调用（产生真实用量）'}
           </button>
+          {testing && (
+            <button type="button" className={styles.secondary} onClick={cancelTest}>
+              取消测试
+            </button>
+          )}
         </>
       )}
       {error && <WorkspaceNotice error>{error}</WorkspaceNotice>}
