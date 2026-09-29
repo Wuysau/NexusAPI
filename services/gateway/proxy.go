@@ -406,7 +406,11 @@ func (p *Proxy) ServeChatCompletions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := capturer.CaptureRequest(ctx, &FrozenRequest{RequestID: requestID, TenantID: identity.TenantID, OrganizationID: identity.OrganizationID, IdempotencyKey: idempotencyKey, TraceID: traceID, StartedAt: startedAt, Attribution: *attribution}); err != nil {
-			writeAPIError(w, requestID, errStorageUnavailable())
+			if errors.Is(err, ErrDuplicateRequest) {
+				writeAPIError(w, requestID, errIdempotencyConflict())
+			} else {
+				writeAPIError(w, requestID, errStorageUnavailable())
+			}
 			return
 		}
 	}
@@ -1557,11 +1561,11 @@ func publicCodeFor(kind provider.CanonicalError) string {
 
 // ── Request id ────────────────────────────────────────────────────────
 
-// ensureRequestID returns the caller's request id when it looks like an id we
-// can safely echo, otherwise a fresh one. The id is never used as a cache key
-// and is never logged alongside content.
+// ensureRequestID returns the private server identity. Direct single-endpoint
+// invocation outside the router still gets a generated identity. Wire adapters
+// use withRequestIdentity before delegating so all layers keep the same ID.
 func ensureRequestID(r *http.Request) string {
-	if id := strings.TrimSpace(r.Header.Get("x-request-id")); id != "" && len(id) <= 128 && isSafeID(id) {
+	if id, _ := r.Context().Value(requestIdentityKey{}).(string); id != "" {
 		return id
 	}
 	return newRandomID()

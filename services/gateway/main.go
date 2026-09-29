@@ -43,10 +43,13 @@ func run() error {
 
 	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	cleanup := &gatewayCleanup{}
+	defer cleanup.closeStartup()
 	controlTransport, err := controlPlaneTransport(os.Getenv("CONTROL_PLANE_CA_FILE"))
 	if err != nil {
 		return err
 	}
+	cleanup.add(controlTransport.CloseIdleConnections)
 	var connectors *ConnectorHub
 	if os.Getenv("NEXUS_CONNECTORS_ENABLED") == "true" {
 		if err := validateConnectorDeployment(env, os.Getenv); err != nil {
@@ -80,7 +83,7 @@ func run() error {
 	}
 
 	if closer, ok := credentials.(interface{ Close() error }); ok {
-		defer func() { _ = closer.Close() }()
+		cleanup.add(func() { _ = closer.Close() })
 	}
 
 	// Snapshot cache: verify every bundle before it can serve a request.
@@ -95,6 +98,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("outbox store: %w", err)
 	}
+	cleanup.add(store.Close)
 	if err := store.Ping(rootCtx); err != nil {
 		logger.Warn("database not reachable at startup; terminal writes will fail closed", "err", err.Error())
 	}
@@ -103,6 +107,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("limiter: %w", err)
 	}
+	cleanup.add(func() { _ = limiter.Close() })
 
 	registry, err := provider.NewBuiltinRegistry()
 	if err != nil {
@@ -119,6 +124,7 @@ func run() error {
 			ForceAttemptHTTP2:   true,
 		},
 	}
+	cleanup.add(httpClient.CloseIdleConnections)
 
 	proxy := NewProxy(ProxyDeps{
 		EnableUsageV2: connectors != nil || (env.LocalCredentialDir != "" && env.Environment != "production"),
@@ -149,17 +155,20 @@ func run() error {
 	cancelWarm()
 
 	go snapshots.RunRefresher(rootCtx)
-	defer store.Close()
-	defer func() { _ = limiter.Close() }()
 
 	shutdownTelemetry := SetupTelemetry(os.Getenv("GATEWAY_OTEL_DISABLED") == "true", logger)
-	defer func() { _ = shutdownTelemetry(context.Background()) }()
+	cleanup.add(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = shutdownTelemetry(ctx)
+	})
 
 	handler := NewHTTPRouter(proxy, snapshots, limiter, store, RouteOptions{
 		EnableResponses:  os.Getenv("GATEWAY_ENABLE_RESPONSES") == "true",
 		EnableEmbeddings: os.Getenv("GATEWAY_ENABLE_EMBEDDINGS") == "true",
 	})
 	server := NewServer(env.Addr, handler, limits.MaxHeaderBytes, logger)
+	cleanup.transferTo(server)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -177,16 +186,17 @@ func run() error {
 		}
 	}()
 
+	var serveErr error
 	select {
-	case err := <-errCh:
-		return err
+	case serveErr = <-errCh:
 	case <-rootCtx.Done():
 	}
+	stop()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("graceful shutdown: %w", err)
+	if err := finishGatewayShutdown(shutdownCtx, server, serveErr); err != nil {
+		return err
 	}
 	logger.Info("nexus-gateway stopped")
 	return nil

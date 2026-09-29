@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/jackc/pgx/v5"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // RequestAttributionContext contains only request identity. Retry-specific
@@ -188,7 +190,7 @@ func (s *PostgresStore) CaptureRequest(ctx context.Context, r *FrozenRequest) er
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("%w: capture", ErrStoreUnavailable)
+		return ErrStoreUnavailable
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	idem := r.IdempotencyKey
@@ -199,14 +201,46 @@ func (s *PostgresStore) CaptureRequest(ctx context.Context, r *FrozenRequest) er
 	_, err = tx.Exec(ctx, `INSERT INTO request_records(id,tenant_id,organization_id,downstream_key_id,request_model,channel_kind,status,idempotency_key,trace_id,started_at,project_id,project_name,execution_mode,attribution_status)
  VALUES($1,$2,$3,$4,$5,'byok','created',$6,$7,$8,$9,$10,'byok',$11)`, r.RequestID, r.TenantID, r.OrganizationID, c.APIKeyID, c.RequestedModel, idem, r.TraceID, r.StartedAt, c.ProjectID, c.ProjectName, c.AttributionStatus)
 	if err != nil {
-		return fmt.Errorf("%w: capture request: %v", ErrStoreUnavailable, err)
+		return classifyCaptureError(err, func() (bool, error) {
+			// The legacy index covers organization/key, not tenant/key. End
+			// the failed transaction before confirming the row's full scope.
+			if err := tx.Rollback(ctx); err != nil {
+				return false, err
+			}
+			var sameScope bool
+			err := s.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM request_records WHERE tenant_id=$1 AND organization_id=$2 AND idempotency_key=$3)", r.TenantID, r.OrganizationID, idem).Scan(&sameScope)
+			return sameScope, err
+		})
 	}
 	_, err = tx.Exec(ctx, `INSERT INTO request_project_facts(request_id,tenant_id,organization_id,project_id,project_name,api_key_id,key_kind,principal_id,execution_mode,attribution_status,requested_model,streaming,catalog_version_id,policy_version_id)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,'byok',$9,$10,$11,$12,$13)`, r.RequestID, r.TenantID, r.OrganizationID, c.ProjectID, c.ProjectName, c.APIKeyID, c.KeyKind, c.PrincipalID, c.AttributionStatus, c.RequestedModel, c.Streaming, c.CatalogVersionID, c.PolicyVersionID)
 	if err != nil {
-		return fmt.Errorf("%w: capture fact: %v", ErrStoreUnavailable, err)
+		return ErrStoreUnavailable
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return ErrStoreUnavailable
+	}
+	return nil
+}
+
+// Only a known idempotency index identifies a duplicate client request. The
+// legacy index additionally needs verified tenant ownership. Database details
+// never escape through this classification, including scope-check failures.
+func classifyCaptureError(err error, confirmLegacyScope func() (bool, error)) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		switch pgErr.ConstraintName {
+		case "requests_tenant_idempotency_idx":
+			return ErrDuplicateRequest
+		case "requests_idempotency_idx":
+			if confirmLegacyScope != nil {
+				if sameScope, err := confirmLegacyScope(); err == nil && sameScope {
+					return ErrDuplicateRequest
+				}
+			}
+		}
+	}
+	return ErrStoreUnavailable
 }
 
 func (m *MemoryStore) CaptureRequest(ctx context.Context, r *FrozenRequest) error {
@@ -221,6 +255,12 @@ func (m *MemoryStore) CaptureRequest(ctx context.Context, r *FrozenRequest) erro
 	if m.closed || m.unhealthy {
 		return ErrStoreUnavailable
 	}
+	if _, exists := m.capturedByID[r.RequestID]; exists {
+		return ErrStoreUnavailable
+	}
+	if _, exists := m.terminalIDs[r.RequestID]; exists {
+		return ErrStoreUnavailable
+	}
 	key := r.TenantID + "|" + r.IdempotencyKey
 	if r.IdempotencyKey == "" {
 		key = r.TenantID + "|req:" + r.RequestID
@@ -228,10 +268,14 @@ func (m *MemoryStore) CaptureRequest(ctx context.Context, r *FrozenRequest) erro
 	if _, ok := m.captured[key]; ok {
 		return ErrDuplicateRequest
 	}
+	if _, ok := m.requests[key]; ok {
+		return ErrDuplicateRequest
+	}
 	raw, _ := json.Marshal(r)
 	var copy FrozenRequest
 	_ = json.Unmarshal(raw, &copy)
 	m.captured[key] = &copy
+	m.capturedByID[r.RequestID] = &copy
 	return nil
 }
 func (m *MemoryStore) CapturedRequests() []*FrozenRequest {
@@ -239,7 +283,10 @@ func (m *MemoryStore) CapturedRequests() []*FrozenRequest {
 	defer m.mu.Unlock()
 	out := make([]*FrozenRequest, 0, len(m.captured))
 	for _, r := range m.captured {
-		out = append(out, r)
+		raw, _ := json.Marshal(r)
+		var copy FrozenRequest
+		_ = json.Unmarshal(raw, &copy)
+		out = append(out, &copy)
 	}
 	return out
 }

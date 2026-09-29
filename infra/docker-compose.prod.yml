@@ -37,6 +37,8 @@ services:
     image: nexus-gateway:convergence
     user: '1001:1001'
     read_only: true
+    # 30s graceful drain + 12s terminal cleanup, with process teardown margin.
+    stop_grace_period: 60s
     environment:
       GATEWAY_ENV: production
       GATEWAY_ADDR: ':8080'

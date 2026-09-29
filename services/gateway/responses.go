@@ -32,6 +32,7 @@ func errUnsupportedParam(param string) *APIError {
 }
 
 func (p *Proxy) ServeResponses(w http.ResponseWriter, r *http.Request) {
+	r = withRequestIdentity(r)
 	requestID := ensureRequestID(r)
 	body, apiErr := readBounded(r, p.limits.MaxBodyBytes)
 	if apiErr != nil {
@@ -50,7 +51,6 @@ func (p *Proxy) ServeResponses(w http.ResponseWriter, r *http.Request) {
 	}
 	forward := r.Clone(r.Context())
 	forward.Header = r.Header.Clone()
-	forward.Header.Set("x-request-id", requestID)
 	forward.Body = io.NopCloser(bytes.NewReader(encoded))
 	forward.ContentLength = int64(len(encoded))
 	limit := p.limits.MaxResponseBytes
