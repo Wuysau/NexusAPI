@@ -10,9 +10,12 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"nexus/gateway/internal/retryafter"
 )
 
 var errConnectorUnavailable = errors.New("connector unavailable")
@@ -60,10 +63,11 @@ type connectorJob struct {
 	claimed  bool
 }
 type connectorFrame struct {
-	Type   string `json:"type"`
-	Status int    `json:"status,omitempty"`
-	Data   []byte `json:"data,omitempty"`
-	Code   string `json:"code,omitempty"`
+	Type         string `json:"type"`
+	Status       int    `json:"status,omitempty"`
+	Data         []byte `json:"data,omitempty"`
+	Code         string `json:"code,omitempty"`
+	RetryAfterMS int64  `json:"retry_after_ms,omitempty"`
 }
 type ConnectorHub struct {
 	mu             sync.Mutex
@@ -256,6 +260,12 @@ func (h *ConnectorHub) result(w http.ResponseWriter, r *http.Request, job *conne
 			meta = true
 			response := &http.Response{StatusCode: frame.Status, Header: make(http.Header), Body: job.reader}
 			response.Header.Set("content-type", "text/event-stream")
+			if frame.RetryAfterMS > 0 && (frame.Status == http.StatusTooManyRequests || frame.Status == http.StatusServiceUnavailable) {
+				// Clamp before any conversion. Only a numeric hint reaches the
+				// existing adapter; arbitrary local headers never cross the hub.
+				milliseconds := min(frame.RetryAfterMS, int64(retryafter.MaxDelay/time.Millisecond))
+				response.Header.Set("retry-after-ms", strconv.FormatInt(milliseconds, 10))
+			}
 			select {
 			case job.response <- response:
 			case <-job.ctx.Done():

@@ -68,7 +68,9 @@ Incomplete or malformed upstream streams, idle expiry and single-attempt expiry 
 
 Invalid request and content-policy refusals do not count as upstream health failures. This avoids one caller's bad input removing capacity for other callers. Cooldown affects subsequent routing and does not sleep, retry, or fail over a request whose upstream execution may already have started. These states are per Gateway process; they are not a new distributed rate limiter.
 
-The first local-connector transport forwards status and response body but does not forward retry headers. Its 429 responses use the default cooldown; per-provider hints apply to direct API channels.
+The local connector carries a bounded numeric cooldown hint for upstream 429/503 responses. It uses the same supported headers and parsing rules as direct channels, then sends only `retry_after_ms` in its metadata frame. HTTP-date remainders round up to a millisecond. The Gateway caps the value again at 60 seconds before passing a numeric internal header to the existing adapter. Raw upstream headers and error bodies are not forwarded. Other statuses ignore this field, and the original inference is never replayed because of a hint.
+
+Missing/null/nonpositive hints preserve the prior behavior: 429 uses the default cooldown and 503 follows the normal failure threshold. Malformed field types or integers outside int64 fail the response frame. An old connector omits the field; an old Gateway ignores it. Either upgrade order remains compatible, but both need updating for hints to affect later requests. HTTP dates use the connector host's clock, so transfer latency and clock skew prevent an exact shared deadline.
 
 ## Local connector model discovery
 
