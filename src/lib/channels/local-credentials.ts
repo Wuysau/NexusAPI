@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile, link, unlink, readdir } from 'node:fs/promi
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { isIP } from 'node:net'
+import { isDeepStrictEqual } from 'node:util'
 import { publicDiagnosticAddress } from './outbound'
 
 export class LocalCredentialError extends Error {
@@ -15,6 +16,7 @@ export class LocalCredentialError extends Error {
   }
 }
 export const LOCAL_CREDENTIAL_FORMAT = 'nexus.local-credential.v1'
+export const LOCAL_CREDENTIAL_MODELS_FORMAT = 'nexus.local-credential.v2'
 export interface LocalCredentialBinding {
   tenant_id: string
   credential_id: string
@@ -23,9 +25,10 @@ export interface LocalCredentialBinding {
   base_url: string
   protocol: 'openai' | 'anthropic'
   model: string
+  models?: string[]
 }
 export interface LocalCredentialEnvelope extends LocalCredentialBinding {
-  format: typeof LOCAL_CREDENTIAL_FORMAT
+  format: typeof LOCAL_CREDENTIAL_FORMAT | typeof LOCAL_CREDENTIAL_MODELS_FORMAT
   nonce: string
   tag: string
   ciphertext: string
@@ -133,12 +136,20 @@ function validateBinding(b: LocalCredentialBinding) {
     throw denied()
   const config = localConnectionConfig({ baseUrl: b.base_url, protocol: b.protocol, model: b.model })
   if (config.baseUrl !== b.base_url || config.model !== b.model) throw denied()
+  if (b.models !== undefined) {
+    const models = localModelIds(b.models)
+    if (models[0] !== b.model || models.some((model, index) => model !== b.models![index])) throw denied()
+  }
 }
-function aad(b: LocalCredentialBinding) {
+function aad(
+  b: LocalCredentialBinding,
+  format = b.models === undefined ? LOCAL_CREDENTIAL_FORMAT : LOCAL_CREDENTIAL_MODELS_FORMAT,
+) {
   validateBinding(b)
+  if (format === LOCAL_CREDENTIAL_MODELS_FORMAT && b.models === undefined) throw denied()
   return Buffer.from(
     JSON.stringify([
-      LOCAL_CREDENTIAL_FORMAT,
+      format,
       b.tenant_id,
       b.credential_id,
       b.credential_version,
@@ -146,6 +157,7 @@ function aad(b: LocalCredentialBinding) {
       b.base_url,
       b.protocol,
       b.model,
+      ...(format === LOCAL_CREDENTIAL_MODELS_FORMAT ? [b.models] : []),
     ]),
   )
 }
@@ -163,7 +175,7 @@ export function encryptLocalCredential(
   const ciphertext = Buffer.concat([cipher.update(secret, 'utf8'), cipher.final()])
   return {
     ...binding,
-    format: LOCAL_CREDENTIAL_FORMAT,
+    format: binding.models === undefined ? LOCAL_CREDENTIAL_FORMAT : LOCAL_CREDENTIAL_MODELS_FORMAT,
     nonce: nonce.toString('hex'),
     tag: cipher.getAuthTag().toString('hex'),
     ciphertext: ciphertext.toString('hex'),
@@ -173,14 +185,15 @@ export function encryptLocalCredential(
 export function decryptLocalCredential(e: LocalCredentialEnvelope, key: Buffer): string {
   try {
     if (
-      e.format !== LOCAL_CREDENTIAL_FORMAT ||
+      (e.format !== LOCAL_CREDENTIAL_FORMAT && e.format !== LOCAL_CREDENTIAL_MODELS_FORMAT) ||
+      (e.format === LOCAL_CREDENTIAL_FORMAT && e.models !== undefined) ||
       !/^[0-9a-f]{24}$/.test(e.nonce) ||
       !/^[0-9a-f]{32}$/.test(e.tag) ||
       !/^(?:[0-9a-f]{2}){1,8192}$/.test(e.ciphertext)
     )
       throw denied()
     const d = createDecipheriv('aes-256-gcm', key, Buffer.from(e.nonce, 'hex'))
-    d.setAAD(aad(e))
+    d.setAAD(aad(e, e.format))
     d.setAuthTag(Buffer.from(e.tag, 'hex'))
     const secret = Buffer.concat([d.update(Buffer.from(e.ciphertext, 'hex')), d.final()]).toString('utf8')
     if (createHash('sha256').update(secret).digest('hex') !== e.fingerprint) throw denied()
@@ -242,11 +255,18 @@ export async function publishLocalCredential(
     key.fill(0)
   }
 }
-export async function readLocalCredential(b: LocalCredentialBinding, dir = localCredentialDirectory()) {
+export async function readLocalCredential(
+  b: LocalCredentialBinding,
+  dir = localCredentialDirectory(),
+  expectedEnvelope?: LocalCredentialEnvelope,
+) {
   const key = await masterKey(dir, false)
   try {
     const e = JSON.parse(await readFile(credentialPath(b, dir), 'utf8')) as LocalCredentialEnvelope
-    if (!aad(e).equals(aad(b))) throw denied()
+    if (expectedEnvelope && !isDeepStrictEqual(e, expectedEnvelope)) throw denied()
+    // Legacy files authorize only the primary model. This local diagnostic read
+    // never expands that grant; the gateway still requires exact v1 model match.
+    if (!aad(e, e.format).equals(aad(b, e.format))) throw denied()
     return decryptLocalCredential(e, key)
   } catch {
     throw denied()

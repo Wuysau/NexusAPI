@@ -33,10 +33,11 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
         id: string
         provider: string
         mode: string
+        subscription_product: string | null
         account_status: string | null
         official_ids: string[] | null
       }>(
-        `SELECT c.id,c.provider,c.mode,
+        `SELECT c.id,c.provider,c.mode,c.capabilities->>'subscription_product' subscription_product,
          CASE WHEN c.account_observation->>'organizationId'=$2 THEN c.account_observation->>'status' END account_status,
          CASE WHEN c.account_observation->>'organizationId'=$2 THEN c.account_observation->'quota'->'observationIds' END official_ids
          FROM owned_connections c WHERE ${connectionVisibility}
@@ -60,6 +61,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
           id: connection.id,
           provider: connection.provider,
           mode: connection.mode,
+          subscriptionProduct: connection.subscription_product,
           accountStatus: connection.account_status,
           quotas: quotas.filter(
             (q) =>

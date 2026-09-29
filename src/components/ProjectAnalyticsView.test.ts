@@ -1,7 +1,7 @@
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, expect, it, vi } from 'vitest'
-import { parseUsageAnalyticsQuery } from '../../packages/contracts/usage-analytics'
+import { parseUsageAnalyticsQuery, type BillingAnalyticsResponse } from '../../packages/contracts/usage-analytics'
 import { ProjectAnalyticsView } from './ProjectAnalyticsView'
 import ProjectAnalyticsPage from '../app/(dashboard)/projects/[id]/analytics/page'
 
@@ -60,6 +60,23 @@ it('renders the real canonical API envelope without rows/connections and retains
   expect(html).toContain('9007199254740.993001')
   expect(html).toContain('USD')
   expect(html).toContain('CNY')
+})
+it('renders absent financial dimensions as a dash while preserving unknown prices and real zero', () => {
+  const absent = { knownSum: '0', unknownRequests: '0', total: null, hasFacts: false as const }
+  const value = state.data as BillingAnalyticsResponse
+  const money = [
+    { currency: 'USD', charge: unknown, upstreamCost: absent, margin: absent },
+    { currency: 'CNY', charge: absent, upstreamCost: known, margin: absent },
+  ]
+  value.analytics.totals.money = money
+  value.analytics.groups[0].metrics.money = money
+  const html = renderToStaticMarkup(React.createElement(ProjectAnalyticsView))
+  expect(html).toContain('Project A')
+  expect(html).toContain('未知 USD')
+  expect(html).toContain('0.000000 CNY')
+  expect(html).not.toContain('0.000000 USD')
+  expect(html).not.toContain('未知 CNY')
+  expect(html).toContain('<td>—</td>')
 })
 it('emits a valid default timestamp query and all canonical grouping choices', () => {
   const html = renderToStaticMarkup(React.createElement(ProjectAnalyticsView))

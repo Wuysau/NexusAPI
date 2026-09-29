@@ -107,6 +107,24 @@
         },
         "total": {
           "$ref": "#/$defs/nullableMoney"
+        },
+        "hasFacts": {
+          "type": "boolean",
+          "enum": [false],
+          "description": "Present only when this currency/dimension has no facts: total must be null, knownSum and unknownRequests must both be zero. Omission retains the existing exact-total semantics."
+        }
+      },
+      "if": {
+        "required": ["hasFacts"],
+        "properties": {
+          "hasFacts": { "const": false }
+        }
+      },
+      "then": {
+        "properties": {
+          "knownSum": { "const": "0" },
+          "unknownRequests": { "const": "0" },
+          "total": { "type": "null" }
         }
       },
       "x-exact-total": true

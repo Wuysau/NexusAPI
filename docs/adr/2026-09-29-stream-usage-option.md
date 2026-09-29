@@ -1,0 +1,15 @@
+# Chat streaming usage option
+
+Status: Accepted
+
+Live compatibility testing found that `stream_options: {include_usage: true}` was rejected by the Chat Completions parameter allowlist, despite the relay already supporting usage-only chunks. Accept `stream_options` as an object or null, matching the official nullable parameter. Explicit null is equivalent to omission, including when `stream` is false, null or omitted. A non-null object requires `stream: true`; its sole accepted property is optional boolean `include_usage`. Reject scalar/array options, non-boolean values (including `include_usage: null`) and unknown nested properties. Other top-level parameters remain allowlisted; additional vendor options such as `include_obfuscation` are not supported.
+
+With explicit `include_usage: true`, ordinary chunks contain `usage: null`. On successful upstream completion, emit one final usage-only chunk with `choices: []`, followed by `[DONE]` only after terminal/outbox persistence succeeds. Counter values come from existing canonical observed usage. Missing provider counters, including a wholly absent usage report, remain null; this option never supplies estimated billing values or invented zeroes. Interrupted streams do not emit a successful final usage chunk or `[DONE]`; persistence failures still suppress `[DONE]`.
+
+Explicit `include_usage: false` or an empty options object suppresses downstream usage frames. Provider usage collection and durable metering continue regardless of this response preference. Omitted or null `stream_options` preserves the existing Nexus behavior of emitting available usage. That legacy default also preserves the internal Responses adapter, which consumes these frames. This is a documented compatibility subset rather than a change to existing clients' default responses.
+
+Separate input-validation finding: `max_completion_tokens` previously bypassed the range check applied to `max_tokens`; negative, zero and above-limit values reached upstream dispatch and budget reservation in fixture tests. Apply the same inclusive range, 1 through the configured `MaxTokensEstimate`, before admission or reservation. The error names `max_completion_tokens`. Valid boundary values remain accepted, and no token-estimation or accounting behavior changes for valid requests.
+
+No credential, routing, reservation, persistence schema or financial authority changes are included. Regression tests cover request validation, true/false/omitted/null options, known/partial/missing usage, interrupted streams, persistence-before-DONE, and completion-token limits rejected before upstream dispatch or budget reservation, using only fixture servers and in-memory storage.
+
+Sources: [OpenAI Chat Completions create reference](https://platform.openai.com/docs/api-reference/chat/create), [OpenAI generated stream options schema](https://github.com/openai/openai-python/blob/main/src/openai/types/chat/chat_completion_stream_options_param.py). The official schema specifies the boolean flag, empty final choices and null usage on ordinary chunks, and notes that interruption can prevent the final usage chunk.

@@ -27,22 +27,24 @@ import (
 )
 
 const localCredentialFormat = "nexus.local-credential.v1"
+const localCredentialModelsFormat = "nexus.local-credential.v2"
 
 var localCredentialUUID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 type localCredentialEnvelope struct {
-	Format            string `json:"format"`
-	TenantID          string `json:"tenant_id"`
-	CredentialID      string `json:"credential_id"`
-	CredentialVersion int64  `json:"credential_version"`
-	ProviderID        string `json:"provider_id"`
-	BaseURL           string `json:"base_url"`
-	Protocol          string `json:"protocol"`
-	Model             string `json:"model"`
-	Nonce             string `json:"nonce"`
-	Tag               string `json:"tag"`
-	Ciphertext        string `json:"ciphertext"`
-	Fingerprint       string `json:"fingerprint"`
+	Format            string   `json:"format"`
+	TenantID          string   `json:"tenant_id"`
+	CredentialID      string   `json:"credential_id"`
+	CredentialVersion int64    `json:"credential_version"`
+	ProviderID        string   `json:"provider_id"`
+	BaseURL           string   `json:"base_url"`
+	Protocol          string   `json:"protocol"`
+	Model             string   `json:"model"`
+	Models            []string `json:"models,omitempty"`
+	Nonce             string   `json:"nonce"`
+	Tag               string   `json:"tag"`
+	Ciphertext        string   `json:"ciphertext"`
+	Fingerprint       string   `json:"fingerprint"`
 }
 
 type LocalCredentialResolver struct {
@@ -81,7 +83,7 @@ func (r *LocalCredentialResolver) load(ref CredentialRef) (localCredentialEnvelo
 	if err != nil || strictJSON(raw, &e) != nil {
 		return e, "", errSecretPolicy
 	}
-	if e.Format != localCredentialFormat || e.TenantID != ref.TenantID || e.CredentialID != ref.CredentialID || e.CredentialVersion != ref.CredentialVersion || e.ProviderID != ref.ProviderID || e.BaseURL != ref.BaseURL || e.Protocol != ref.Protocol || e.Model != ref.Model || e.Model == "" || (e.Protocol != "openai" && e.Protocol != "anthropic") {
+	if e.TenantID != ref.TenantID || e.CredentialID != ref.CredentialID || e.CredentialVersion != ref.CredentialVersion || e.ProviderID != ref.ProviderID || e.BaseURL != ref.BaseURL || e.Protocol != ref.Protocol || !e.allowsModel(ref.Model) || (e.Protocol != "openai" && e.Protocol != "anthropic") {
 		return e, "", errSecretPolicy
 	}
 	if _, err := localCredentialURL(e.BaseURL); err != nil {
@@ -102,6 +104,28 @@ func (r *LocalCredentialResolver) load(ref CredentialRef) (localCredentialEnvelo
 	return e, hex.EncodeToString(binding[:]), nil
 }
 
+func (e localCredentialEnvelope) allowsModel(requested string) bool {
+	if e.Format == localCredentialFormat {
+		return e.Models == nil && e.Model != "" && e.Model == requested
+	}
+	if e.Format != localCredentialModelsFormat || len(e.Models) < 1 || len(e.Models) > 50 || e.Models[0] != e.Model {
+		return false
+	}
+	seen := make(map[string]bool, len(e.Models))
+	for _, model := range e.Models {
+		if model == "" || len([]rune(model)) > 200 || strings.TrimSpace(model) != model || seen[model] {
+			return false
+		}
+		for _, char := range model {
+			if char < 32 || char == 127 {
+				return false
+			}
+		}
+		seen[model] = true
+	}
+	return seen[requested]
+}
+
 func localCredentialHex(value string, size int) ([]byte, error) {
 	decoded, err := hex.DecodeString(value)
 	if err != nil || len(decoded) == 0 || (size > 0 && len(decoded) != size) || hex.EncodeToString(decoded) != value {
@@ -115,7 +139,11 @@ func (e localCredentialEnvelope) aad() []byte {
 	var buffer bytes.Buffer
 	encoder := json.NewEncoder(&buffer)
 	encoder.SetEscapeHTML(false)
-	_ = encoder.Encode([]any{e.Format, e.TenantID, e.CredentialID, e.CredentialVersion, e.ProviderID, e.BaseURL, e.Protocol, e.Model})
+	fields := []any{e.Format, e.TenantID, e.CredentialID, e.CredentialVersion, e.ProviderID, e.BaseURL, e.Protocol, e.Model}
+	if e.Format == localCredentialModelsFormat {
+		fields = append(fields, e.Models)
+	}
+	_ = encoder.Encode(fields)
 	raw := bytes.TrimSuffix(buffer.Bytes(), []byte("\n"))
 	out := make([]byte, 0, len(raw))
 	for i := 0; i < len(raw); i++ {

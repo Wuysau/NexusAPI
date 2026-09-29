@@ -3,6 +3,7 @@ import type {
   AnalyticsQuery,
   AnalyticsMetrics,
   ExactMetric,
+  ExactMoneyMetric,
   UsageAnalyticsResponse,
   AnalyticsCurrencyMetrics,
 } from '../../../packages/contracts/usage-analytics'
@@ -17,7 +18,12 @@ import { realGatewayRequest } from './evidence'
 export interface AnalyticsDatabase {
   query<T>(sql: string, values?: unknown[]): Promise<{ rows: T[] }>
 }
-const emptyMetric = (): ExactMetric => ({ knownSum: '0', unknownRequests: '0', total: '0' })
+const absentMoneyMetric = (): ExactMoneyMetric => ({
+  knownSum: '0',
+  unknownRequests: '0',
+  total: null,
+  hasFacts: false,
+})
 const tokenNames = ['input', 'output', 'cached', 'reasoning', 'total'] as const
 
 /** One request is one row. Neither retries nor multiple usage anchors multiply it. */
@@ -233,7 +239,12 @@ export async function queryUsageAnalytics(
       if (item.is_total !== total || (!total && item.key !== key)) continue
       let bucket = buckets.get(item.currency)
       if (!bucket) {
-        bucket = { currency: item.currency, charge: emptyMetric(), upstreamCost: emptyMetric(), margin: emptyMetric() }
+        bucket = {
+          currency: item.currency,
+          charge: absentMoneyMetric(),
+          upstreamCost: absentMoneyMetric(),
+          margin: absentMoneyMetric(),
+        }
         buckets.set(item.currency, bucket)
       }
       bucket[item.kind] = item.metric

@@ -48,11 +48,15 @@ export interface AnalyticsTokenMetrics {
   reasoning: ExactMetric
   total: ExactMetric
 }
+export interface ExactMoneyMetric extends ExactMetric {
+  /** No facts exist for this currency/dimension. Reserved for a null total with zero sums/counts. */
+  hasFacts?: false
+}
 export interface AnalyticsCurrencyMetrics {
   currency: string | null
-  charge: ExactMetric
-  upstreamCost: ExactMetric
-  margin: ExactMetric
+  charge: ExactMoneyMetric
+  upstreamCost: ExactMoneyMetric
+  margin: ExactMoneyMetric
 }
 export interface AnalyticsMetrics {
   requests: string
@@ -93,7 +97,7 @@ export class AnalyticsQueryError extends Error {
 interface ResponseRule {
   $ref?: string
   type?: string | string[]
-  enum?: string[]
+  enum?: unknown[]
   required?: string[]
   properties?: Record<string, ResponseRule>
   additionalProperties?: boolean
@@ -125,9 +129,9 @@ export function validateUsageAnalyticsResponse(value: unknown): { ok: boolean; e
       errors.push(`${path}: invalid type`)
       return
     }
+    if (rule.enum && !rule.enum.includes(item)) errors.push(`${path}: invalid enum`)
     if (typeof item === 'string') {
       if (rule.pattern && !new RegExp(rule.pattern).test(item)) errors.push(`${path}: invalid decimal or currency`)
-      if (rule.enum && !rule.enum.includes(item)) errors.push(`${path}: invalid enum`)
       if (rule.format === 'date-time') {
         try {
           timestamp(item, path)
@@ -153,8 +157,13 @@ export function validateUsageAnalyticsResponse(value: unknown): { ok: boolean; e
           visit(rule.properties[key], object[key], `${path}.${key}`)
         else if (rule.additionalProperties === false) errors.push(`${path}.${key}: unknown field`)
       }
-      if (rule['x-exact-total'] && object.total !== (object.unknownRequests === '0' ? object.knownSum : null))
-        errors.push(`${path}: total must preserve unknown observations`)
+      if (rule['x-exact-total']) {
+        if (object.hasFacts === false) {
+          if (object.knownSum !== '0' || object.unknownRequests !== '0' || object.total !== null)
+            errors.push(`${path}: absent facts require zero sums/counts and a null total`)
+        } else if (object.total !== (object.unknownRequests === '0' ? object.knownSum : null))
+          errors.push(`${path}: total must preserve unknown observations`)
+      }
       if (
         rule['x-time-range'] &&
         (Date.parse(String(object.from)) > Date.parse(String(object.to)) ||

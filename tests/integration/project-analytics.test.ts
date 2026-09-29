@@ -50,6 +50,7 @@ async function event(
   attempt: string | null = null,
   settled = true,
   currency = 'USD',
+  cost = '2',
 ) {
   const canonical = { schema_version: 2, tenant_id: 'analytics', request_id: request, usage: counts }
   await insert('usage_events', {
@@ -68,7 +69,7 @@ async function event(
       request_id: request,
       usage_event_id: id,
       authoritative_metering: JSON.stringify(canonical),
-      upstream_cost_amount: '2',
+      upstream_cost_amount: cost,
       upstream_cost_currency: currency,
     })
 }
@@ -100,7 +101,7 @@ async function request(
       project_id: project,
       project_name: project ? `Original ${project}` : null,
       api_key_id: overrides.downstream_key_id ?? null,
-      execution_mode: 'managed',
+      execution_mode: overrides.execution_mode ?? 'managed',
       attribution_status: status,
       catalog_version_id: 'catalog',
     })
@@ -426,3 +427,38 @@ it('aggregates 10000 request facts and can record the actual execution plan', as
     ) + '\n',
   )
 }, 120000)
+it('keeps absent currency dimensions and BYOK margin distinct from reported zero and unknown prices', async () => {
+  for (const id of ['absent-money-dimension', 'absent-money-dimension-unsettled'])
+    await request(id, 'p000', {
+      channel_kind: 'byok',
+      execution_mode: 'byok',
+      charge_currency: 'USD',
+      charge_amount: '0',
+      gross_margin_amount: '0',
+    })
+  await event('absent-money-event', 'absent-money-dimension', usage(), null, true, 'CNY', '0')
+  const result = await queryUsageAnalytics(pool, access, { ...query, q: 'absent-money-dimension' })
+  const absent = { knownSum: '0', unknownRequests: '0', total: null, hasFacts: false }
+  const expected = [
+    {
+      currency: null,
+      charge: absent,
+      upstreamCost: { knownSum: '0', unknownRequests: '1', total: null },
+      margin: absent,
+    },
+    {
+      currency: 'CNY',
+      charge: absent,
+      upstreamCost: { knownSum: '0', unknownRequests: '0', total: '0' },
+      margin: absent,
+    },
+    {
+      currency: 'USD',
+      charge: { knownSum: '0', unknownRequests: '1', total: null },
+      upstreamCost: absent,
+      margin: absent,
+    },
+  ]
+  expect(result.totals.money).toEqual(expected)
+  expect(result.groups[0].metrics.money).toEqual(expected)
+})

@@ -99,8 +99,57 @@ func TestLocalCredentialEnvelopeAndBindings(t *testing.T) {
 	}
 }
 
+func TestLocalCredentialMultiModelAllowlist(t *testing.T) {
+	dir, ref, envelope := localCredentialFixture(t, "https://example.invalid/anthropic")
+	models := []string{ref.Model, "aliyun/glm-5.2", "deepseek/deepseek-v4-pro"}
+	envelope["format"] = "nexus.local-credential.v2"
+	envelope["models"] = models
+	// Build the wire AAD independently of the resolver, matching JSON.stringify.
+	aad, _ := json.Marshal([]any{envelope["format"], ref.TenantID, ref.CredentialID, ref.CredentialVersion, ref.ProviderID, ref.BaseURL, ref.Protocol, ref.Model, models})
+	block, _ := aes.NewCipher(bytes.Repeat([]byte{42}, 32))
+	aead, _ := cipher.NewGCM(block)
+	sealed := aead.Seal(nil, bytes.Repeat([]byte{7}, 12), []byte(localTestSecret), aad)
+	envelope["ciphertext"] = hex.EncodeToString(sealed[:len(sealed)-16])
+	envelope["tag"] = hex.EncodeToString(sealed[len(sealed)-16:])
+	writeLocalFixture(t, dir, ref, envelope)
+	r, err := NewLocalCredentialResolver(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+	for _, model := range models {
+		requested := ref
+		requested.Model = model
+		c, err := r.Resolve(context.Background(), requested)
+		if err != nil || c.Secret != localTestSecret {
+			t.Fatalf("configured model %s rejected: %v", model, err)
+		}
+		if _, err := r.BoundClient(requested, c); err != nil {
+			t.Fatal("configured model lost its bound client", err)
+		}
+	}
+	bad := ref
+	bad.Model = "unauthorized"
+	if _, err := r.Resolve(context.Background(), bad); err == nil {
+		t.Fatal("unlisted model accepted")
+	}
+	for _, changed := range [][]string{nil, {ref.Model}, {ref.Model, "unauthorized"}, {ref.Model, ref.Model}, {ref.Model, " bad "}} {
+		envelope["models"] = changed
+		writeLocalFixture(t, dir, ref, envelope)
+		if _, err := r.Resolve(context.Background(), ref); err == nil {
+			t.Fatal("tampered allowlist accepted")
+		}
+	}
+}
+
 func TestLocalCredentialConsumesTypeScriptVector(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("testdata", "local-credential-vector.json"))
+	for _, name := range []string{"local-credential-vector.json", "local-credential-models-vector.json"} {
+		t.Run(name, func(t *testing.T) { testLocalCredentialTypeScriptVector(t, name) })
+	}
+}
+
+func testLocalCredentialTypeScriptVector(t *testing.T, name string) {
+	raw, err := os.ReadFile(filepath.Join("testdata", name))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,9 +181,16 @@ func TestLocalCredentialConsumesTypeScriptVector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := r.Resolve(context.Background(), CredentialRef{TenantID: e.TenantID, CredentialID: e.CredentialID, CredentialVersion: e.CredentialVersion, ProviderID: e.ProviderID, Mode: "byok", BaseURL: e.BaseURL, Protocol: e.Protocol, Model: e.Model})
-	if err != nil || c.Secret != vector.Secret {
-		t.Fatal("TypeScript envelope failed Go decryption", err)
+	defer func() { _ = r.Close() }()
+	models := e.Models
+	if len(models) == 0 {
+		models = []string{e.Model}
+	}
+	for _, model := range models {
+		c, err := r.Resolve(context.Background(), CredentialRef{TenantID: e.TenantID, CredentialID: e.CredentialID, CredentialVersion: e.CredentialVersion, ProviderID: e.ProviderID, Mode: "byok", BaseURL: e.BaseURL, Protocol: e.Protocol, Model: model})
+		if err != nil || c.Secret != vector.Secret {
+			t.Fatal("TypeScript envelope failed Go decryption", err)
+		}
 	}
 }
 

@@ -27,6 +27,46 @@ afterEach(async () => {
   for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true })
 })
 describe('local UI credential boundary', () => {
+  it('authenticates every configured model in a v2 envelope and rejects list tampering', async () => {
+    const key = randomBytes(32),
+      b = binding()
+    const models = [b.model, 'aliyun/glm-5.2', 'deepseek/deepseek-v4-pro']
+    const envelope = encryptLocalCredential({ ...b, models }, 'synthetic-secret', key)
+    expect(envelope.format).toBe('nexus.local-credential.v2')
+    expect(decryptLocalCredential(envelope, key)).toBe('synthetic-secret')
+    for (const changed of [[], [b.model], [...models, 'unauthorized'], [models[1], b.model]])
+      expect(() => decryptLocalCredential({ ...envelope, models: changed }, key)).toThrow()
+    expect(() => decryptLocalCredential({ ...envelope, format: 'nexus.local-credential.v1' }, key)).toThrow()
+    const dir = await mkdtemp(join(tmpdir(), 'nexus-local-credential-'))
+    dirs.push(dir)
+    await publishLocalCredential({ ...b, models }, 'synthetic-secret', dir)
+    expect(await readLocalCredential({ ...b, models }, dir)).toBe('synthetic-secret')
+    await expect(readLocalCredential({ ...b, models: [b.model] }, dir)).rejects.toThrow()
+  })
+  it('keeps v1 primary-model reads compatible without granting its metadata model list', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'nexus-local-credential-'))
+    dirs.push(dir)
+    const b = binding()
+    const envelope = await publishLocalCredential(b, 'synthetic-legacy-secret', dir)
+    expect(envelope.format).toBe('nexus.local-credential.v1')
+    expect(await readLocalCredential({ ...b, models: [b.model, 'other-model'] }, dir)).toBe('synthetic-legacy-secret')
+    expect(await readLocalCredential(b, dir, envelope)).toBe('synthetic-legacy-secret')
+    await expect(readLocalCredential(b, dir, { ...envelope, tag: '00'.repeat(16) })).rejects.toThrow()
+    await expect(readLocalCredential({ ...b, model: 'other-model' }, dir)).rejects.toThrow()
+  })
+  it('rejects duplicate, unnormalized, empty or excessive authenticated model lists', () => {
+    const b = binding(),
+      key = randomBytes(32)
+    for (const models of [
+      [],
+      ['other', b.model],
+      [b.model, b.model],
+      [b.model, ' bad '],
+      [b.model, 'bad\nmodel'],
+      Array.from({ length: 51 }, (_, i) => (i ? `model-${i}` : b.model)),
+    ])
+      expect(() => encryptLocalCredential({ ...b, models }, 'synthetic-secret', key)).toThrow()
+  })
   it('accepts distinct model IDs while keeping a single legacy model readable', () => {
     expect(localModelIds([' model-large ', 'model-fast'])).toEqual(['model-large', 'model-fast'])
     expect(localModelIds('legacy-model')).toEqual(['legacy-model'])

@@ -148,15 +148,20 @@ type chatRequest struct {
 	TopP                *float64           `json:"top_p"`
 	Stop                json.RawMessage    `json:"stop"`
 	Stream              *bool              `json:"stream"`
+	StreamOptions       *chatStreamOptions `json:"stream_options"`
 	Tools               json.RawMessage    `json:"tools"`
 	ToolChoice          json.RawMessage    `json:"tool_choice"`
 	ResponseFormat      json.RawMessage    `json:"response_format"`
 	User                string             `json:"user"`
 }
 
+type chatStreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
+}
+
 var allowedChatParams = map[string]bool{
 	"model": true, "messages": true, "max_tokens": true, "max_completion_tokens": true,
-	"temperature": true, "top_p": true, "stop": true, "stream": true,
+	"temperature": true, "top_p": true, "stop": true, "stream": true, "stream_options": true,
 	"tools": true, "tool_choice": true, "response_format": true, "user": true,
 }
 
@@ -881,7 +886,7 @@ func (p *Proxy) attempt(
 		// From here on the upstream has accepted the request. There is no
 		// switching: a second provider would duplicate work we cannot undo.
 		result.channel = candidate.Channel
-		usage, buffered, writeErr := p.relayWithOptions(attemptCtx, w, stream, req.Model, requestID, streaming, cancelUpstream, relayOptions{deferDone: true, firstToken: func() { p.breaker.RecordTTFT(breakerKey, p.now().Sub(dispatchStart)) }})
+		usage, buffered, writeErr := p.relayWithOptions(attemptCtx, w, stream, req.Model, requestID, streaming, cancelUpstream, relayOptions{deferDone: true, streamOptions: req.StreamOptions, firstToken: func() { p.breaker.RecordTTFT(breakerKey, p.now().Sub(dispatchStart)) }})
 		// Wire adapters must validate their terminal representation before the
 		// shared path persists a successful execution fact.
 		if writeErr == nil {
@@ -988,11 +993,15 @@ func (p *Proxy) relay(
 }
 
 type relayOptions struct {
-	deferDone  bool
-	firstToken func()
+	deferDone     bool
+	firstToken    func()
+	streamOptions *chatStreamOptions
 }
 
 func (p *Proxy) relayWithOptions(ctx context.Context, w http.ResponseWriter, stream provider.Stream, modelName, requestID string, streaming bool, cancelUpstream context.CancelFunc, opts relayOptions) (*provider.CanonicalUsage, []byte, error) {
+	// Omitted options preserve the gateway's existing usage frames (including the
+	// internal Responses adapter). Explicit options control only downstream shape.
+	explicitUsage := opts.streamOptions != nil && opts.streamOptions.IncludeUsage
 	writer := http.NewResponseController(w)
 	reader := newChunkReader(ctx, stream, p.limits.IdleTimeout)
 	defer reader.close()
@@ -1018,7 +1027,7 @@ func (p *Proxy) relayWithOptions(ctx context.Context, w http.ResponseWriter, str
 	)
 	aggregate.limit = p.limits.MaxResponseBytes
 	if streaming {
-		if err := p.writeSSE(writer, w, sseChunk(id, requestID, modelName, created, map[string]any{"role": "assistant"}, nil, nil)); err != nil {
+		if err := p.writeSSE(writer, w, sseChunk(id, requestID, modelName, created, map[string]any{"role": "assistant"}, nil, nil, explicitUsage)); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -1072,7 +1081,7 @@ func (p *Proxy) relayWithOptions(ctx context.Context, w http.ResponseWriter, str
 				finishReason = chunk.FinishReason
 			}
 			if len(delta) > 0 || finishReason != nil {
-				if err := batch.emit(sseChunk(id, requestID, modelName, created, delta, finishReason, nil), finishReason != nil); err != nil {
+				if err := batch.emit(sseChunk(id, requestID, modelName, created, delta, finishReason, nil, explicitUsage), finishReason != nil); err != nil {
 					return usage, nil, err
 				}
 			}
@@ -1086,8 +1095,12 @@ func (p *Proxy) relayWithOptions(ctx context.Context, w http.ResponseWriter, str
 		if err := batch.flush(); err != nil {
 			return usage, nil, err
 		}
-		if usage != nil {
-			usageJSON := chatUsage(usage)
+		if explicitUsage || (opts.streamOptions == nil && usage != nil) {
+			wireUsage := usage
+			if wireUsage == nil {
+				wireUsage = &provider.CanonicalUsage{Observed: &provider.ObservedUsage{}}
+			}
+			usageJSON := chatUsage(wireUsage)
 			if err := p.writeSSE(writer, w, sseChunk(id, requestID, modelName, created, map[string]any{}, nil, usageJSON)); err != nil {
 				return usage, nil, err
 			}
@@ -1148,7 +1161,7 @@ func (p *Proxy) writeSSE(controller *http.ResponseController, w http.ResponseWri
 	return nil
 }
 
-func sseChunk(id, requestID, model string, created int64, delta map[string]any, finishReason any, usage map[string]any) []byte {
+func sseChunk(id, requestID, model string, created int64, delta map[string]any, finishReason any, usage map[string]any, includeUsageNull ...bool) []byte {
 	payload := map[string]any{
 		"id":      id,
 		"object":  "chat.completion.chunk",
@@ -1163,6 +1176,8 @@ func sseChunk(id, requestID, model string, created int64, delta map[string]any, 
 	if usage != nil {
 		payload["choices"] = []map[string]any{}
 		payload["usage"] = usage
+	} else if len(includeUsageNull) > 0 && includeUsageNull[0] {
+		payload["usage"] = nil
 	}
 	encoded, _ := json.Marshal(payload)
 	return append(append([]byte("data: "), encoded...), '\n', '\n')
@@ -1329,9 +1344,27 @@ func parseChatRequest(body []byte, maxTokensEstimate int) (*chatRequest, *APIErr
 			}
 		}
 	}
+	if options, exists := raw["stream_options"]; exists && strings.TrimSpace(string(options)) != "null" {
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(options, &fields) != nil || fields == nil {
+			return nil, errInvalidParam("stream_options", "stream_options must be an object or null.")
+		}
+		for key, value := range fields {
+			if key != "include_usage" {
+				return nil, errUnsupportedParam("stream_options." + key)
+			}
+			var flag *bool
+			if json.Unmarshal(value, &flag) != nil || flag == nil {
+				return nil, errInvalidParam("stream_options.include_usage", "include_usage must be a boolean.")
+			}
+		}
+	}
 	var req chatRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		return nil, errInvalidJSON()
+	}
+	if req.StreamOptions != nil && (req.Stream == nil || !*req.Stream) {
+		return nil, errInvalidParam("stream_options", "stream_options requires stream: true.")
 	}
 	if req.Model == "" {
 		return nil, errInvalidParam("model", "model is required.")
@@ -1351,6 +1384,9 @@ func parseChatRequest(body []byte, maxTokensEstimate int) (*chatRequest, *APIErr
 	}
 	if req.MaxTokens != nil && (*req.MaxTokens < 1 || *req.MaxTokens > maxTokensEstimate) {
 		return nil, errInvalidParam("max_tokens", "max_tokens is out of range.")
+	}
+	if req.MaxCompletionTokens != nil && (*req.MaxCompletionTokens < 1 || *req.MaxCompletionTokens > maxTokensEstimate) {
+		return nil, errInvalidParam("max_completion_tokens", "max_completion_tokens is out of range.")
 	}
 	if req.Temperature != nil && (*req.Temperature < 0 || *req.Temperature > 2) {
 		return nil, errInvalidParam("temperature", "temperature must be between 0 and 2.")

@@ -82,17 +82,20 @@ function MetricRow({
           <td key={name}>{metrics.tokens[name].total ?? '未知'}</td>
         ))}
         {showMoney &&
-          (['charge', 'upstreamCost', 'margin'] as const).map((name) => (
-            <td key={name}>
-              {metrics.money.length
-                ? metrics.money.map((item, index) => (
-                    <div key={`${item.currency}-${index}`}>
-                      {exactMoney(item[name].total)} {item.currency ?? '币种未知'}
-                    </div>
-                  ))
-                : '—'}
-            </td>
-          ))}
+          (['charge', 'upstreamCost', 'margin'] as const).map((name) => {
+            const reported = metrics.money.filter((item) => item[name].hasFacts !== false)
+            return (
+              <td key={name}>
+                {reported.length
+                  ? reported.map((item, index) => (
+                      <div key={`${item.currency}-${index}`}>
+                        {exactMoney(item[name].total)} {item.currency ?? '币种未知'}
+                      </div>
+                    ))
+                  : '—'}
+              </td>
+            )
+          })}
         <td>{metrics.lastActivity ? new Date(metrics.lastActivity).toLocaleString() : '—'}</td>
       </tr>
       {expanded && (

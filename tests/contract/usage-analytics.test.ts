@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import Ajv from 'ajv/dist/2020.js'
+import addFormats from 'ajv-formats'
 import {
   AnalyticsQueryError,
   parseUsageAnalyticsQuery,
@@ -7,6 +9,7 @@ import {
 } from '../../packages/contracts/usage-analytics'
 import type { AnalyticsMetrics } from '../../packages/contracts/usage-analytics'
 import schema from '../../packages/contracts/schemas/usage-analytics-query.schema.json'
+import responseSchema from '../../packages/contracts/schemas/usage-analytics-response.schema.json'
 
 const now = new Date('2026-09-16T12:00:00Z')
 const parse = (query = '') => parseUsageAnalyticsQuery(new URLSearchParams(query), now)
@@ -51,6 +54,67 @@ const responseFixture = () => {
   })
 }
 describe('canonical analytics response', () => {
+  it('enforces absent money constraints with standard Ajv2020 keywords alone', () => {
+    const ajv = new Ajv({ allErrors: true })
+    addFormats(ajv)
+    // Register extension annotations without implementing their runtime semantics.
+    ajv.addKeyword('x-exact-total')
+    ajv.addKeyword('x-time-range')
+    const validate = ajv.compile(responseSchema)
+    const absent = { knownSum: '0', unknownRequests: '0', total: null, hasFacts: false }
+    const value = responseFixture()
+    expect(validate(value)).toBe(true)
+    const withMetric = (metric: unknown) => ({
+      ...value,
+      totals: { ...value.totals, money: [{ ...value.totals.money[0], margin: metric }] },
+    })
+    for (const valid of [
+      absent,
+      { knownSum: '0', unknownRequests: '0', total: '0' },
+      { knownSum: '0', unknownRequests: '1', total: null },
+    ]) {
+      expect(validate(withMetric(valid)), JSON.stringify(validate.errors)).toBe(true)
+      expect(validateUsageAnalyticsResponse(withMetric(valid)).ok).toBe(true)
+    }
+    for (const invalid of [
+      { ...absent, total: '0' },
+      { ...absent, knownSum: '9', total: '9' },
+      { ...absent, knownSum: '9' },
+      { ...absent, unknownRequests: '1' },
+      { ...absent, hasFacts: true },
+      { ...absent, hasFacts: 'false' },
+    ]) {
+      expect(validate(withMetric(invalid)), JSON.stringify(invalid)).toBe(false)
+      expect(validateUsageAnalyticsResponse(withMetric(invalid)).ok).toBe(false)
+    }
+    expect(validate({ ...value, totals: { ...value.totals, tokens: { ...value.totals.tokens, input: absent } } })).toBe(
+      false,
+    )
+  })
+  it('distinguishes absent money dimensions from zero and unknown without allowing absent token facts', () => {
+    const absent = { knownSum: '0', unknownRequests: '0', total: null, hasFacts: false }
+    const value = responseFixture()
+    const withMetric = (metric: unknown) => ({
+      ...value,
+      totals: { ...value.totals, money: [{ ...value.totals.money[0], margin: metric }] },
+    })
+    expect(validateUsageAnalyticsResponse(withMetric(absent))).toEqual({ ok: true, errors: [] })
+    for (const invalid of [
+      { ...absent, total: '0' },
+      { ...absent, knownSum: '9' },
+      { ...absent, unknownRequests: '1' },
+      { ...absent, hasFacts: true },
+      { ...absent, hasFacts: 'false' },
+    ]) {
+      expect(validateUsageAnalyticsResponse(withMetric(invalid)).ok).toBe(false)
+    }
+    expect(
+      validateUsageAnalyticsResponse({
+        ...value,
+        totals: { ...value.totals, tokens: { ...value.totals.tokens, input: absent } },
+      }).ok,
+    ).toBe(false)
+  })
   it('accepts exact large counts, signed margin and nullable currency', () => {
     const value = responseFixture()
     expect(validateUsageAnalyticsResponse(value)).toEqual({ ok: true, errors: [] })
