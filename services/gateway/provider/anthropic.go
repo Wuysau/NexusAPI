@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	anthropicAdapterVersion = "1.0.0"
+	anthropicAdapterVersion = "1.0.1"
 	anthropicAPIVersion     = "2023-06-01"
 	// defaultAnthropicMaxTokens is applied when the client omits max_tokens,
 	// which the Messages API rejects. Chosen to match the legacy gateway's
@@ -72,8 +72,8 @@ func (a *Anthropic) BuildRequest(req *CanonicalRequest, cred Credential, ep Endp
 	if cred.AuthorizationBinding != "" && ep.AuthScheme == "query" {
 		return nil, fmt.Errorf("credential query authentication is forbidden")
 	}
-	if req == nil {
-		return nil, fmt.Errorf("anthropic: nil request")
+	if err := a.ValidateRequest(req); err != nil {
+		return nil, err
 	}
 	body := anthropicBody{Model: req.Model, Stream: req.Stream}
 	body.MaxTokens = defaultAnthropicMaxTokens

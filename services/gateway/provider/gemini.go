@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	geminiAdapterVersion = "1.0.0"
+	geminiAdapterVersion = "1.0.1"
 	geminiAPIVersion     = "v1beta"
 )
 
@@ -37,7 +37,7 @@ func (g *Gemini) ID() string      { return "gemini" }
 func (g *Gemini) Version() string { return geminiAdapterVersion }
 
 func (g *Gemini) Capabilities(model string) ModelCapabilities {
-	caps := ModelCapabilities{Text: true, Streaming: true, Vision: true, ToolCalling: true, StructuredOutput: true}
+	caps := ModelCapabilities{Text: true, Streaming: true}
 	lower := strings.ToLower(model)
 	if strings.Contains(lower, "2.5") || strings.Contains(lower, "thinking") {
 		caps.Reasoning = true
@@ -68,8 +68,8 @@ type geminiGenConfig struct {
 }
 
 func (g *Gemini) BuildRequest(req *CanonicalRequest, cred Credential, ep Endpoint) (*ProviderRequest, error) {
-	if req == nil {
-		return nil, fmt.Errorf("gemini: nil request")
+	if err := g.ValidateRequest(req); err != nil {
+		return nil, err
 	}
 	body := geminiBody{}
 	var systemParts []string
