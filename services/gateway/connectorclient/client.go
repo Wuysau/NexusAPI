@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -160,9 +161,18 @@ func (c *Client) remoteJSON(ctx context.Context, path, token string, body any, o
 }
 func (c *Client) Pair(ctx context.Context, token string) (Identity, error) {
 	var identity Identity
-	err := c.remoteJSON(ctx, "/api/connector/pair", strings.TrimSpace(token), nil, &identity)
+	if err := c.remoteJSON(ctx, "/api/connector/pair", strings.TrimSpace(token), nil, &identity); err != nil {
+		return Identity{}, err
+	}
+	const prefix = "nxidentity_"
+	suffix := strings.TrimPrefix(identity.Credential, prefix)
+	secret, err := base64.RawURLEncoding.Strict().DecodeString(suffix)
+	if strings.TrimSpace(identity.ConnectorID) == "" || strings.TrimSpace(identity.ConnectionID) == "" || strings.TrimSpace(identity.TenantID) == "" ||
+		!strings.HasPrefix(identity.Credential, prefix) || len(suffix) != 43 || err != nil || len(secret) != 32 {
+		return Identity{}, errRemote
+	}
 	identity.ControlURL = c.config.ControlURL
-	return identity, err
+	return identity, nil
 }
 func (c *Client) request(ctx context.Context, method, path, token string, body io.Reader) (*http.Response, error) {
 	r, e := http.NewRequestWithContext(ctx, method, strings.TrimRight(c.config.GatewayURL, "/")+path, body)
