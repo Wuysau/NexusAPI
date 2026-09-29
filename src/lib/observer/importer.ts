@@ -3,6 +3,7 @@ import { lstat, readdir, realpath } from 'node:fs/promises'
 import path from 'node:path'
 import type { Pool, PoolClient } from 'pg'
 import { CodexParser, PARSER_VERSION } from './codex'
+import { ClaudeParser, CLAUDE_PARSER_VERSION } from './claude'
 import { matchWorkspace, normalizeWorkspace, type WorkspaceRoot } from './workspace'
 import { readJsonl } from './stream'
 import { readSessionMetadata, enrichSessionMetadata } from './session-metadata'
@@ -13,6 +14,7 @@ export interface ObserverScope {
 }
 export interface ObserverConfig extends ObserverScope {
   sources: string[]
+  claudeSources?: string[]
   roots: Array<{ root: string; projectId: string }>
   providers: Array<{ identifier: string; provider: string; product: string; connectionId: string }>
 }
@@ -26,8 +28,13 @@ export function validateObserverConfig(value: unknown): ObserverConfig {
     if (typeof v !== 'string' || !/^[a-zA-Z0-9_.:/-]{1,128}$/.test(v)) throw new Error('Invalid observer identifier')
     return v
   }
-  const c = object(value, ['tenantId', 'organizationId', 'sources', 'roots', 'providers'])
-  if (!Array.isArray(c.sources) || !c.sources.length || !Array.isArray(c.roots) || !Array.isArray(c.providers))
+  const c = object(value, ['tenantId', 'organizationId', 'sources', 'claudeSources', 'roots', 'providers'])
+  if (
+    !Array.isArray(c.sources) ||
+    (!c.sources.length && (!Array.isArray(c.claudeSources) || !c.claudeSources.length)) ||
+    !Array.isArray(c.roots) ||
+    !Array.isArray(c.providers)
+  )
     throw new Error('Invalid observer lists')
   const config: ObserverConfig = {
     tenantId: id(c.tenantId),
@@ -49,6 +56,13 @@ export function validateObserverConfig(value: unknown): ObserverConfig {
         connectionId: id(p.connectionId),
       }
     }),
+  }
+  if (c.claudeSources !== undefined) {
+    if (!Array.isArray(c.claudeSources)) throw new Error('Invalid Claude sources')
+    config.claudeSources = c.claudeSources.map((v) => {
+      if (typeof v !== 'string' || !path.isAbsolute(v)) throw new Error('Absolute telemetry source required')
+      return v
+    })
   }
   if (
     new Set(config.providers.map((p) => p.identifier)).size !== config.providers.length ||
@@ -185,7 +199,10 @@ export async function scanCodex(pool: Pool, raw: ObserverConfig, options: { dryR
 
 async function scanLocked(client: PoolClient, raw: ObserverConfig, options: { dryRun?: boolean }) {
   const config = validateObserverConfig(raw),
-    files = await discover(config.sources)
+    codexFiles = await discover(config.sources),
+    claudeFiles = new Set(await discover(config.claudeSources ?? [])),
+    files = [...codexFiles, ...claudeFiles]
+  if (codexFiles.some((file) => claudeFiles.has(file))) throw new Error('Ambiguous telemetry source')
   const summary = {
     scannedFiles: files.length,
     newSessions: 0,
@@ -225,15 +242,19 @@ async function scanLocked(client: PoolClient, raw: ObserverConfig, options: { dr
           [config.tenantId, config.organizationId, fileId],
         )
       ).rows[0]
-      const resume = cursor && cursor.parser_version === PARSER_VERSION && Number(cursor.byte_offset) <= st.size
+      const isClaude = claudeFiles.has(file)
+      const parserVersion = isClaude ? CLAUDE_PARSER_VERSION : PARSER_VERSION
+      const resume = cursor && cursor.parser_version === parserVersion && Number(cursor.byte_offset) <= st.size
       const start = resume ? Number(cursor.byte_offset) : 0,
-        parser = new CodexParser(resume ? cursor.state : undefined)
+        parser = isClaude
+          ? new ClaudeParser(path.basename(file).match(/^agent-(.+)\.jsonl$/)?.[1] ?? null)
+          : new CodexParser(resume ? cursor.state : undefined)
       if (resume && start === st.size) {
         summary.unchangedFiles++
         await client.query('COMMIT')
         continue
       }
-      const sessionMetadata = await readSessionMetadata(file)
+      const sessionMetadata = isClaude ? null : await readSessionMetadata(file)
       if (!options.dryRun) await enrichSessionMetadata(client, config, sessionMetadata)
       const roots = await rootsFor(client, config)
       const connections = (
@@ -258,17 +279,18 @@ async function scanLocked(client: PoolClient, raw: ObserverConfig, options: { dr
           : undefined
         // Supervisor session binding is authoritative across profile/provider changes.
         // Bare sessions retain existing workspace/provider attribution.
-        const supervised = (
-          await client.query<{
-            project_id: string
-            project_name: string
-            cwd: string
-            connection_id: string
-            provider: string
-            product: string
-            identifier: string
-          }>(
-            `SELECT t.project_id,p.name project_name,t.cwd,c.id connection_id,c.provider,
+        const supervised = !isClaude
+          ? (
+              await client.query<{
+                project_id: string
+                project_name: string
+                cwd: string
+                connection_id: string
+                provider: string
+                product: string
+                identifier: string
+              }>(
+                `SELECT t.project_id,p.name project_name,t.cwd,c.id connection_id,c.provider,
             c.capabilities->>'subscription_product' product,c.capabilities->>'provider_identifier' identifier
           FROM task_sessions s JOIN nexus_tasks t ON t.id=s.task_id AND t.tenant_id=s.tenant_id AND t.organization_id=s.organization_id
           JOIN projects p ON p.id=t.project_id AND p.tenant_id=t.tenant_id AND p.organization_id=t.organization_id
@@ -280,9 +302,10 @@ async function scanLocked(client: PoolClient, raw: ObserverConfig, options: { dr
           ) transition ON true
           JOIN owned_connections c ON c.id=COALESCE(transition.target_connection_id,s.connection_id) AND c.tenant_id=s.tenant_id
           WHERE s.tenant_id=$1 AND s.organization_id=$2 AND s.tool='codex' AND s.external_session_id=$3`,
-            [config.tenantId, config.organizationId, e.sessionId, e.timestamp],
-          )
-        ).rows[0]
+                [config.tenantId, config.organizationId, e.sessionId, e.timestamp],
+              )
+            ).rows[0]
+          : undefined
         if (supervised) {
           root = { projectId: supervised.project_id, projectName: supervised.project_name, root: supervised.cwd }
           conn = {
@@ -300,6 +323,30 @@ async function scanLocked(client: PoolClient, raw: ObserverConfig, options: { dr
           )
         ).rowCount
         if (exists || previewIds.has(e.eventId)) {
+          if (isClaude && !options.dryRun) {
+            // Repeated content blocks may carry later complete usage for the same message.
+            // Never add another event or downgrade counters when replaying an earlier block.
+            const updated = await client.query(
+              `UPDATE external_observed_usage SET input_tokens=$4,cached_input_tokens=$5,output_tokens=$6,reasoning_tokens=$7,total_tokens=$8,
+                occurred_at=GREATEST(occurred_at,$9::timestamptz)
+               WHERE tenant_id=$1 AND organization_id=$2 AND usage_source='claude_code_local' AND external_event_id=$3
+                 AND input_tokens<=$4::numeric AND output_tokens<=$6::numeric AND cached_input_tokens<=$5::numeric
+                 AND (reasoning_tokens IS NULL OR reasoning_tokens<=$7::numeric)
+                 AND (input_tokens,output_tokens,cached_input_tokens,reasoning_tokens) IS DISTINCT FROM ($4::numeric,$6::numeric,$5::numeric,$7::numeric)`,
+              [
+                config.tenantId,
+                config.organizationId,
+                e.eventId,
+                e.tokens.input,
+                e.tokens.cached,
+                e.tokens.output,
+                e.tokens.reasoning,
+                e.tokens.total,
+                e.timestamp,
+              ],
+            )
+            summary.updatedEvents += updated.rowCount ?? 0
+          }
           summary.skippedDuplicates++
           return
         }
@@ -309,7 +356,7 @@ async function scanLocked(client: PoolClient, raw: ObserverConfig, options: { dr
             [config.tenantId, config.organizationId, e.source, e.sessionId],
           )
         ).rowCount
-        if (!sessionExists) newSessions.add(e.sessionId)
+        if (!sessionExists) newSessions.add(`${e.source}:${e.sessionId}`)
         if (!options.dryRun)
           await client.query(
             `INSERT INTO external_observed_usage(tenant_id,organization_id,usage_source,authority,external_session_id,external_event_id,turn_id,occurred_at,cwd,provider_identifier,provider,subscription_product,connection_id,model,input_tokens,cached_input_tokens,output_tokens,reasoning_tokens,total_tokens,project_id,project_name,matched_root,attributed_at,cli_version,parser_version,session_kind,parent_session_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,CASE WHEN $20::text IS NULL THEN NULL ELSE now() END,$23,$24,$25,$26)`,
@@ -338,8 +385,9 @@ async function scanLocked(client: PoolClient, raw: ObserverConfig, options: { dr
               root?.root ?? null,
               e.cliVersion,
               e.parserVersion,
-              sessionMetadata?.sessionId === e.sessionId ? sessionMetadata.kind : null,
-              sessionMetadata?.sessionId === e.sessionId ? sessionMetadata.parentSessionId : null,
+              e.sessionKind ?? (sessionMetadata?.sessionId === e.sessionId ? sessionMetadata.kind : null),
+              e.parentSessionId ??
+                (sessionMetadata?.sessionId === e.sessionId ? sessionMetadata.parentSessionId : null),
             ],
           )
         previewIds.add(e.eventId)
@@ -370,7 +418,7 @@ async function scanLocked(client: PoolClient, raw: ObserverConfig, options: { dr
       if (!options.dryRun)
         await client.query(
           `INSERT INTO observer_scan_cursors(tenant_id,organization_id,file_id,parser_version,byte_offset,state) VALUES($1,$2,$3,$4,$5,$6::jsonb) ON CONFLICT(tenant_id,organization_id,file_id) DO UPDATE SET byte_offset=excluded.byte_offset,state=excluded.state,parser_version=excluded.parser_version,updated_at=now()`,
-          [config.tenantId, config.organizationId, fileId, PARSER_VERSION, result.offset, JSON.stringify(parser.state)],
+          [config.tenantId, config.organizationId, fileId, parserVersion, result.offset, JSON.stringify(parser.state)],
         )
       await client.query('COMMIT')
     } catch (error) {

@@ -99,7 +99,7 @@
     },
     "usageSource": {
       "type": "string",
-      "enum": ["all", "gateway", "codex_local"]
+      "enum": ["all", "gateway", "codex_local", "claude_code_local"]
     },
     "authority": {
       "type": "string",

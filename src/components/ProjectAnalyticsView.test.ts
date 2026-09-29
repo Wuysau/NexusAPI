@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { parseUsageAnalyticsQuery } from '../../packages/contracts/usage-analytics'
 import { ProjectAnalyticsView } from './ProjectAnalyticsView'
+import ProjectAnalyticsPage from '../app/(dashboard)/projects/[id]/analytics/page'
 
 const state = vi.hoisted(() => ({ data: {} as unknown, path: '' }))
 vi.mock('./lib/useApiData', () => ({
@@ -14,6 +15,16 @@ vi.mock('./lib/useApiData', () => ({
 }))
 vi.mock('./SessionProvider', () => ({ useSession: () => ({ session: { organization: { id: 'org' } } }) }))
 const known = { knownSum: '0', unknownRequests: '0', total: '0' }
+it('retains Claude source filtering when opening a project analytics link', async () => {
+  const page = await ProjectAnalyticsPage({
+    params: Promise.resolve({ id: 'project-a' }),
+    searchParams: Promise.resolve({ usageSource: 'claude_code_local' }),
+  })
+  renderToStaticMarkup(page)
+  const query = new URL(state.path, 'http://localhost').searchParams
+  expect(query.get('usageSource')).toBe('claude_code_local')
+  expect(query.get('projectId')).toBe('project-a')
+})
 const unknown = { knownSum: '0', unknownRequests: '1', total: null }
 beforeEach(() => {
   const metrics = {

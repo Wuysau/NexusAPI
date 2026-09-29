@@ -163,6 +163,7 @@ export async function POST(req: Request) {
         tenantId: ctx.tenantId,
         organizationId: ctx.organizationId,
         sources: [source],
+        ...(active?.claudeSources ? { claudeSources: active.claudeSources } : {}),
         roots,
         providers,
       })

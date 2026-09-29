@@ -16,7 +16,13 @@ export function SubscriptionProductGuide({ product }: { product: SubscriptionPro
             : '当前未接入，额度请查看官方控制台'}
         </dd>
         <dt>本地会话采集</dt>
-        <dd>{product.capabilities.nativeUsageObservation ? '支持 Codex Observer' : '当前未接入'}</dd>
+        <dd>
+          {product.id === 'claude_code'
+            ? '支持 Claude Code JSONL；管理员需在 Observer 配置 claudeSources，按工作目录归属项目，不自动认定渠道或订阅'
+            : product.capabilities.nativeUsageObservation
+              ? '支持 Codex Observer'
+              : '当前未接入'}
+        </dd>
         <dt>外部额度采集</dt>
         <dd>
           {product.capabilities.collectorObservation

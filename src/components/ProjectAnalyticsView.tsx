@@ -137,8 +137,12 @@ function AnalyticsResults({ query }: { query: string }) {
           ?.filter((item) => item.events !== '0')
           .map((item) => (
             <span className={styles.mutedBadge} key={item.source}>
-              {item.source === 'gateway' ? 'NexusAPI 网关 · 权威记录' : 'Codex 本地 · 客户端观测'} · {item.events}{' '}
-              {item.source === 'gateway' ? '次请求' : '条事件'}
+              {item.source === 'gateway'
+                ? 'NexusAPI 网关 · 权威记录'
+                : item.source === 'claude_code_local'
+                  ? 'Claude Code 本地 · 客户端观测'
+                  : 'Codex 本地 · 客户端观测'}{' '}
+              · {item.events} {item.source === 'gateway' ? '次请求' : '条事件'}
             </span>
           ))}
       </div>
@@ -286,7 +290,8 @@ export function ProjectAnalyticsView({
             <select aria-label="用量来源" value={usageSource} onChange={(e) => setUsageSource(e.target.value)}>
               <option value="all">全部来源</option>
               <option value="gateway">网关请求</option>
-              <option value="codex_local">订阅 · 本地观测</option>
+              <option value="codex_local">Codex · 本地观测</option>
+              <option value="claude_code_local">Claude Code · 本地观测</option>
             </select>
           </label>
           <label className={styles.field}>

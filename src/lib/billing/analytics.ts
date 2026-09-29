@@ -147,12 +147,13 @@ function metricSQL(column: string) {
 }
 const tokenSQL = () => `jsonb_build_object(${tokenNames.map((name) => `'${name}',${metricSQL(name)}`).join(',')})`
 const activityColumns = () => `count(*) FILTER(WHERE usage_source='gateway')::text requests,
-  count(DISTINCT external_session_id)::text sessions,
-  count(*) FILTER(WHERE usage_source='codex_local')::text "observedEvents",
+  count(DISTINCT (usage_source,external_session_id)) FILTER(WHERE external_session_id IS NOT NULL)::text sessions,
+  count(*) FILTER(WHERE authority='client_observed')::text "observedEvents",
   max(started_at) "lastActivity",
   jsonb_build_array(
     jsonb_build_object('source','gateway','authority','authoritative','events',count(*) FILTER(WHERE usage_source='gateway')::text),
-    jsonb_build_object('source','codex_local','authority','client_observed','events',count(*) FILTER(WHERE usage_source='codex_local')::text)
+    jsonb_build_object('source','codex_local','authority','client_observed','events',count(*) FILTER(WHERE usage_source='codex_local')::text),
+    jsonb_build_object('source','claude_code_local','authority','client_observed','events',count(*) FILTER(WHERE usage_source='claude_code_local')::text)
   ) provenance`
 export function analyticsGrouping(q: AnalyticsQuery) {
   switch (q.groupBy) {

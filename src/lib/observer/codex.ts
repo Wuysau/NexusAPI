@@ -17,9 +17,11 @@ export interface ObservedUsageEvent extends Omit<ParserState, 'lastCounter'> {
   eventId: string
   timestamp: string
   tokens: ObservedTokens
-  source: 'codex_local'
+  source: 'codex_local' | 'claude_code_local'
   authority: 'client_observed'
-  parserVersion: typeof PARSER_VERSION
+  parserVersion: string
+  sessionKind?: 'cli' | 'subagent'
+  parentSessionId?: string | null
 }
 const record = (value: unknown): Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}

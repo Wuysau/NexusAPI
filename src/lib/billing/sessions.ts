@@ -35,11 +35,11 @@ export async function readSessionDetails(
        min(k.started_at) "firstActivity",max(k.started_at) "lastActivity",count(*)::text events,
        array_remove(array_agg(DISTINCT k.model),NULL) models,${totals('k')} tokens,${totals('k', true)} "subscriptionTokens"
        FROM keyed k JOIN external_observed_usage e ON e.id=k.id AND e.tenant_id=k.tenant_id AND e.organization_id=k.organization_id
-       WHERE k.usage_source='codex_local' AND ($${n - 2}::text IS NULL OR k.drilldown_key=$${n - 2})
-       GROUP BY k.external_session_id
-     ), page AS (SELECT * FROM grouped ORDER BY "firstActivity",id LIMIT $${n - 1} OFFSET $${n}),
-     denominator AS (SELECT ${totals('s')} tokens FROM scoped s WHERE s.usage_source='codex_local' AND s.subscription_product IS NOT NULL)
-     SELECT coalesce((SELECT jsonb_agg(to_jsonb(page) ORDER BY "firstActivity",id) FROM page),'[]'::jsonb) sessions,
+       WHERE k.authority='client_observed' AND ($${n - 2}::text IS NULL OR k.drilldown_key=$${n - 2})
+       GROUP BY k.usage_source,k.external_session_id
+     ), page AS (SELECT * FROM grouped ORDER BY "firstActivity",id,"usageSource" LIMIT $${n - 1} OFFSET $${n}),
+     denominator AS (SELECT ${totals('s')} tokens FROM scoped s WHERE s.authority='client_observed' AND s.subscription_product IS NOT NULL)
+     SELECT coalesce((SELECT jsonb_agg(to_jsonb(page) ORDER BY "firstActivity",id,"usageSource") FROM page),'[]'::jsonb) sessions,
        (SELECT tokens FROM denominator) subscription_totals,(SELECT count(*)::text FROM grouped) total_sessions`,
     values,
   )

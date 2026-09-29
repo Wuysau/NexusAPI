@@ -23,7 +23,7 @@ export interface AnalyticsQuery {
   model?: string
   apiKeyId?: string
   connectionId?: string
-  usageSource?: 'all' | 'gateway' | 'codex_local'
+  usageSource?: 'all' | 'gateway' | 'codex_local' | 'claude_code_local'
   authority?: 'authoritative' | 'client_observed'
   executionMode?: 'managed' | 'byok' | 'unknown' | 'interactive'
   groupBy: AnalyticsGroupBy

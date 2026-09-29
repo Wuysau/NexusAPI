@@ -49,7 +49,7 @@ function product(
     capabilities: {
       registration: true,
       nativeAccountObservation: id === 'openai_codex',
-      nativeUsageObservation: id === 'openai_codex',
+      nativeUsageObservation: id === 'openai_codex' || id === 'claude_code',
       collectorObservation: supportsSubscriptionMonitor(id),
       gatewayAccess: options.nativeApi ? 'restricted_coding_key' : options.channelPreset ? 'separate_api_key' : 'none',
     },

@@ -30,6 +30,7 @@ describe('subscription capability catalog', () => {
     ])
     expect(SUBSCRIPTION_PRODUCTS.filter((p) => p.capabilities.nativeUsageObservation).map((p) => p.id)).toEqual([
       'openai_codex',
+      'claude_code',
     ])
     for (const id of ['zai_glm', 'alibaba_bailian']) {
       const product = getSubscriptionProduct(id)!

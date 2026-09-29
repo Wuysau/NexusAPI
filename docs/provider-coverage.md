@@ -15,7 +15,7 @@
 | 产品 | 本版本观测 | 授权调用 / 主要限制 | 官方来源 |
 | --- | --- | --- | --- |
 | OpenAI Codex | 原生本机账户、额度与本地会话 | ChatGPT 登录用于 Codex；普通 API 另用开放平台密钥 | [Codex 认证](https://developers.openai.com/codex/auth/) |
-| Claude Code | 采集器 | Claude 账号订阅与 Console API 认证分离；不抽取登录令牌作为网关密钥 | [认证](https://code.claude.com/docs/en/authentication) |
+| Claude Code | 本地 JSONL 会话；额度用采集器 | Claude 账号订阅与 Console API 认证分离；不抽取登录令牌作为网关密钥 | [认证](https://code.claude.com/docs/en/authentication) |
 | Gemini / Google AI | 采集器 | CLI 可用 Google 账号；Developer API 独立配置，用其 OpenAI 兼容接口接入渠道 | [CLI 认证](https://geminicli.com/docs/get-started/authentication/)、[兼容 API](https://ai.google.dev/gemini-api/docs/openai) |
 | GitHub Copilot | 采集器 | 本版本无 Copilot 推理网关。官方有管理与用量 REST API，但此版本没有直接实现 | [产品说明](https://docs.github.com/en/copilot/get-started/about-github-copilot)、[REST API](https://docs.github.com/en/rest/copilot) |
 | Cursor | 采集器 | BYOK 是 Cursor 使用供应商密钥，不等于 Cursor 订阅可导出为 API | [BYOK](https://cursor.com/help/models-and-usage/api-keys) |
@@ -42,3 +42,5 @@
 4. 官方支持的 Coding Plan 编程工具按官方文档直连配置；其专用 URL 展示不构成通用网关支持或授权承诺。独立代理端点必须由操作者自行运营/授权并符合上游许可范围。
 
 CodexBar 产品映射依据其[主仓库](https://github.com/steipete/CodexBar)和[provider IDs 文档](https://github.com/steipete/CodexBar/blob/main/docs/provider-ids.md)。只集成数据边界，不复制采集器代码。NexusAPI 内的官方原生观测、采集器快照与网关请求用量各有独立来源，不相互补造额度。
+
+Claude Code（含自定义渠道）的本地会话支持单独配置，见 [Claude Code 采集指南](operations/claude-code-observer.md)。会话采集不自动绑定 Claude 订阅或某个渠道。

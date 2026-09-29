@@ -154,3 +154,5 @@ npm run observer:codex -- delete-observations --config C:/path/observer.json --c
 Neither command deletes original Codex files, roots, connections, quota history or financial data. Stop scans before code rollback; keep additive tables and migration history. Resume with the compatible parser or reset cursors deliberately. No daemon or scheduled background service is installed.
 
 Codex's supported noninteractive execution and resume flags are documented in [official OpenAI documentation](https://developers.openai.com/zh-Hans/docs/non-interactive-mode); local rollout structure was independently inspected, since CLI stdout JSONL and persisted rollout JSONL are different formats.
+
+Claude Code 本地日志现可通过独立 `claudeSources` 配置导入，见 [配置与统计口径](claude-code-observer.md)。原 `sources` 保持 Codex 语义。

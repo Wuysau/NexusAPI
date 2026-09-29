@@ -24,23 +24,26 @@ const kindLabels: Record<string, string> = {
   other: '其他会话',
 }
 const tokenLabels = { input: '输入', cached: '缓存输入', reasoning: '推理输出', output: '输出', total: '总计' }
-const agentToolLabels: Record<string, string> = { codex_local: 'Codex' }
+const agentToolLabels: Record<string, string> = { codex_local: 'Codex', claude_code_local: 'Claude Code' }
 function forest(sessions: SessionDetail[]) {
-  const map = new Map(sessions.map((session) => [session.id, { session, children: [] } as SessionNode]))
+  const map = new Map(
+    sessions.map((session) => [`${session.usageSource}:${session.id}`, { session, children: [] } as SessionNode]),
+  )
   const roots: SessionNode[] = []
   for (const node of map.values()) {
+    const key = (id: string) => `${node.session.usageSource}:${id}`
     let id = node.session.parentId,
       cycle = false
     const visited = new Set([node.session.id])
-    while (id && map.has(id)) {
+    while (id && map.has(key(id))) {
       if (visited.has(id)) {
         cycle = true
         break
       }
       visited.add(id)
-      id = map.get(id)!.session.parentId
+      id = map.get(key(id))!.session.parentId
     }
-    const parent = !cycle && node.session.parentId ? map.get(node.session.parentId) : null
+    const parent = !cycle && node.session.parentId ? map.get(key(node.session.parentId)) : null
     if (parent) parent.children.push(node)
     else roots.push(node)
   }
@@ -162,7 +165,7 @@ export function SessionDetails({ query, groupKey, asOf }: { query: string; group
     <div className={styles.sessionDetails}>
       <div className={styles.accountHeading}>
         <strong>逐条会话记录</strong>
-        <span className={styles.mutedBadge}>Codex 本地导入</span>
+        <span className={styles.mutedBadge}>本地 Agent 会话</span>
       </div>
       <p className={styles.hint}>每张卡片是一条会话，可直接查看 Agent 工具、会话类型、模型、时间和本会话 Token。</p>
       <HelpDetails label="统计口径与隐私">
@@ -171,10 +174,10 @@ export function SessionDetails({ query, groupKey, asOf }: { query: string; group
           总量，不随展开的分组改变。缓存包含在输入中，推理包含在输出中，请勿将各列相加。
         </p>
         <p>
-          Agent 工具由导入器的用量来源确定：当前仅导入 Codex 会话，不从日期目录名猜测工具。对话按会话 ID 和时间识别，
-          不读取正文或标题。只展示明确的父子关联；命令行会话独立计量，单条 Shell 命令没有独立 Token 统计。
+          Agent 工具由导入器确定，支持 Codex 与 Claude Code。对话按会话 ID 和时间识别，不保存正文或标题。 Claude Code
+          自定义渠道日志未提供渠道身份时，供应商、连接和订阅保持未知；模型名不能证明订阅归属。只展示明确的父子关联。
         </p>
-        <p>父会话不在当前筛选或已加载结果中时，子会话单独列出。来源：Codex local · client_observed。</p>
+        <p>父会话不在当前筛选或已加载结果中时，子会话单独列出。来源：client_observed；本地记录不代表网关请求或账单。</p>
       </HelpDetails>
       {(state.error || error) && (
         <WorkspaceNotice error>
@@ -195,7 +198,7 @@ export function SessionDetails({ query, groupKey, asOf }: { query: string; group
             <div className={styles.sessionList}>
               {nodes.map((node) => (
                 <SessionBranch
-                  key={node.session.id}
+                  key={`${node.session.usageSource}:${node.session.id}`}
                   node={node}
                   depth={0}
                   denominator={state.data!.subscriptionTotals}

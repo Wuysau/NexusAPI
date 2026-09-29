@@ -162,6 +162,13 @@
       "when": 1790214191960,
       "tag": "0022_task_resource_transitions",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1790640000000,
+      "tag": "0023_claude_local_observation",
+      "breakpoints": true
     }
   ]
 }

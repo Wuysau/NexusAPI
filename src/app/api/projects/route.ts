@@ -22,7 +22,7 @@ export async function GET(req: Request) {
         ARRAY(SELECT root FROM project_workspace_roots r WHERE r.tenant_id=$1 AND r.organization_id=$2 AND r.project_id=p.id ORDER BY root) workspace_roots,
         observed.events,observed.sessions,observed.first_activity,observed.last_activity
        FROM projects p LEFT JOIN LATERAL (
-        SELECT count(*)::text events,count(DISTINCT external_session_id)::text sessions,
+        SELECT count(*)::text events,count(DISTINCT (usage_source,external_session_id))::text sessions,
           min(occurred_at) first_activity,max(occurred_at) last_activity
         FROM external_observed_usage e WHERE e.tenant_id=$1 AND e.organization_id=$2 AND e.project_id=p.id
        ) observed ON true WHERE ${projectVisibility}

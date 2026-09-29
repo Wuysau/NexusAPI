@@ -597,10 +597,15 @@ npm run dev</code></pre>
               </p>
             </details>
             <details>
-              <summary>Codex 已运行，为什么项目中没有本地用量？</summary>
+              <summary>Codex 或 Claude Code 已运行，为什么项目中没有本地用量？</summary>
               <p>
                 检查项目工作目录是否与 Codex 会话目录匹配，连接详情中的 Observer
-                配置是否已应用、同步是否成功。修改工作目录不会自动重新归属已有历史记录。
+                配置是否已应用、同步是否成功。修改工作目录不会自动重新归属已有历史记录。 Claude Code 需另行配置 Observer
+                的 claudeSources，指向本机 .claude/projects 或具体项目子目录， 然后在项目分析中选择“Claude Code ·
+                本地观测”。直接调用外部自定义渠道不会生成 NexusAPI 网关请求。
+                <a href="https://github.com/Wuysau/NexusAPI/blob/main/docs/operations/claude-code-observer.md"
+                  >Claude Code 采集配置</a
+                >。
               </p>
             </details>
             <details>
