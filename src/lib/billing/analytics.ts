@@ -149,12 +149,7 @@ const tokenSQL = () => `jsonb_build_object(${tokenNames.map((name) => `'${name}'
 const activityColumns = () => `count(*) FILTER(WHERE usage_source='gateway')::text requests,
   count(DISTINCT (usage_source,external_session_id)) FILTER(WHERE external_session_id IS NOT NULL)::text sessions,
   count(*) FILTER(WHERE authority='client_observed')::text "observedEvents",
-  max(started_at) "lastActivity",
-  jsonb_build_array(
-    jsonb_build_object('source','gateway','authority','authoritative','events',count(*) FILTER(WHERE usage_source='gateway')::text),
-    jsonb_build_object('source','codex_local','authority','client_observed','events',count(*) FILTER(WHERE usage_source='codex_local')::text),
-    jsonb_build_object('source','claude_code_local','authority','client_observed','events',count(*) FILTER(WHERE usage_source='claude_code_local')::text)
-  ) provenance`
+  max(started_at) "lastActivity"`
 export function analyticsGrouping(q: AnalyticsQuery) {
   switch (q.groupBy) {
     case 'project':
@@ -203,15 +198,21 @@ export async function queryUsageAnalytics(
       SELECT group_key key,currency,kind,grouping(group_key)=1 is_total,${metricSQL('amount')} metric
       FROM money_rows GROUP BY GROUPING SETS((group_key,currency,kind),(currency,kind))
       HAVING grouping(group_key)=1 OR group_key IN (SELECT key FROM page)
+    ), source_counts AS (
+      SELECT group_key key,usage_source source,max(authority) authority,count(*)::text events,grouping(group_key)=1 is_total
+      FROM keyed GROUP BY GROUPING SETS((group_key,usage_source),(usage_source))
+      HAVING grouping(group_key)=1 OR group_key IN (SELECT key FROM page)
     ), total_activity AS (SELECT ${activityColumns()},${tokenSQL()} tokens FROM scoped)
     SELECT (SELECT to_jsonb(total_activity) FROM total_activity) totals,
       coalesce((SELECT jsonb_agg(to_jsonb(page) ORDER BY key) FROM page),'[]'::jsonb) groups,
-      (SELECT count(*)::text FROM grouped) total_groups,coalesce((SELECT jsonb_agg(to_jsonb(money)) FROM money),'[]'::jsonb) money`
+      (SELECT count(*)::text FROM grouped) total_groups,coalesce((SELECT jsonb_agg(to_jsonb(money)) FROM money),'[]'::jsonb) money,
+      coalesce((SELECT jsonb_agg(to_jsonb(source_counts)) FROM source_counts),'[]'::jsonb) sources`
   const row = (
     await client.query<{
       totals: Omit<AnalyticsMetrics, 'money'>
       groups: Array<{ key: string; label: string | null } & Omit<AnalyticsMetrics, 'money'>>
       total_groups: string
+      sources: Array<{ key: string | null; source: string; authority: string; events: string; is_total: boolean }>
       money: Array<{
         key: string | null
         currency: string | null
@@ -221,6 +222,11 @@ export async function queryUsageAnalytics(
       }>
     }>(sql, values)
   ).rows[0]
+  const sourceFor = (key: string | null, total: boolean) =>
+    (row.sources ?? [])
+      .filter((s) => s.is_total === total && (total || s.key === key))
+      .map(({ source, authority, events }) => ({ source, authority, events }))
+      .sort((a, b) => a.source.localeCompare(b.source))
   const moneyFor = (key: string | null, total: boolean) => {
     const buckets = new Map<string | null, AnalyticsCurrencyMetrics>()
     for (const item of row.money) {
@@ -239,7 +245,7 @@ export async function queryUsageAnalytics(
     from: q.from,
     to: q.to,
     groupBy: q.groupBy,
-    totals: { ...row.totals, money: moneyFor(null, true) },
+    totals: { ...row.totals, provenance: sourceFor(null, true), money: moneyFor(null, true) },
     groups: row.groups.map((g) => ({
       key: g.key,
       label: g.label,
@@ -248,7 +254,7 @@ export async function queryUsageAnalytics(
         sessions: g.sessions,
         observedEvents: g.observedEvents,
         lastActivity: g.lastActivity,
-        provenance: g.provenance,
+        provenance: sourceFor(g.key, false),
         tokens: g.tokens,
         money: moneyFor(g.key, false),
       },

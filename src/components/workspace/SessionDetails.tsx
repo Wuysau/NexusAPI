@@ -12,6 +12,7 @@ import {
   type SessionTokens,
 } from '@/lib/billing/session-types'
 import styles from './workspace.module.css'
+import { agentSourceLabel } from '@/lib/observer/agent-tools'
 
 interface SessionNode {
   session: SessionDetail
@@ -24,7 +25,6 @@ const kindLabels: Record<string, string> = {
   other: '其他会话',
 }
 const tokenLabels = { input: '输入', cached: '缓存输入', reasoning: '推理输出', output: '输出', total: '总计' }
-const agentToolLabels: Record<string, string> = { codex_local: 'Codex', claude_code_local: 'Claude Code' }
 function forest(sessions: SessionDetail[]) {
   const map = new Map(
     sessions.map((session) => [`${session.usageSource}:${session.id}`, { session, children: [] } as SessionNode]),
@@ -80,13 +80,10 @@ function SessionBranch({ node, depth, denominator }: { node: SessionNode; depth:
   const kind = kindLabels[s.kind ?? ''] ?? '类型未知'
   return (
     <div className={depth ? styles.sessionChild : styles.sessionRoot}>
-      <article
-        className={styles.sessionCard}
-        aria-label={`${agentToolLabels[s.usageSource] ?? '工具未知'} 会话 ${s.id}`}
-      >
+      <article className={styles.sessionCard} aria-label={`${agentSourceLabel(s.usageSource)} 会话 ${s.id}`}>
         <div className={styles.sessionCardHeader}>
           <div className={styles.sessionBadges}>
-            <span className={styles.badge}>Agent 工具：{agentToolLabels[s.usageSource] ?? '未知'}</span>
+            <span className={styles.badge}>Agent 工具：{agentSourceLabel(s.usageSource)}</span>
             <span className={styles.mutedBadge}>{kind}</span>
           </div>
           <strong>会话 {s.id.slice(0, 8)}</strong>
@@ -174,7 +171,7 @@ export function SessionDetails({ query, groupKey, asOf }: { query: string; group
           总量，不随展开的分组改变。缓存包含在输入中，推理包含在输出中，请勿将各列相加。
         </p>
         <p>
-          Agent 工具由导入器确定，支持 Codex 与 Claude Code。对话按会话 ID 和时间识别，不保存正文或标题。 Claude Code
+          Agent 工具由适配器或明确标注的遥测来源确定。对话按会话 ID 和时间识别，不保存正文或标题。自定义渠道
           自定义渠道日志未提供渠道身份时，供应商、连接和订阅保持未知；模型名不能证明订阅归属。只展示明确的父子关联。
         </p>
         <p>父会话不在当前筛选或已加载结果中时，子会话单独列出。来源：client_observed；本地记录不代表网关请求或账单。</p>

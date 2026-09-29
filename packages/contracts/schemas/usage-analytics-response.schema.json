@@ -189,7 +189,7 @@
             "properties": {
               "source": {
                 "type": "string",
-                "enum": ["gateway", "codex_local", "claude_code_local"]
+                "pattern": "^(gateway|codex_local|claude_code_local|agent:[a-z][a-z0-9_]{0,47})$"
               },
               "authority": {
                 "type": "string",

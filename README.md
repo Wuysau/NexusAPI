@@ -1,6 +1,6 @@
 # NexusAPI
 
-📖 **[在线使用手册](https://wuysau.github.io/NexusAPI/)**：面向新用户介绍项目、网关 API、Codex 本地观测和任务监督的使用方法。也可直接查看 [手册源文件](docs/index.html)。
+📖 **[在线使用手册](https://wuysau.github.io/NexusAPI/)**：面向新用户介绍项目、网关 API、多工具用量采集和任务监督的使用方法。也可直接查看 [手册源文件](docs/index.html)。
 
 NexusAPI 是以项目为核心的 AI Resource Control Plane。统一查看 API 渠道、官方订阅、本地工具、任务、会话、配额与用量；Go 网关继续提供兼容 OpenAI 的 API 数据面。本地订阅执行与网关 API 调用遵守不同的凭据和计费边界。
 
@@ -12,7 +12,7 @@ NexusAPI 是以项目为核心的 AI Resource Control Plane。统一查看 API �
 - **统一网关**：Go 数据面提供 /v1/models、/v1/chat/completions 和 SSE 流式响应，支持 OpenAI 与 Anthropic 协议适配；可显式开启 /v1/responses 的文本和函数调用子集。
 - **渠道与密钥**：配置上游地址、模型和 API Key，使用 Nexus API Key 调用已配置渠道。桌面本地模式支持界面录入上游密钥并加密保存。
 - **项目与用量**：按组织、项目、连接查看实际请求、Token、价格来源和对账状态；未知价格保持未知，不自动记为免费。
-- **订阅观测**：独立 Observer 读取 Codex 本地会话中允许的用量字段，并展示账户与官方配额观测。订阅会话不经 Nexus 转发，不产生 Nexus 扣费。
+- **多工具用量采集**：独立 Observer 持续发现 Codex、Claude Code、Gemini CLI、Qwen Code、Cline、Roo Code、兼容 Kilo 扩展、Copilot CLI、Kimi CLI 的本地记录，支持 OpenCode 导出、Cursor Hook 和可扩展的通用元数据接口。按真实 Agent 工具区分会话，未提供的 Token 保持未知。不同工具的自动/手动接入范围见[采集手册](docs/operations/agent-observer.md)；本地记录不产生 Nexus 扣费。
 - **多服务订阅与账号池**：连接目录覆盖 Claude Code、Gemini、Copilot、Cursor、Kimi、GLM、MiniMax 等常见服务，逐项说明原生使用、独立 API 和监控能力。Codex 保留原生观测；其他受支持产品通过 CodexBar dashboard-v1 快照导入或已配置的服务同步额度。账号池显示多个额度窗口、数据新鲜度、耗尽及异常状态，第三方监控与官方调度依据分别展示。
 - **兼容代理与付费入口**：渠道配置提供官方 API 与 CLIProxyAPI / New API / Sub2API 兼容入口模板；用量与计费页面提供已发布套餐、Stripe Checkout 与订单状态。价格在服务端读取，只有验签回调可入账。第三方订阅购买仍在相应服务商完成，不会把平台套餐当作上游订阅出售。
 - **任务监督**：通过独立 Codex Profile 执行持久任务，在安全边界按兼容性和额度交接，提供资源池、策略与执行历史。配置与入口见 [任务级资源切换](docs/operations/task-resource-handoff.md)。
@@ -92,9 +92,9 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 
 生产网关通过 Redis 租约限制租户和渠道并发；Redis 不可用时拒绝新请求。流式解析和缓冲输出都有大小上限，上游截断不会被记为成功，未知用量保留为未知并进入对账。连接仅在相同授权范围及有效期内复用 HTTP/1.1；详见 [网关限额与运行行为](docs/operations/gateway-limits.md)。
 
-### Codex 订阅观测
+### Agent 工具用量与订阅观测
 
-配置项目工作目录，在连接详情的“本地同步配置”中应用 Observer 配置。`npm run dev` 同时启动独立 Observer，默认每 60 秒扫描一次；也可手动同步。详见 [Observer 使用说明](docs/operations/subscription-observer.md)。
+配置项目工作目录，在“用量与计费 → Agent 工具采集”查看来源并启用自动发现；需要 Hook/导出的工具按各自提示配置。`npm run dev` 同时启动独立 Observer，默认每 60 秒扫描一次；本机 Windows 管理入口使用 `npm run dev:local`。详见[多工具采集手册](docs/operations/agent-observer.md)。Codex 原有连接和账户配置继续可用，见 [Observer 使用说明](docs/operations/subscription-observer.md)。
 
 ## 代码结构
 

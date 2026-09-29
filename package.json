@@ -23,6 +23,7 @@
     "budget:dev": "tsx services/budget/index.ts",
     "worker:dev": "tsx services/worker/index.ts",
     "observer:dev": "node --env-file-if-exists=.env.local --import tsx services/observer/index.ts",
+    "agent:usage": "node --import tsx scripts/agent-usage.ts",
     "observer:build": "node scripts/build-services.mjs observer",
     "observer:codex": "node --env-file-if-exists=.env.local --env-file-if-exists=.env.observer.local --import tsx scripts/observer-codex.ts",
     "nexus": "node --env-file-if-exists=.env.local --env-file-if-exists=.env.observer.local --import tsx scripts/nexus.ts",

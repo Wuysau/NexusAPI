@@ -67,6 +67,7 @@
           <a href="#api">02 · API 渠道</a>
           <a href="#codex">03 · Codex 订阅</a>
           <a href="#subscriptions">多服务订阅与账号池</a>
+          <a href="#agent-observer">Agent 工具用量采集</a>
           <a href="#payments">套餐与支付</a>
           <a href="#tasks">04 · 编程任务</a>
           <a href="#pages">05 · 功能导览</a>
@@ -437,6 +438,53 @@ npm run nexus -- continue --project PROJECT_ID --task TASK_ID --instruction "继
               <a href="https://github.com/Wuysau/NexusAPI/blob/main/docs/operations/subscription-monitor.md"
                 >多服务监控配置</a
               >。
+            </p>
+          </section>
+
+          <section id="agent-observer" class="chapter">
+            <div class="chapter-head">
+              <span>AGENT USAGE</span>
+              <h2>查看不同 Agent 工具的会话与用量</h2>
+              <p>在同一个项目中使用多个 Agent 时，按工具区分记录；自定义模型不会改变工具身份。</p>
+            </div>
+            <ol class="steps">
+              <li>
+                <strong>登记工作目录</strong>
+                <p>在“项目”中填写实际代码目录。会话根据工具日志报告的工作目录归属到项目，绑定连接不会自动拦截对话。</p>
+              </li>
+              <li>
+                <strong>开启自动发现</strong>
+                <p>
+                  本机管理员进入“用量与计费”，展开“Agent
+                  工具采集”，启用“自动发现本机工具记录”。确认后台运行后正常使用工具；后台每次轮询都会发现新安装的受支持工具日志。
+                </p>
+              </li>
+              <li>
+                <strong>按工具完成接入</strong>
+                <p>
+                  Codex、Claude Code、Gemini CLI、Qwen Code、Cline、Roo Code、兼容版 Kilo 扩展、Copilot CLI 和 Kimi CLI
+                  支持原生日志；OpenCode 使用导出 JSON；Cursor 使用官方 Hook。其余工具可通过通用元数据接口接入，工具 ID
+                  可扩展，无需修改数据库。
+                </p>
+              </li>
+              <li>
+                <strong>查看采集状态和记录</strong>
+                <p>
+                  面板显示发现来源、缺失路径、同步状态和历史会话。点击“立即同步”，完成后刷新；在项目分析选择“工具来源”并展开会话。日志缺少工作目录时，可为单个任务来源手动指定目录。
+                </p>
+              </li>
+            </ol>
+            <div class="callout">
+              <strong>接入能力以工具实际提供的数据为准</strong>
+              <p>
+                不提供可读日志的工具需要配置 Hook、遥测或导出，安装工具本身不代表已接入。仅报告活动、不报告 Token
+                的记录显示未知；不会推算 Token、保存聊天正文或产生钱包扣费。网关请求和订阅剩余额度分别查看。
+              </p>
+            </div>
+            <p>
+              <a href="https://github.com/Wuysau/NexusAPI/blob/main/docs/operations/agent-observer.md"
+                >查看完整工具支持表、目录配置与 Hook 接入说明 ↗</a
+              >
             </p>
           </section>
 

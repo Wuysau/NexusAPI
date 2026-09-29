@@ -169,6 +169,13 @@
       "when": 1790640000000,
       "tag": "0023_claude_local_observation",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1790640000001,
+      "tag": "0024_extensible_agent_observation",
+      "breakpoints": true
     }
   ]
 }

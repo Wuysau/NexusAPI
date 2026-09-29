@@ -7,6 +7,11 @@ import { ClaudeParser, CLAUDE_PARSER_VERSION } from './claude'
 import { matchWorkspace, normalizeWorkspace, type WorkspaceRoot } from './workspace'
 import { readJsonl } from './stream'
 import { readSessionMetadata, enrichSessionMetadata } from './session-metadata'
+import { agentSourceFiles, discoverAgentSources, sourceExists, validateAgentSource } from './agent-sources'
+import { readAgentSnapshot, AGENT_PARSER_VERSION } from './agent-reader'
+import type { AgentSource } from './agent-types'
+import type { ObservedUsageEvent } from './codex'
+import { homedir } from 'node:os'
 
 export interface ObserverScope {
   tenantId: string
@@ -15,6 +20,8 @@ export interface ObserverScope {
 export interface ObserverConfig extends ObserverScope {
   sources: string[]
   claudeSources?: string[]
+  agentSources?: AgentSource[]
+  autoDiscover?: boolean
   roots: Array<{ root: string; projectId: string }>
   providers: Array<{ identifier: string; provider: string; product: string; connectionId: string }>
 }
@@ -28,10 +35,22 @@ export function validateObserverConfig(value: unknown): ObserverConfig {
     if (typeof v !== 'string' || !/^[a-zA-Z0-9_.:/-]{1,128}$/.test(v)) throw new Error('Invalid observer identifier')
     return v
   }
-  const c = object(value, ['tenantId', 'organizationId', 'sources', 'claudeSources', 'roots', 'providers'])
+  const c = object(value, [
+    'tenantId',
+    'organizationId',
+    'sources',
+    'claudeSources',
+    'agentSources',
+    'autoDiscover',
+    'roots',
+    'providers',
+  ])
   if (
     !Array.isArray(c.sources) ||
-    (!c.sources.length && (!Array.isArray(c.claudeSources) || !c.claudeSources.length)) ||
+    (!c.sources.length &&
+      (!Array.isArray(c.claudeSources) || !c.claudeSources.length) &&
+      (!Array.isArray(c.agentSources) || !c.agentSources.length) &&
+      c.autoDiscover === undefined) ||
     !Array.isArray(c.roots) ||
     !Array.isArray(c.providers)
   )
@@ -63,6 +82,14 @@ export function validateObserverConfig(value: unknown): ObserverConfig {
       if (typeof v !== 'string' || !path.isAbsolute(v)) throw new Error('Absolute telemetry source required')
       return v
     })
+  }
+  if (c.autoDiscover !== undefined) {
+    if (typeof c.autoDiscover !== 'boolean') throw new Error('Invalid discovery configuration')
+    config.autoDiscover = c.autoDiscover
+  }
+  if (c.agentSources !== undefined) {
+    if (!Array.isArray(c.agentSources) || c.agentSources.length > 100) throw new Error('Invalid agent sources')
+    config.agentSources = c.agentSources.map(validateAgentSource)
   }
   if (
     new Set(config.providers.map((p) => p.identifier)).size !== config.providers.length ||
@@ -198,8 +225,14 @@ export async function scanCodex(pool: Pool, raw: ObserverConfig, options: { dryR
 }
 
 async function scanLocked(client: PoolClient, raw: ObserverConfig, options: { dryRun?: boolean }) {
-  const config = validateObserverConfig(raw),
-    codexFiles = await discover(config.sources),
+  const config = validateObserverConfig(raw)
+  if (config.autoDiscover) {
+    const codex = path.join(process.env.CODEX_HOME || path.join(homedir(), '.codex'), 'sessions')
+    const claude = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(homedir(), '.claude'), 'projects')
+    if (!config.sources.length && (await sourceExists(codex))) config.sources = [codex]
+    if (!config.claudeSources?.length && (await sourceExists(claude))) config.claudeSources = [claude]
+  }
+  const codexFiles = await discover(config.sources),
     claudeFiles = new Set(await discover(config.claudeSources ?? [])),
     files = [...codexFiles, ...claudeFiles]
   if (codexFiles.some((file) => claudeFiles.has(file))) throw new Error('Ambiguous telemetry source')
@@ -214,21 +247,51 @@ async function scanLocked(client: PoolClient, raw: ObserverConfig, options: { dr
     bytesRead: 0,
     warnings: 0,
     dryRun: !!options.dryRun,
+    sourceErrors: [] as Array<{ tool: string; code: string }>,
   }
+  const sourceErrorKeys = new Set<string>()
+  const reportSourceError = (tool: string, code: string) => {
+    const key = JSON.stringify([tool, code])
+    if (!sourceErrorKeys.has(key)) {
+      sourceErrorKeys.add(key)
+      summary.sourceErrors.push({ tool, code })
+    }
+    summary.warnings++
+  }
+  const agentJobs = new Map<string, AgentSource>()
+  const configuredSources = config.agentSources ?? []
+  const detectedSources = config.autoDiscover ? await discoverAgentSources() : []
+  for (const source of [...configuredSources, ...detectedSources]) {
+    try {
+      for (const file of await agentSourceFiles(source)) {
+        if (agentJobs.has(file)) continue // explicitly configured workspace wins over discovery
+        if (files.includes(file)) throw new Error('ambiguous_source')
+        agentJobs.set(file, source)
+      }
+    } catch {
+      reportSourceError(source.tool, 'source_unavailable')
+    }
+  }
+  files.push(...agentJobs.keys())
+  summary.scannedFiles = files.length
   const newSessions = new Set<string>(),
     previewIds = new Set<string>()
-  const groups = new Map<
-    string,
-    {
-      projectId: string | null
-      projectName: string | null
-      provider: string | null
-      subscriptionProduct: string | null
-      sessions: Set<string>
-      usageEvents: number
-    }
-  >()
+  type UsageGroup = {
+    projectId: string | null
+    projectName: string | null
+    provider: string | null
+    subscriptionProduct: string | null
+    sessions: Set<string>
+    usageEvents: number
+  }
+  const groups = new Map<string, UsageGroup>()
   for (const file of files) {
+    const agentSource = agentJobs.get(file)
+    // Publish only committed deltas. A failed file must not suppress another file's events.
+    const fileSessions = new Set<string>(),
+      fileIds = new Set<string>()
+    const fileGroups = new Map<string, UsageGroup>()
+    const delta = { newEvents: 0, updatedEvents: 0, skippedDuplicates: 0, unassignedEvents: 0 }
     try {
       await client.query(options.dryRun ? 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY' : 'BEGIN')
       await lockScope(client, config, !options.dryRun)
@@ -243,18 +306,26 @@ async function scanLocked(client: PoolClient, raw: ObserverConfig, options: { dr
         )
       ).rows[0]
       const isClaude = claudeFiles.has(file)
-      const parserVersion = isClaude ? CLAUDE_PARSER_VERSION : PARSER_VERSION
+      const isCodex = !isClaude && !agentSource
+      const parserVersion = agentSource
+        ? AGENT_PARSER_VERSION + ':' + agentSource.tool + ':' + agentSource.format
+        : isClaude
+          ? CLAUDE_PARSER_VERSION
+          : PARSER_VERSION
       const resume = cursor && cursor.parser_version === parserVersion && Number(cursor.byte_offset) <= st.size
       const start = resume ? Number(cursor.byte_offset) : 0,
         parser = isClaude
           ? new ClaudeParser(path.basename(file).match(/^agent-(.+)\.jsonl$/)?.[1] ?? null)
           : new CodexParser(resume ? cursor.state : undefined)
-      if (resume && start === st.size) {
-        summary.unchangedFiles++
+      const snapshotSignature = createHash('sha256')
+        .update(JSON.stringify([st.size, st.mtimeMs, agentSource?.workspace]))
+        .digest('hex')
+      if (resume && start === st.size && (!agentSource || cursor.state?.lastCounter === snapshotSignature)) {
         await client.query('COMMIT')
+        summary.unchangedFiles++
         continue
       }
-      const sessionMetadata = isClaude ? null : await readSessionMetadata(file)
+      const sessionMetadata = isCodex ? await readSessionMetadata(file) : null
       if (!options.dryRun) await enrichSessionMetadata(client, config, sessionMetadata)
       const roots = await rootsFor(client, config)
       const connections = (
@@ -263,9 +334,7 @@ async function scanLocked(client: PoolClient, raw: ObserverConfig, options: { dr
           [config.tenantId],
         )
       ).rows
-      const result = await readJsonl(file, start, st.size, async (rawEvent) => {
-        const e = parser.parse(rawEvent)
-        if (!e) return
+      const consume = async (e: ObservedUsageEvent) => {
         let root = matchWorkspace(e.cwd, roots)
         const configured = config.providers.find((p) => p.identifier === e.providerIdentifier)
         let conn = configured
@@ -279,7 +348,7 @@ async function scanLocked(client: PoolClient, raw: ObserverConfig, options: { dr
           : undefined
         // Supervisor session binding is authoritative across profile/provider changes.
         // Bare sessions retain existing workspace/provider attribution.
-        const supervised = !isClaude
+        const supervised = isCodex
           ? (
               await client.query<{
                 project_id: string
@@ -322,17 +391,28 @@ async function scanLocked(client: PoolClient, raw: ObserverConfig, options: { dr
             [config.tenantId, e.source, e.eventId],
           )
         ).rowCount
-        if (exists || previewIds.has(e.eventId)) {
-          if (isClaude && !options.dryRun) {
+        if (exists || previewIds.has(e.eventId) || fileIds.has(e.eventId)) {
+          if (!isCodex && !options.dryRun) {
             // Repeated content blocks may carry later complete usage for the same message.
             // Never add another event or downgrade counters when replaying an earlier block.
             const updated = await client.query(
-              `UPDATE external_observed_usage SET input_tokens=$4,cached_input_tokens=$5,output_tokens=$6,reasoning_tokens=$7,total_tokens=$8,
-                occurred_at=GREATEST(occurred_at,$9::timestamptz)
-               WHERE tenant_id=$1 AND organization_id=$2 AND usage_source='claude_code_local' AND external_event_id=$3
-                 AND input_tokens<=$4::numeric AND output_tokens<=$6::numeric AND cached_input_tokens<=$5::numeric
-                 AND (reasoning_tokens IS NULL OR reasoning_tokens<=$7::numeric)
-                 AND (input_tokens,output_tokens,cached_input_tokens,reasoning_tokens) IS DISTINCT FROM ($4::numeric,$6::numeric,$5::numeric,$7::numeric)`,
+              `WITH candidate AS (
+                 SELECT id,COALESCE($4::numeric,input_tokens) input,COALESCE($5::numeric,cached_input_tokens) cached,
+                   COALESCE($6::numeric,output_tokens) output,COALESCE($7::numeric,reasoning_tokens) reasoning,
+                   COALESCE($8::numeric,total_tokens) total
+                 FROM external_observed_usage
+                 WHERE tenant_id=$1 AND organization_id=$2 AND usage_source=$10 AND external_event_id=$3
+               ) UPDATE external_observed_usage e
+                 SET input_tokens=c.input,cached_input_tokens=c.cached,output_tokens=c.output,
+                   reasoning_tokens=c.reasoning,total_tokens=c.total,occurred_at=GREATEST(e.occurred_at,$9::timestamptz)
+                 FROM candidate c WHERE e.id=c.id
+                   AND (e.input_tokens<=c.input) IS NOT FALSE AND (e.cached_input_tokens<=c.cached) IS NOT FALSE
+                   AND (e.output_tokens<=c.output) IS NOT FALSE AND (e.reasoning_tokens<=c.reasoning) IS NOT FALSE
+                   AND (e.total_tokens<=c.total) IS NOT FALSE
+                   AND (c.cached<=c.input) IS NOT FALSE AND (c.reasoning<=c.output) IS NOT FALSE
+                   AND (c.total=c.input+c.output) IS NOT FALSE
+                   AND (e.input_tokens,e.cached_input_tokens,e.output_tokens,e.reasoning_tokens,e.total_tokens)
+                     IS DISTINCT FROM (c.input,c.cached,c.output,c.reasoning,c.total)`,
               [
                 config.tenantId,
                 config.organizationId,
@@ -343,11 +423,12 @@ async function scanLocked(client: PoolClient, raw: ObserverConfig, options: { dr
                 e.tokens.reasoning,
                 e.tokens.total,
                 e.timestamp,
+                e.source,
               ],
             )
-            summary.updatedEvents += updated.rowCount ?? 0
+            delta.updatedEvents += updated.rowCount ?? 0
           }
-          summary.skippedDuplicates++
+          delta.skippedDuplicates++
           return
         }
         const sessionExists = (
@@ -356,7 +437,7 @@ async function scanLocked(client: PoolClient, raw: ObserverConfig, options: { dr
             [config.tenantId, config.organizationId, e.source, e.sessionId],
           )
         ).rowCount
-        if (!sessionExists) newSessions.add(`${e.source}:${e.sessionId}`)
+        if (!sessionExists) fileSessions.add(`${e.source}:${e.sessionId}`)
         if (!options.dryRun)
           await client.query(
             `INSERT INTO external_observed_usage(tenant_id,organization_id,usage_source,authority,external_session_id,external_event_id,turn_id,occurred_at,cwd,provider_identifier,provider,subscription_product,connection_id,model,input_tokens,cached_input_tokens,output_tokens,reasoning_tokens,total_tokens,project_id,project_name,matched_root,attributed_at,cli_version,parser_version,session_kind,parent_session_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,CASE WHEN $20::text IS NULL THEN NULL ELSE now() END,$23,$24,$25,$26)`,
@@ -390,13 +471,13 @@ async function scanLocked(client: PoolClient, raw: ObserverConfig, options: { dr
                 (sessionMetadata?.sessionId === e.sessionId ? sessionMetadata.parentSessionId : null),
             ],
           )
-        previewIds.add(e.eventId)
+        fileIds.add(e.eventId)
         const groupKey = JSON.stringify([
           root?.projectId ?? null,
           conn?.provider ?? e.providerIdentifier,
           conn?.product ?? null,
         ])
-        let group = groups.get(groupKey)
+        let group = fileGroups.get(groupKey)
         if (!group) {
           group = {
             projectId: root?.projectId ?? null,
@@ -406,23 +487,54 @@ async function scanLocked(client: PoolClient, raw: ObserverConfig, options: { dr
             sessions: new Set(),
             usageEvents: 0,
           }
-          groups.set(groupKey, group)
+          fileGroups.set(groupKey, group)
         }
-        group.sessions.add(e.sessionId)
+        group.sessions.add(`${e.source}:${e.sessionId}`)
         group.usageEvents++
-        summary.newEvents++
-        if (!root) summary.unassignedEvents++
-      })
-      summary.bytesRead += result.bytesRead
-      summary.warnings += result.warnings + parser.warnings
+        delta.newEvents++
+        if (!root) delta.unassignedEvents++
+      }
+      const snapshot = agentSource ? await readAgentSnapshot(file, agentSource) : null
+      const result = snapshot
+        ? { bytesRead: snapshot.bytesRead, warnings: snapshot.warnings, offset: st.size }
+        : await readJsonl(file, start, st.size, async (rawEvent) => {
+            const e = parser.parse(rawEvent)
+            if (e) await consume(e)
+          })
+      if (snapshot) for (const e of snapshot.events) await consume(e)
       if (!options.dryRun)
         await client.query(
           `INSERT INTO observer_scan_cursors(tenant_id,organization_id,file_id,parser_version,byte_offset,state) VALUES($1,$2,$3,$4,$5,$6::jsonb) ON CONFLICT(tenant_id,organization_id,file_id) DO UPDATE SET byte_offset=excluded.byte_offset,state=excluded.state,parser_version=excluded.parser_version,updated_at=now()`,
-          [config.tenantId, config.organizationId, fileId, parserVersion, result.offset, JSON.stringify(parser.state)],
+          [
+            config.tenantId,
+            config.organizationId,
+            fileId,
+            parserVersion,
+            result.offset,
+            JSON.stringify(agentSource ? { lastCounter: snapshotSignature } : parser.state),
+          ],
         )
       await client.query('COMMIT')
+      for (const id of fileIds) previewIds.add(id)
+      for (const session of fileSessions) newSessions.add(session)
+      for (const [key, group] of fileGroups) {
+        const previous = groups.get(key)
+        if (!previous) groups.set(key, group)
+        else {
+          previous.usageEvents += group.usageEvents
+          for (const session of group.sessions) previous.sessions.add(session)
+        }
+      }
+      for (const key of ['newEvents', 'updatedEvents', 'skippedDuplicates', 'unassignedEvents'] as const)
+        summary[key] += delta[key]
+      summary.bytesRead += result.bytesRead
+      summary.warnings += result.warnings + parser.warnings
     } catch (error) {
       await client.query('ROLLBACK')
+      if (agentSource) {
+        reportSourceError(agentSource.tool, 'capture_failed')
+        continue
+      }
       throw error
     }
   }

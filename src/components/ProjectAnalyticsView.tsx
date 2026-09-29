@@ -1,10 +1,11 @@
 'use client'
 
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { ChevronDown, ChevronRight, RefreshCw, SlidersHorizontal } from 'lucide-react'
 import { HelpDetails } from '@/components/HelpDetails'
 import { SessionDetails } from './workspace/SessionDetails'
+import { AGENT_TOOLS, agentSourceLabel, agentToolSource } from '@/lib/observer/agent-tools'
 import { PageHeader } from './PageHeader'
 import { ProjectQuotaPanel } from './workspace/ProjectQuotaPanel'
 import { useCollection, count, type WorkspaceProject } from './workspace/Workspace'
@@ -104,9 +105,14 @@ function MetricRow({
     </Fragment>
   )
 }
-function AnalyticsResults({ query }: { query: string }) {
+function AnalyticsResults({ query, onSources }: { query: string; onSources: (sources: string[]) => void }) {
   const [page, setPage] = useState(query)
   const state = useApiData<BillingAnalyticsResponse>(page)
+  useEffect(() => {
+    const analytics = state.data?.analytics
+    if (analytics && validateUsageAnalyticsResponse(analytics).ok)
+      onSources(analytics.totals.provenance?.map((entry) => entry.source) ?? [])
+  }, [state.data, onSources])
   if (state.forbidden) return <PermissionDenied capability="billing:read" />
   if (state.loading) return <SkeletonRows rows={4} />
   if (state.error) return <ErrorState message={state.error} onRetry={state.reload} />
@@ -137,12 +143,8 @@ function AnalyticsResults({ query }: { query: string }) {
           ?.filter((item) => item.events !== '0')
           .map((item) => (
             <span className={styles.mutedBadge} key={item.source}>
-              {item.source === 'gateway'
-                ? 'NexusAPI 网关 · 权威记录'
-                : item.source === 'claude_code_local'
-                  ? 'Claude Code 本地 · 客户端观测'
-                  : 'Codex 本地 · 客户端观测'}{' '}
-              · {item.events} {item.source === 'gateway' ? '次请求' : '条事件'}
+              {agentSourceLabel(item.source)} · {item.source === 'gateway' ? '权威记录' : '客户端观测'} · {item.events}{' '}
+              {item.source === 'gateway' ? '次请求' : '条事件'}
             </span>
           ))}
       </div>
@@ -247,6 +249,16 @@ export function ProjectAnalyticsView({
     (initialUsageSource === 'codex_local' && initialProjectId) || initialConnectionId ? 'model' : 'project',
   )
   const [usageSource, setUsageSource] = useState(initialUsageSource)
+  const [observedSources, setObservedSources] = useState<string[]>([])
+  const rememberSources = useCallback((sources: string[]) => {
+    setObservedSources((previous) => {
+      const next = [...new Set([...previous, ...sources])]
+      return next.length === previous.length ? previous : next
+    })
+  }, [])
+  const additionalSources = [...new Set([...observedSources, usageSource])].filter(
+    (source) => source.startsWith('agent:') && !AGENT_TOOLS.some((tool) => agentToolSource(tool.id) === source),
+  )
   const [connectionId, setConnectionId] = useState(initialConnectionId)
   const [provider, setProvider] = useState('')
   const [model, setModel] = useState('')
@@ -290,8 +302,16 @@ export function ProjectAnalyticsView({
             <select aria-label="用量来源" value={usageSource} onChange={(e) => setUsageSource(e.target.value)}>
               <option value="all">全部来源</option>
               <option value="gateway">网关请求</option>
-              <option value="codex_local">Codex · 本地观测</option>
-              <option value="claude_code_local">Claude Code · 本地观测</option>
+              {AGENT_TOOLS.map((tool) => (
+                <option key={tool.id} value={agentToolSource(tool.id)}>
+                  {tool.name} · 本地观测
+                </option>
+              ))}
+              {additionalSources.map((source) => (
+                <option key={source} value={source}>
+                  {agentSourceLabel(source)} · 通用遥测
+                </option>
+              ))}
             </select>
           </label>
           <label className={styles.field}>
@@ -377,7 +397,7 @@ export function ProjectAnalyticsView({
       </div>
       <div className={styles.analyticsResults}>
         {request.query ? (
-          <AnalyticsResults key={`${request.query}:${revision}`} query={request.query} />
+          <AnalyticsResults key={`${request.query}:${revision}`} query={request.query} onSources={rememberSources} />
         ) : (
           <p role="alert">{request.error}</p>
         )}

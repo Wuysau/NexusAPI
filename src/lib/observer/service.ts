@@ -13,6 +13,7 @@ export interface ObserverResult {
   bytesRead: number
   warnings: number
   durationMs: number
+  sourceErrors?: Array<{ tool: string; code: string }>
 }
 export interface ObserverRuntime {
   state: ObserverState
@@ -194,6 +195,7 @@ export class ObserverService {
           bytesRead: result.bytesRead,
           warnings: result.warnings,
           durationMs: Date.now() - started,
+          sourceErrors: result.sourceErrors,
         }
         this.dueAt = Date.now() + this.settings.intervalSeconds * 1000
         await this.update(

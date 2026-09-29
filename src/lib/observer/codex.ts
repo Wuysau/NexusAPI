@@ -17,10 +17,10 @@ export interface ObservedUsageEvent extends Omit<ParserState, 'lastCounter'> {
   eventId: string
   timestamp: string
   tokens: ObservedTokens
-  source: 'codex_local' | 'claude_code_local'
+  source: 'codex_local' | 'claude_code_local' | `agent:${string}`
   authority: 'client_observed'
   parserVersion: string
-  sessionKind?: 'cli' | 'subagent'
+  sessionKind?: 'cli' | 'subagent' | 'other'
   parentSessionId?: string | null
 }
 const record = (value: unknown): Record<string, unknown> =>

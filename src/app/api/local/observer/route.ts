@@ -164,6 +164,8 @@ export async function POST(req: Request) {
         organizationId: ctx.organizationId,
         sources: [source],
         ...(active?.claudeSources ? { claudeSources: active.claudeSources } : {}),
+        ...(active?.agentSources ? { agentSources: active.agentSources } : {}),
+        ...(active?.autoDiscover !== undefined ? { autoDiscover: active.autoDiscover } : {}),
         roots,
         providers,
       })
