@@ -32,6 +32,10 @@ Each dispatched attempt has its own upstream deadline. The timer remains active 
 
 A deadline before the response starts returns HTTP 504 with `upstream_timeout`. After streaming begins, Chat emits a terminal error; Responses emits `response.failed` with its compatible `server_error` code and the static message `Upstream timed out.` Internal records retain the timeout cause and any reliable usage already observed. Unknown counts remain unknown. An assigned upstream connection prevents automatic replay, including a timeout before headers. A failure before connection assignment may use an already eligible fallback under the existing retry rules; that attempt gets a new timer within the original total deadline. The same context reaches local connectors.
 
+The connector's separately configured local upstream deadline can expire first. It preserves the existing timeout code both before headers and while reading the body, including after partial output. Buffered requests return the same 504 timeout result; an already-started stream retains its HTTP status and delivers the existing terminal timeout event. Ordinary disconnects and caller/lease cancellation retain their own behavior. Neither partial output nor a timeout authorizes replay or invents missing usage.
+
+Connector job cleanup preserves an already received terminal error until the response consumer reads it. Cleanup closes the pipe writer to wake blocked I/O; the consumer owns closing its response body. This prevents cleanup timing from replacing a reported timeout with a generic closed-pipe error.
+
 ## Signed snapshot freshness
 
 A valid signature and HTTP 200 are insufficient to refresh authorization. A fetched bundle must have a signed expiry strictly after receipt, remain valid through verification, and complete within the fetch context. Effective expiry is the earlier of signed expiry and receipt plus the configured maximum age. A bundle that is already expired, expires during retrieval/verification, or arrives after cancellation cannot replace the cached generation.
