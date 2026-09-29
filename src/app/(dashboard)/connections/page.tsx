@@ -23,6 +23,7 @@ import { CodexAccountPanel, accountStatusLabels } from '@/components/workspace/C
 import { ObserverPanel } from '@/components/workspace/ObserverPanel'
 import { SubscriptionProductGuide } from '@/components/workspace/SubscriptionProductGuide'
 import SubscriptionMonitor from '@/components/connections/SubscriptionMonitor'
+import { LocalConnectorPanel } from '@/components/connections/LocalConnectorPanel'
 import {
   SUBSCRIPTION_PRODUCTS,
   connectionSubscriptionProduct,
@@ -45,6 +46,14 @@ function revoked(c: WorkspaceConnection) {
 }
 function state(c: WorkspaceConnection) {
   if (revoked(c)) return '已撤销'
+  if (c.mode === 'local_sidecar')
+    return c.connector?.state === 'online'
+      ? c.connector.readyModels.length
+        ? '连接器在线 · 模型就绪'
+        : '连接器在线 · 模型未就绪'
+      : ({ registered: '已登记 · 待配对', expired: '租约已过期', offline: '连接器离线' }[
+          c.connector?.state ?? 'registered'
+        ] ?? '已登记')
   if (c.status === 'blocked') return '已阻止'
   if (c.status === 'expired') return '已过期'
   if (c.channelId) return c.channelEnabled ? '已关联渠道' : '渠道已停用'
@@ -98,7 +107,12 @@ export default function ConnectionsPage() {
     setFormError('')
     try {
       await apiSend('/api/connections', 'POST', {
-        provider: mode === 'subscription_interactive' ? selectedProduct.provider : provider.trim(),
+        provider:
+          mode === 'local_sidecar'
+            ? 'ollama'
+            : mode === 'subscription_interactive'
+              ? selectedProduct.provider
+              : provider.trim(),
         mode,
         projectId: projectId || null,
         ...(mode === 'subscription_interactive'
@@ -417,6 +431,10 @@ export default function ConnectionsPage() {
                   </label>
                 )}
               </>
+            ) : mode === 'local_sidecar' ? (
+              <WorkspaceNotice>
+                Ollama 本地连接器：绑定项目后，在“配置与详情”中配置模型、生成配对令牌并启动本机程序。
+              </WorkspaceNotice>
             ) : (
               <>
                 <WorkspaceNotice>添加后需配置连接器。API 接入请前往渠道管理。</WorkspaceNotice>
@@ -436,6 +454,7 @@ export default function ConnectionsPage() {
               绑定项目（可选）
               <select
                 value={projectId}
+                required={mode === 'local_sidecar'}
                 aria-label="绑定项目（可选）"
                 aria-describedby="connection-project-help"
                 onChange={(e) => setProjectId(e.target.value)}
@@ -488,15 +507,18 @@ export default function ConnectionsPage() {
         <WorkspaceDialog title={title(setup) + ' · 连接详情'} onClose={() => setSetup(null)}>
           <div className={styles.form}>
             {revoked(setup) && <WorkspaceNotice>连接已撤销，当前显示历史记录。</WorkspaceNotice>}
-            {!revoked(setup) && setup.channelId && (
+            {!revoked(setup) && setup.channelId && setup.mode !== 'local_sidecar' && (
               <WorkspaceNotice>
                 此连接由上游渠道「{setup.channelName ?? setup.channelId}」自动创建。接口与模型在渠道管理查看，API Key
                 可在渠道管理更换。绑定项目不会自动产生用量；API 请求按调用所用的 Nexus API 密钥归属项目。
               </WorkspaceNotice>
             )}
-            {!revoked(setup) && setup.mode !== 'subscription_interactive' && !setup.channelId && (
-              <WorkspaceNotice>这是连接登记；若要调用上游 API，请在渠道管理中添加渠道。</WorkspaceNotice>
-            )}
+            {!revoked(setup) &&
+              setup.mode !== 'local_sidecar' &&
+              setup.mode !== 'subscription_interactive' &&
+              !setup.channelId && (
+                <WorkspaceNotice>这是连接登记；若要调用上游 API，请在渠道管理中添加渠道。</WorkspaceNotice>
+              )}
             <dl className={styles.details}>
               <dt>绑定项目</dt>
               <dd>{setup.project_name ?? '未绑定'}</dd>
@@ -507,6 +529,13 @@ export default function ConnectionsPage() {
                 </>
               )}
             </dl>
+            {setup.mode === 'local_sidecar' && (
+              <LocalConnectorPanel
+                connectionId={setup.id}
+                revoked={revoked(setup)}
+                canManage={Boolean(session && ['owner', 'admin'].includes(session.role))}
+              />
+            )}
             {setup.channelId && setup.project_id && can('billing:read') && (
               <Link
                 className={styles.link}

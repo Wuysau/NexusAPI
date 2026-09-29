@@ -571,7 +571,8 @@ npm run nexus -- continue --project PROJECT_ID --task TASK_ID --instruction "继
               <div>
                 <h3>连接器</h3>
                 <p>
-                  设计上是运行在本机或私有网络、执行请求并报告状态的程序。当前“本地连接器”“私有网络连接器”选项主要用于登记，不会在添加时自动安装运行器。
+                  本地连接器现支持独立运行的 Ollama CLI：本机主动通过 HTTPS 连接远端 Gateway，按项目 API Key 授权转发
+                  Chat Completions。私有网络连接器仍为登记入口。
                 </p>
               </div>
               <div>
@@ -590,6 +591,41 @@ npm run nexus -- continue --project PROJECT_ID --task TASK_ID --instruction "继
                 与第三方额度监控的区别；受监督执行仍需相应的兼容 Profile 和可信额度观测。
               </p>
             </div>
+            <h3>两台机器：远端 NexusAPI、本机 Ollama</h3>
+            <ol>
+              <li>
+                远端管理员在 Control Plane 和 Gateway 启用 NEXUS_CONNECTORS_ENABLED=true；Gateway 设置
+                GATEWAY_REPLICAS=1，配置原生 TLS。首版通过数据库锁限制单实例。
+              </li>
+              <li>
+                在本机启动仅监听回环地址的 Ollama，下载需要的模型。通过
+                <code>go build -o nexus-connector ./cmd/nexus-connector</code>（services/gateway 目录）构建独立程序。
+              </li>
+              <li>
+                在连接页添加“本地连接器”、绑定项目，在详情填写多个准确模型 ID，生成仅显示一次、10 分钟有效的配对令牌。
+              </li>
+              <li>
+                按连接详情示例创建本机 connector.json，配置远端 HTTPS 地址、本机
+                <code>http://127.0.0.1:11434/v1</code> 和模型白名单。运行
+                <code>nexus-connector pair</code> 粘贴令牌，再运行 <code>nexus-connector run</code>。
+              </li>
+              <li>
+                确认“连接器在线”和“模型就绪”，使用绑定项目的 API Key 执行详情中的测试调用。Coding Agent 使用远端网关
+                <code>/v1</code> 地址、该 Key 和准确模型 ID。
+              </li>
+            </ol>
+            <p>
+              本机无需开放公网入站端口。登记、在线和实际调用成功是不同状态；离线、过期、撤销或项目授权失效会拒绝新调用。未知用量和价格保留未定状态。若在线但无模型，请检查
+              Ollama 模型列表和两处白名单；若离线，请检查本机进程、TLS 证书和远端单实例配置。
+            </p>
+            <p>
+              <a
+                href="https://github.com/Wuysau/NexusAPI/blob/main/docs/operations/local-connector.md"
+                target="_blank"
+                rel="noreferrer"
+                >完整两机操作步骤、配置、轮换与故障排查</a
+              >
+            </p>
           </section>
 
           <section id="deploy" class="chapter">
@@ -662,7 +698,7 @@ npm run dev</code></pre>
               <summary>为什么添加了 API 连接，仍无法调用模型？</summary>
               <p>
                 “我的连接”保存资源登记。请到“渠道管理”配置并启用上游模型渠道，再创建 Nexus API
-                密钥，通过独立网关发起调用。
+                密钥，通过独立网关发起调用。本地 Ollama 请使用“本地连接器”的模型配置、配对和启动流程；只登记尚不能调用。
               </p>
             </details>
             <details>

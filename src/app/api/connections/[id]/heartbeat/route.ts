@@ -12,6 +12,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   try {
     const ctx = await requireContext(req, 'credential:read')
     const { id } = await params
+    const connection = await pool.query('SELECT mode FROM owned_connections WHERE id=$1 AND tenant_id=$2', [
+      id,
+      ctx.tenantId,
+    ])
+    if (connection.rows[0]?.mode === 'local_sidecar')
+      return apiError(403, 'connector_identity_required', '本地连接器心跳必须使用独立连接器身份和租约接口')
     const body = await readJsonBody<{ status?: unknown; capabilities?: unknown }>(req)
     const status = typeof body?.status === 'string' ? body.status : 'healthy'
     const result = await pool.query(

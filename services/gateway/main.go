@@ -43,6 +43,23 @@ func run() error {
 
 	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	controlTransport, err := controlPlaneTransport(os.Getenv("CONTROL_PLANE_CA_FILE"))
+	if err != nil {
+		return err
+	}
+	var connectors *ConnectorHub
+	if os.Getenv("NEXUS_CONNECTORS_ENABLED") == "true" {
+		if err := validateConnectorDeployment(env, os.Getenv); err != nil {
+			return err
+		}
+		closeLock, e := connectorSingleton(rootCtx, env.DatabaseURL, stop)
+		if e != nil {
+			return e
+		}
+		defer closeLock()
+		connectors = NewConnectorHub(env.ControlPlaneURL, env.InternalToken)
+		connectors.client.Transport = controlTransport
+	}
 	var credentials CredentialResolver
 	if env.LocalCredentialDir != "" && env.Environment != "production" {
 		resolver, e := NewLocalCredentialResolver(env.LocalCredentialDir)
@@ -70,7 +87,7 @@ func run() error {
 	source := &HTTPSnapshotSource{
 		BaseURL: env.ControlPlaneURL,
 		Token:   env.InternalToken,
-		Client:  &http.Client{Timeout: snapshotCfg.FetchTimeout},
+		Client:  &http.Client{Timeout: snapshotCfg.FetchTimeout, Transport: controlTransport},
 	}
 	snapshots := NewSnapshotCache(source, keyring, snapshotCfg, logger)
 
@@ -106,7 +123,8 @@ func run() error {
 	}
 
 	proxy := NewProxy(ProxyDeps{
-		EnableUsageV2: env.LocalCredentialDir != "" && env.Environment != "production",
+		EnableUsageV2: connectors != nil || (env.LocalCredentialDir != "" && env.Environment != "production"),
+		Connectors:    connectors,
 		Env:           env,
 		Limits:        limits,
 		Snapshots:     snapshots,
@@ -154,7 +172,11 @@ func run() error {
 			"snapshot_refresh", snapshotCfg.RefreshInterval.String(),
 			"snapshot_max_age", snapshotCfg.MaxAge.String(),
 		)
-		errCh <- server.ListenAndServe()
+		if os.Getenv("GATEWAY_TLS_CERT") != "" {
+			errCh <- server.http.ListenAndServeTLS(os.Getenv("GATEWAY_TLS_CERT"), os.Getenv("GATEWAY_TLS_KEY"))
+		} else {
+			errCh <- server.ListenAndServe()
+		}
 	}()
 
 	select {

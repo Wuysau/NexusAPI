@@ -27,6 +27,7 @@ import (
 
 // RouteRequest describes what the caller is allowed and asking for.
 type RouteRequest struct {
+	ProjectID            string
 	TenantID             string
 	RequestedModel       string // alias or model id as the client sent it
 	ResolvedModel        string // upstream model id after alias resolution
@@ -116,6 +117,12 @@ func (r *Router) Select(bundle *GatewayBundle, req RouteRequest) ([]Candidate, e
 // passesHardFilter applies every mandatory constraint. Each check is explicit so
 // a reviewer can see that no failure path relaxes one.
 func (r *Router) passesHardFilter(bundle *GatewayBundle, channel *SnapshotChannel, req RouteRequest) bool {
+	if channel.Transport != "" && channel.Transport != "local_sidecar" {
+		return false
+	}
+	if channel.Transport == "local_sidecar" && (channel.TenantID != req.TenantID || channel.ProjectID == "" || channel.ProjectID != req.ProjectID || channel.ConnectionID == "" || channel.CredentialMode != "byok" || channel.Protocol != "openai" || channel.BaseURL != "https://connector.invalid/v1") {
+		return false
+	}
 	if !channel.Enabled {
 		return false
 	}

@@ -17,6 +17,7 @@ export interface WorkspaceProject {
   lastObservedAt: string | null
 }
 export interface WorkspaceConnection {
+  connector?: { state: string; readyModels: string[]; models: string[]; leaseExpiresAt: string | null }
   accountStatus?: string | null
   accountPlan?: string | null
   id: string

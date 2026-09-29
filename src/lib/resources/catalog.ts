@@ -190,7 +190,9 @@ export function buildResourceCatalog(
   const linked = new Set(
     channels
       .map((channel) => stringValue(channel.metadata?.connection_id))
-      .filter((id) => id && ['direct_api', 'external_endpoint'].includes(byConnection.get(id)?.mode ?? '')),
+      .filter(
+        (id) => id && ['direct_api', 'external_endpoint', 'local_sidecar'].includes(byConnection.get(id)?.mode ?? ''),
+      ),
   )
   const resources: ExecutionResourceView[] = []
   for (const connection of connections) {

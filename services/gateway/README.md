@@ -3,6 +3,13 @@
 The standalone Go data plane. It serves the OpenAI-compatible API,
 routes to upstream providers, and writes usage facts to the outbox.
 
+Local Ollama connectors use an outbound HTTPS reverse transport. See the
+[two-machine setup](../../docs/operations/local-connector.md). This optional transport
+adds a metadata-only live Control Plane authorization check to every call for immediate
+revocation, and a dedicated PostgreSQL session lock enforcing a single Gateway.
+It reuses the Router, OpenAI adapter, attribution and v2 outbox; local upstream secrets
+remain on the connector computer. Control Plane availability is required for connector calls.
+
 The production workload holds **no master key**, reads **no control-plane configuration table**, and
 in normal operation needs no control-plane round trip on the request path:
 
