@@ -882,11 +882,22 @@ func (p *Proxy) attempt(
 			releaseAttempt()
 			classification := candidate.Adapter.ClassifyError(statusOf(err), bodyOf(err), err)
 			if ctx.Err() == nil && !errors.Is(err, context.Canceled) {
-				if classification.Kind == provider.ErrQuota && statusOf(err) != 0 {
+				var upstream *provider.UpstreamHTTPError
+				var retryAfter time.Duration
+				if errors.As(err, &upstream) {
+					retryAfter = upstream.RetryAfter
+				}
+				switch {
+				case classification.Kind == provider.ErrInvalidRequest || classification.Kind == provider.ErrContentPolicy:
+					// A caller's invalid input or rejected content says nothing
+					// about the shared upstream's availability.
+				case classification.Kind == provider.ErrQuota && statusOf(err) != 0:
 					// A provider-confirmed exhaustion makes this channel/model
 					// ineligible for the next request. Never replay this turn.
 					p.breaker.Open(breakerKey)
-				} else {
+				case classification.Kind == provider.ErrRateLimit || (statusOf(err) == http.StatusServiceUnavailable && retryAfter > 0):
+					p.breaker.Cooldown(breakerKey, retryAfter)
+				default:
 					p.breaker.RecordFailure(breakerKey)
 				}
 			}

@@ -158,7 +158,7 @@ func (a *OpenAICompatible) Stream(ctx context.Context, client *http.Client, call
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		defer func() { _ = resp.Body.Close() }()
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		return nil, &UpstreamHTTPError{Status: resp.StatusCode, Body: body}
+		return nil, newUpstreamHTTPError(resp.StatusCode, body, resp.Header, time.Now())
 	}
 	return &openAIStream{
 		resp:              resp,
@@ -170,8 +170,9 @@ func (a *OpenAICompatible) Stream(ctx context.Context, client *http.Client, call
 // UpstreamHTTPError carries a non-2xx response without leaking its body into
 // logs. The body is retained only for classification.
 type UpstreamHTTPError struct {
-	Status int
-	Body   []byte
+	Status     int
+	Body       []byte
+	RetryAfter time.Duration // normalized, bounded hint; zero means absent/invalid
 }
 
 func (e *UpstreamHTTPError) Error() string { return fmt.Sprintf("upstream http %d", e.Status) }

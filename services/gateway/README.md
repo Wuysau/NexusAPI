@@ -78,8 +78,8 @@ and rejects the local credential profile.
 | `POST /v1/chat/completions` | streaming and buffered chat |
 | `GET /v1/models` | from the signed snapshot, never an upstream call |
 | `GET /healthz` | liveness |
-| `GET /readyz` | readiness: a verified snapshot must be present |
-| `GET /versionz` | adapter versions + circuit-breaker states |
+| `GET /readyz` | readiness: fresh snapshot, responsive database, and live Redis in production; probes share a 2-second deadline |
+| `GET /versionz` | adapter versions + aggregate circuit-breaker counts; no tenant/channel/model identifiers |
 | `POST /v1/responses` | opt-in JSON/SSE text and function-call subset; see [supported fields and exclusions](../../docs/operations/gateway-limits.md#responses-compatibility) |
 | `POST /v1/embeddings` | **501** |
 

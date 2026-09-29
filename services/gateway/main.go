@@ -99,12 +99,10 @@ func run() error {
 		logger.Warn("database not reachable at startup; terminal writes will fail closed", "err", err.Error())
 	}
 
-	limiter, err := NewLimiter(env.RedisURL, logger)
+	limiter, err := newGatewayLimiter(env.RedisURL, limits.MaxConcurrent, logger)
 	if err != nil {
 		return fmt.Errorf("limiter: %w", err)
 	}
-	limiter.AcquireConcurrency("__startup__", 1) // size the guard before traffic
-	concurrencyGuardSize(limiter, limits.MaxConcurrent)
 
 	registry, err := provider.NewBuiltinRegistry()
 	if err != nil {
@@ -192,6 +190,17 @@ func run() error {
 	}
 	logger.Info("nexus-gateway stopped")
 	return nil
+}
+
+// Configure process capacity before the first acquisition. A synthetic startup
+// acquisition would both reserve a slot forever and lock in the lazy default.
+func newGatewayLimiter(redisURL string, maxConcurrent int, logger *slog.Logger) (*Limiter, error) {
+	limiter, err := NewLimiter(redisURL, logger)
+	if err != nil {
+		return nil, err
+	}
+	concurrencyGuardSize(limiter, maxConcurrent)
+	return limiter, nil
 }
 
 // concurrencyGuardSize sizes the process-wide semaphore. The guard is private

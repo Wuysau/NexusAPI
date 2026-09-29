@@ -193,6 +193,10 @@ func TestLaterSuccessfulRequestClearsPriorStreamError(t *testing.T) {
 			if strings.Contains(first, "[DONE]") || calls.Load() != 1 {
 				t.Fatalf("upstream rejection was replayed or reported complete: %s", first)
 			}
+			if status == http.StatusTooManyRequests {
+				// The later successful call occurs after the rate-limit cooldown.
+				h.breaker.SetClock(func() time.Time { return time.Now().Add(time.Minute) })
+			}
 			body := readAll(h.doChat(chatBody(chatBodyOptions{Stream: true}), nil))
 			if !strings.Contains(body, "[DONE]") || strings.Contains(body, `"error":`) {
 				t.Fatalf("later success retained failure: %s", body)

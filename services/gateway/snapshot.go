@@ -517,14 +517,14 @@ func (c *SnapshotCache) fetchAndVerify(ctx context.Context, tenantID string, now
 	return &SnapshotState{Verified: verified, EffectiveExpiry: effective, FetchedAt: now}, nil
 }
 
-// Ready reports whether at least one tenant scope has a usable snapshot.
+// Ready requires the platform key directory used by every authentication.
+// A fresh tenant bundle cannot compensate for an expired platform directory.
 func (c *SnapshotCache) Ready() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	now := c.now()
-	for _, e := range c.entries {
-		if st := e.state.Load(); st != nil && st.Fresh(now) {
-			return true
+	if e := c.entries[""]; e != nil {
+		if st := e.state.Load(); st != nil {
+			return st.Fresh(c.now())
 		}
 	}
 	return false
