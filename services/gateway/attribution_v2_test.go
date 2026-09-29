@@ -175,7 +175,7 @@ func updateSignedBundle(t *testing.T, h *testHarness, tenant string, change func
 	h.source.mu.Lock()
 	h.source.bundles[tenant] = signed
 	h.source.mu.Unlock()
-	state, err := h.snapshots.fetchAndVerify(context.Background(), tenant, time.Now())
+	state, err := h.snapshots.fetchAndVerify(context.Background(), tenant)
 	if err != nil {
 		t.Fatal(err)
 	}

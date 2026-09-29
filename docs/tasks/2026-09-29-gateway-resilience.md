@@ -196,3 +196,24 @@ The current production rate limiter falls back locally after a Redis RPM or TPM 
 - Four Chat/Responses public cases verify positive, rounded-up temporary 429 recovery hints without another dispatch or accounting event. Additional native tests cover strict profiles, cancellation preserving local capacity, immediate policy tightening, oversized costs and duration rounding without overflow.
 - Full native `go test ./...` and `go vet ./...` passed (Gateway 25.420 seconds); Linux `go test -race ./...` passed (Gateway 77.206 seconds). Six TypeScript contract files passed all 70 tests. The independent-process PostgreSQL/TLS connector suite passed all nine groups (18.21 seconds).
 - Go formatting, secret scan and diff checks passed. Independent production-code review found no blocking issue. No TypeScript production code, migration, dependency or production deployment changed.
+
+Round 8 was committed as `b180bdc` and merged/pushed to main (`d9441f8`).
+
+## Round 9 design
+
+Successful snapshot fetches currently bypass expiry enforcement. A real HTTP Control Plane fixture returning a correctly signed, already-expired bundle let `/v1/models`, Chat and Responses return 200 for either platform or tenant scope. Repeating each inference case executed the mock upstream twice and produced two reservations, terminal records and outbox events. Background refresh also replaced previously accepted state with an expired candidate. This contradicts the cache's existing promise that a successful `Get` returns fresh authority.
+
+Apply the received-configuration validation and bounded-lifetime principles documented by [Envoy xDS](https://www.envoyproxy.io/docs/envoy/latest/api-docs/xds_protocol#ttl) within NexusAPI's existing signed protocol:
+
+- Verify signed expiry strictly after the actual receipt time. Check both effective expiry and cancellation again after verification, before accepting a candidate. Network latency consumes the signed validity window; `ReceivedAt`, `FetchedAt` and the local maximum-age ceiling describe actual receipt.
+- Preserve the previous accepted generation and its original expiry when a candidate is invalid. A new expired bundle is never eligible to supply authorization or turn on BYOK degradation. Existing legacy BYOK stale behavior only uses previously accepted tenant state and still requires a fresh platform directory.
+- Make API key authentication honor the cache's error result and independently check freshness, including when time passes after `Get` returns. Keep public error codes; correct the expiry message so it also describes a responding Control Plane that supplies no valid replacement.
+- Verify cold and repeated expired HTTP responses, exact nanosecond boundaries, expiry during fetch/verification, cancellation, background state retention, recovery and the legacy/v2 stale-policy matrix. No schema, signed envelope format, dependency or production deployment change is required.
+
+## Round 9 validation
+
+- The six real HTTP cold/replay cases now return 503 for expired platform or tenant bundles through models, Chat and Responses, with no reservation, upstream execution, terminal record or outbox event. Two background-refresh cases retain exactly the previously accepted fresh/stale generation.
+- Five real HTTP policy/recovery cases retain legacy behavior: managed always refuses expired tenant configuration, BYOK refuses by default, explicit legacy BYOK can use previously accepted stale state, and v2 refuses even with that flag. All recover with exactly one new execution when a valid replacement arrives. No test grants permission from a newly received expired bundle.
+- Deterministic native cases cover the exclusive signed-expiry boundary at nanosecond precision, expiry during retrieval and verification, the local maximum-age ceiling, actual receipt timestamps, successful source returns after cancellation, and authentication checking both the cache error and its own current time.
+- Full native `go test ./...` and `go vet ./...` passed (Gateway 25.782 seconds). Linux `go test -race ./...` passed (Gateway 77.954 seconds). Six TypeScript contract files passed all 70 tests. The independent-process PostgreSQL/TLS connector suite passed all nine groups (18.57 seconds).
+- Go formatting, secret scan and diff checks passed. Independent production-code review found no blocking issue. No migration, dependency, TypeScript production change or production deployment was performed.
