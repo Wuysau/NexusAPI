@@ -554,6 +554,224 @@ it('pairs through the standalone CLI, starts a separate Gateway and lists only r
   expect(projected[0].id).toMatch(/^channel:/)
 }, 30000)
 
+it('projects connector readiness from current channel, provider, credential and approved-model facts', async () => {
+  const channel = (await db.query(`SELECT * FROM channels WHERE metadata->>'connection_id'=$1`, [connectionId])).rows[0]
+  const reportedLease = (await db.query('SELECT * FROM connector_leases WHERE connection_id=$1', [connectionId]))
+    .rows[0]
+  const projection = async () =>
+    (await (await resources(admin())).json()).resources.filter(
+      (resource: { connectionId: string }) => resource.connectionId === connectionId,
+    )
+  const originalResources = await projection()
+  expect(originalResources).toHaveLength(1)
+  expect((await (await state(admin(), params())).json()).readyModels).toEqual(models)
+  const beforeCalls = calls
+  const otherProvider = 'connector-projection-other-provider'
+  await db.query('INSERT INTO providers(id,code,name,official_base_url) VALUES($1,$1,$1,$2)', [
+    otherProvider,
+    'https://unused.example.invalid/v1',
+  ])
+  const mutations: {
+    name: string
+    table: string
+    id: string
+    field: string
+    blocked: unknown
+    restored: unknown
+    expected: string[]
+    resourceStatus?: string
+    hiddenChannel?: boolean
+  }[] = [
+    {
+      name: 'provider disabled',
+      table: 'providers',
+      id: channel.provider_id,
+      field: 'enabled',
+      blocked: false,
+      restored: true,
+      expected: [],
+      resourceStatus: 'pending',
+    },
+    {
+      name: 'credential disabled',
+      table: 'provider_credentials',
+      id: channel.provider_credential_id,
+      field: 'enabled',
+      blocked: false,
+      restored: true,
+      expected: [],
+      resourceStatus: 'disabled',
+    },
+    {
+      name: 'channel disabled',
+      table: 'channels',
+      id: channel.id,
+      field: 'enabled',
+      blocked: false,
+      restored: true,
+      expected: [],
+      resourceStatus: 'disabled',
+    },
+    {
+      name: 'credential provider mismatch',
+      table: 'provider_credentials',
+      id: channel.provider_credential_id,
+      field: 'provider_id',
+      blocked: otherProvider,
+      restored: channel.provider_id,
+      expected: [],
+      resourceStatus: 'pending',
+    },
+    {
+      name: 'credential organization mismatch',
+      table: 'provider_credentials',
+      id: channel.provider_credential_id,
+      field: 'organization_id',
+      blocked: 'other-org',
+      restored: 'connector-org',
+      expected: [],
+      hiddenChannel: true,
+    },
+    ...(
+      [
+        ['only one approved model', { ...channel.metadata, models: [models[0]] }, [models[0]]],
+        ['approved models have no ready intersection', { ...channel.metadata, models: ['not-installed'] }, []],
+        ['empty approved models', { ...channel.metadata, models: [] }, []],
+        ['malformed approved models', { ...channel.metadata, models: { [models[0]]: true } }, []],
+        ['partially malformed approved models', { ...channel.metadata, models: [models[0], 42] }, []],
+        ['wrong transport', { ...channel.metadata, transport: 'direct_api' }, []],
+      ] satisfies [string, Record<string, unknown>, string[]][]
+    ).map(([name, metadata, expected]) => ({
+      name,
+      table: 'channels',
+      id: channel.id,
+      field: 'metadata',
+      blocked: JSON.stringify(metadata),
+      restored: JSON.stringify(channel.metadata),
+      expected,
+      resourceStatus: expected.length ? 'active' : 'pending',
+    })),
+    {
+      name: 'malformed reported models',
+      table: 'connector_leases',
+      id: reportedLease.id,
+      field: 'ready_models',
+      blocked: JSON.stringify([models[0], 42]),
+      restored: JSON.stringify(models),
+      expected: [],
+      resourceStatus: 'pending',
+    },
+  ]
+  try {
+    for (const mutation of mutations) {
+      // SQL identifiers are fixed fixture values. Every fact is restored before
+      // the next case so the running connector keeps its original identity.
+      await db.query(`UPDATE ${mutation.table} SET ${mutation.field}=$1 WHERE id=$2`, [mutation.blocked, mutation.id])
+      try {
+        const displayed = await (await state(admin(), params())).json()
+        expect.soft(displayed.state, mutation.name).toBe('online')
+        expect.soft(displayed.readyModels, mutation.name).toEqual(mutation.expected)
+        const projected = await projection()
+        if (mutation.hiddenChannel) {
+          // The foreign-organization channel is hidden while this workspace's
+          // original connection remains a visible, unconfigured resource.
+          expect.soft(projected, mutation.name).toHaveLength(1)
+          expect.soft(projected[0]?.id, mutation.name).toBe(`connection:${connectionId}`)
+          expect.soft(projected[0]?.channelId, mutation.name).toBeNull()
+          expect.soft(projected[0]?.status, mutation.name).toBe('pending')
+          expect.soft(projected[0]?.health, mutation.name).toBe('unknown')
+        } else {
+          expect.soft(projected, mutation.name).toHaveLength(1)
+          expect.soft(projected[0]?.id, mutation.name).toBe(originalResources[0].id)
+          expect.soft(projected[0]?.status, mutation.name).toBe(mutation.resourceStatus)
+          expect.soft(projected[0]?.health, mutation.name).toBe(mutation.expected.length ? 'healthy' : 'unknown')
+        }
+        const listed = await gatewayFetch('/v1/models')
+        expect(listed.status, mutation.name).toBe(200)
+        expect(
+          (await listed.json()).data.map((model: { id: string }) => model.id),
+          mutation.name,
+        ).toEqual(mutation.expected)
+        expect(calls, mutation.name).toBe(beforeCalls)
+      } finally {
+        await db.query(`UPDATE ${mutation.table} SET ${mutation.field}=$1 WHERE id=$2`, [
+          mutation.restored,
+          mutation.id,
+        ])
+      }
+      expect((await (await state(admin(), params())).json()).readyModels).toEqual(models)
+    }
+  } finally {
+    await db.query('DELETE FROM providers WHERE id=$1', [otherProvider])
+  }
+  // Management readiness describes the connection, not the authorization of
+  // whichever downstream key a caller might choose for a later inference.
+  await db.query(`UPDATE downstream_api_keys SET enabled=false WHERE id='connector-key'`)
+  try {
+    expect((await (await state(admin(), params())).json()).readyModels).toEqual(models)
+  } finally {
+    await db.query(`UPDATE downstream_api_keys SET enabled=true WHERE id='connector-key'`)
+  }
+  await waitFor(async () => (await (await gatewayFetch('/v1/models')).json()).data?.length === 2)
+  expect(calls).toBe(beforeCalls)
+})
+
+it('unions eligible models for a connection while projecting each channel resource independently', async () => {
+  const channel = (await db.query(`SELECT * FROM channels WHERE metadata->>'connection_id'=$1`, [connectionId])).rows[0]
+  const secondID = 'connector-projection-second-channel'
+  const projection = async () =>
+    (await (await resources(admin())).json()).resources.filter(
+      (resource: { connectionId: string }) => resource.connectionId === connectionId,
+    )
+  const beforeCalls = calls
+  await db.query(
+    `INSERT INTO channels(id,tenant_id,provider_id,provider_credential_id,name,capabilities,metadata)
+     SELECT $1,tenant_id,provider_id,provider_credential_id,'Second connector model',capabilities,$2::jsonb FROM channels WHERE id=$3`,
+    [secondID, JSON.stringify({ ...channel.metadata, models: ['not-installed'] }), channel.id],
+  )
+  try {
+    const ids = [`channel:${channel.id}`, `channel:${secondID}`].sort()
+    const check = async (ready: string[], primaryStatus: string, secondaryStatus: string) => {
+      const displayed = await (await state(admin(), params())).json()
+      expect.soft(displayed.state).toBe('online')
+      expect.soft(displayed.readyModels).toEqual(ready)
+      const projected = await projection()
+      expect.soft(projected.map((resource: { id: string }) => resource.id).sort()).toEqual(ids)
+      for (const [id, status] of [
+        [channel.id, primaryStatus],
+        [secondID, secondaryStatus],
+      ]) {
+        const resource = projected.find((row: { channelId: string }) => row.channelId === id)
+        expect.soft(resource?.status, id).toBe(status)
+        expect.soft(resource?.health, id).toBe(status === 'active' ? 'healthy' : 'unknown')
+      }
+    }
+    await check(models, 'active', 'pending')
+    await db.query(`UPDATE channels SET metadata=jsonb_set(metadata,'{models}',$1::jsonb) WHERE id=$2`, [
+      JSON.stringify([models[0]]),
+      channel.id,
+    ])
+    await db.query(`UPDATE channels SET metadata=jsonb_set(metadata,'{models}',$1::jsonb) WHERE id=$2`, [
+      JSON.stringify([models[1], models[1]]),
+      secondID,
+    ])
+    await check(models, 'active', 'active')
+    await db.query('UPDATE channels SET enabled=false WHERE id=$1', [channel.id])
+    await check([models[1]], 'disabled', 'active')
+    await db.query('UPDATE channels SET enabled=false WHERE id=$1', [secondID])
+    await check([], 'disabled', 'disabled')
+  } finally {
+    await db.query('UPDATE channels SET enabled=true,metadata=$1::jsonb WHERE id=$2', [
+      JSON.stringify(channel.metadata),
+      channel.id,
+    ])
+    await db.query('DELETE FROM channels WHERE id=$1', [secondID])
+  }
+  expect((await (await state(admin(), params())).json()).readyModels).toEqual(models)
+  expect(await projection()).toHaveLength(1)
+  expect(calls).toBe(beforeCalls)
+})
+
 it('relays nonstreaming and streaming chat through the local process with durable project attribution and unpriced usage', async () => {
   const response = await gatewayFetch('/v1/chat/completions', chat())
   const data = await response.json()

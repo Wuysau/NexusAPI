@@ -319,3 +319,24 @@ Extend the existing [LiteLLM error-specific cooldown principle](https://docs.lit
 - Full native `go test ./...` and `go vet ./...` passed (Gateway 31.642 seconds). Six TypeScript contract files passed all 70 tests. The independent-process PostgreSQL/TLS connector suite passed all nine groups (18.60 seconds). Go formatting, secret scan and diff checks passed.
 - Final Linux `go test -race ./...` passed (Gateway 100.958 seconds), including stream-health failures and all ten exclusion scenarios.
 - No migration, dependency, public protocol, TypeScript production change or deployment was performed. The existing breaker thresholds, cooldown rules, authorization filters and no-replay boundary are unchanged.
+
+Round 14 was committed as `2624130` and merged/pushed to main (`aaa031d`).
+
+## Round 15 design
+
+Three real PostgreSQL/TLS independent-process reproductions show management readiness contradicting live authorization. Disabling the provider hides both connector models from `/v1/models`, yet connection state still reports both ready and resources remain active/healthy. Restricting the channel to one model or an uninstalled model similarly leaves both models marked ready. These state-only checks performed no inference; the existing authorization correctly refused unavailable models.
+
+Keep the existing resource projection and identities, applying the project's separation of transport health and model readiness:
+
+- Derive display-ready models from the lease report intersected with current enabled and correctly bound local-sidecar channels, provider and credential. Validate stored model lists with the same strict rules used for live authorization. A malformed channel does not grant any models.
+- A connection can have multiple channels: its readiness is the union of eligible channel approvals intersected with local readiness. A channel resource uses only its own approved models. Disabled resources cannot report healthy solely because another channel on the same connection is ready.
+- Preserve online as recent authenticated transport evidence. Management readiness does not assume any particular downstream API key grants permission; each catalog/inference request retains existing live key/project/lease checks. No new resource identity, migration, credential flow or inference capability is introduced.
+- Verify provider/credential disable, model intersections, malformed configuration, channel bindings, multiple channels and recovery against the real database and process boundary, alongside focused TypeScript projection tests.
+
+## Round 15 validation
+
+- The real PostgreSQL/TLS independent-process suite passed all eleven groups (12.90 seconds). Two added groups cover twelve state mutations and recovery, including provider/credential/channel disable, credential provider/organization bindings, model intersections, empty/malformed approval and local reports, and incorrect transport. Multiple-channel checks preserve connection-level unions, channel-specific readiness, disabled/unknown health, visibility and existing resource identities. These added state checks execute no inference and do not borrow authorization from an arbitrary project API key.
+- Eight focused TypeScript unit/contract files passed all 126 tests, including 26 new projection cases and the existing 30 live connector authorization cases. New cases cover strict model-list handling, compatible state transitions, project/organization availability, channel-scoped queries and unchanged management visibility.
+- Fourteen existing resource catalog/pool tests also passed, covering the base projection reused by the route (140 focused TypeScript tests in total).
+- `npm run typecheck`, independent `tsc --noEmit --incremental false`, targeted ESLint/Prettier, secret scan and diff checks passed. Root and independent reviews found no remaining blocking issue. Existing Go binaries were rebuilt for the process suite; no Go source changed after Round 14's complete native/race validation.
+- No migration, dependency, public resource identity or production deployment changed. Live inference authorization remains authoritative and is unchanged.

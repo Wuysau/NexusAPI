@@ -57,14 +57,14 @@ export async function GET(req: Request) {
         resource.connectionId &&
         connections.rows.some((c) => c.id === resource.connectionId && c.mode === 'local_sidecar')
       ) {
-        const connector = await connectorState(ctx, resource.connectionId)
+        const connector = await connectorState(ctx, resource.connectionId, resource.channelId ?? undefined)
         resource.status =
           connector.state === 'revoked' || resource.status === 'disabled'
             ? 'disabled'
             : connector.readyModels.length
               ? 'active'
               : 'pending'
-        resource.health = connector.readyModels.length ? 'healthy' : 'unknown'
+        resource.health = resource.status === 'active' && connector.readyModels.length ? 'healthy' : 'unknown'
       }
     }
     const response = jsonOk({ resources })
