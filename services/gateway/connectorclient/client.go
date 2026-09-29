@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"nexus/gateway/internal/retryafter"
 )
 
 type Config struct {
@@ -49,10 +51,18 @@ type job struct {
 	Deadline time.Time       `json:"deadline"`
 }
 type frame struct {
-	Type   string `json:"type"`
-	Status int    `json:"status,omitempty"`
-	Data   []byte `json:"data,omitempty"`
-	Code   string `json:"code,omitempty"`
+	Type         string `json:"type"`
+	Status       int    `json:"status,omitempty"`
+	Data         []byte `json:"data,omitempty"`
+	Code         string `json:"code,omitempty"`
+	RetryAfterMS int64  `json:"retry_after_ms,omitempty"`
+}
+
+// Keep only a normalized number on the wire. A positive HTTP-date remainder
+// shorter than one millisecond must not disappear into the no-hint default.
+func localRetryAfterMillis(headers http.Header, now time.Time) int64 {
+	delay := retryafter.Parse(headers, now)
+	return int64((delay + time.Millisecond - 1) / time.Millisecond)
 }
 
 var errRemote = errors.New("remote connector authorization or transport unavailable")
@@ -296,6 +306,10 @@ func (c *Client) execute(parent context.Context, token string, j job) {
 		defer upstream.Body.Close()
 		status = upstream.StatusCode
 	}
+	var retryAfterMS int64
+	if err == nil && (status == http.StatusTooManyRequests || status == http.StatusServiceUnavailable) {
+		retryAfterMS = localRetryAfterMillis(upstream.Header, time.Now())
+	}
 	// Upload uses the parent context so a local timeout can still report a sanitized failure.
 	uploadCtx, uploadCancel := context.WithTimeout(parent, 10*time.Minute)
 	defer uploadCancel()
@@ -314,7 +328,7 @@ func (c *Client) execute(parent context.Context, token string, j job) {
 			_ = encoder.Encode(frame{Type: "error", Code: code})
 			return
 		}
-		if encoder.Encode(frame{Type: "meta", Status: status}) != nil {
+		if encoder.Encode(frame{Type: "meta", Status: status, RetryAfterMS: retryAfterMS}) != nil {
 			return
 		}
 		if status != 200 {

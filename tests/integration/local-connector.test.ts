@@ -53,6 +53,8 @@ const toolArgumentMarker = 'private tool argument marker 19aa'
 const toolResultMarker = 'private tool result marker 380c'
 const refusalMarker = 'private refusal marker 2da7'
 const refusalFragments = [refusalMarker.slice(0, 12), refusalMarker.slice(12)]
+const retryHeaderMarker = 'private retry header marker 12cb'
+const retryBodyMarker = 'private retry body marker 513a'
 const reasoningToolCalls = [
   {
     id: 'call_lookup',
@@ -218,6 +220,17 @@ beforeAll(async () => {
       if (!finished) cancelled++
     })
     if (mode === 'timeout') return
+    if (mode === 'cooldown_429' || mode === 'cooldown_503') {
+      finished = true
+      res.writeHead(mode === 'cooldown_429' ? 429 : 503, {
+        'retry-after-ms': '1500',
+        'retry-after': '60',
+        'x-private-provider-header': retryHeaderMarker,
+        'set-cookie': retryHeaderMarker,
+      })
+      res.end(JSON.stringify({ error: { message: retryBodyMarker } }))
+      return
+    }
     if (mode === 'error') {
       finished = true
       res.writeHead(429)
@@ -333,6 +346,7 @@ afterAll(async () => {
   await writeFile(path.join(folder, 'process-summary.log'), processLogs)
   await db.end()
   expect(processLogs).not.toContain(refusalMarker)
+  for (const marker of [retryHeaderMarker, retryBodyMarker]) expect(processLogs).not.toContain(marker)
 })
 
 it('creates an owned connection, blocks viewer pairing and forged heartbeat, stores only a one-use pairing hash', async () => {
@@ -1338,6 +1352,114 @@ it('records absent usage as unknown and never invents a price', async () => {
   expect(event.usage.output_tokens).toBeNull()
 })
 
+it('honors bounded local retry hints for later requests while preserving model isolation, usage and privacy', async () => {
+  const executed: Array<{ id: string; status: 'failed' | 'completed' }> = []
+  const blockedIds: string[] = []
+  const before = calls
+  try {
+    for (const [status, model, otherModel] of [
+      [503, models[1], models[0]],
+      [429, models[0], models[1]],
+    ] as const) {
+      const started = calls
+      mode = `cooldown_${status}`
+      const rejected = await gatewayFetch('/v1/chat/completions', chat(false, model))
+      const rejection = await rejected.text()
+      expect(rejected.status).toBeGreaterThanOrEqual(400)
+      expect(calls).toBe(started + 1)
+      expect(rejected.headers.get('x-request-id')).toBeTruthy()
+      executed.push({ id: rejected.headers.get('x-request-id')!, status: 'failed' })
+      for (const marker of [retryHeaderMarker, retryBodyMarker]) {
+        expect(rejection).not.toContain(marker)
+        expect(JSON.stringify(Object.fromEntries(rejected.headers))).not.toContain(marker)
+      }
+      mode = 'normal'
+      const blocked = await gatewayFetch('/v1/chat/completions', chat(false, model))
+      await blocked.text()
+      expect(blocked.status).toBe(503)
+      expect(calls).toBe(started + 1)
+      expect(blocked.headers.get('x-request-id')).toBeTruthy()
+      blockedIds.push(blocked.headers.get('x-request-id')!)
+
+      const other = await gatewayFetch('/v1/chat/completions', chat(false, otherModel))
+      expect(other.status).toBe(200)
+      expect((await other.json()).choices[0].message.content).toBe('Hello Ollama')
+      expect(calls).toBe(started + 2)
+      expect(other.headers.get('x-request-id')).toBeTruthy()
+      executed.push({ id: other.headers.get('x-request-id')!, status: 'completed' })
+
+      // A 1500 ms hint must recover promptly. The 60-second secondary header and
+      // the legacy 30-second default would both exceed this bounded wait.
+      await waitFor(async () => {
+        const recovered = await gatewayFetch('/v1/chat/completions', chat(true, model))
+        const text = await recovered.text()
+        expect(recovered.headers.get('x-request-id')).toBeTruthy()
+        if (recovered.status === 503) {
+          blockedIds.push(recovered.headers.get('x-request-id')!)
+          expect(calls).toBe(started + 2)
+          return false
+        }
+        expect(recovered.status, text).toBe(200)
+        expect(text).toContain('Ollama')
+        expect(text).toContain('[DONE]')
+        executed.push({ id: recovered.headers.get('x-request-id')!, status: 'completed' })
+        return true
+      }, 5000)
+      expect(calls).toBe(started + 3)
+    }
+  } finally {
+    mode = 'normal'
+  }
+  expect(calls - before).toBe(6)
+  const requestIds = executed.map((request) => request.id)
+  expect(new Set(requestIds).size).toBe(6)
+  await waitFor(
+    async () =>
+      (await db.query('SELECT id FROM outbox_events WHERE aggregate_id=ANY($1::text[])', [requestIds])).rowCount === 6,
+  )
+  const records = (
+    await db.query(
+      `SELECT f.request_id,f.project_id,f.api_key_id,a.connection_id,a.price_version_id,a.execution_mode,a.status FROM request_project_facts f JOIN attempts a ON a.request_id=f.request_id WHERE f.request_id=ANY($1::text[])`,
+      [requestIds],
+    )
+  ).rows
+  expect(records).toHaveLength(6)
+  expect(new Set(records.map((record) => record.request_id)).size).toBe(6)
+  for (const record of records)
+    expect(record).toMatchObject({
+      project_id: 'connector-project',
+      api_key_id: 'connector-key',
+      connection_id: connectionId,
+      price_version_id: null,
+      execution_mode: 'byok',
+      status: executed.find((request) => request.id === record.request_id)!.status,
+    })
+  expect((await db.query('SELECT id FROM attempts WHERE request_id=ANY($1::text[])', [blockedIds])).rowCount).toBe(0)
+  expect(
+    (await db.query('SELECT id FROM outbox_events WHERE aggregate_id=ANY($1::text[])', [blockedIds])).rowCount,
+  ).toBe(0)
+  const events = (
+    await db.query('SELECT aggregate_id,payload FROM outbox_events WHERE aggregate_id=ANY($1::text[])', [requestIds])
+  ).rows
+  expect(events).toHaveLength(6)
+  for (const event of events) {
+    const status = executed.find((request) => request.id === event.aggregate_id)!.status
+    expect(event.payload.status).toBe(status)
+    expect(event.payload.price_version_id).toBeNull()
+    expect(event.payload.attribution).toMatchObject({
+      project_id: 'connector-project',
+      api_key_id: 'connector-key',
+      connection_id: connectionId,
+      execution_mode: 'byok',
+    })
+    expect(event.payload.usage).toMatchObject(
+      status === 'failed' ? { input_tokens: null, output_tokens: null } : { input_tokens: 5, output_tokens: 2 },
+    )
+  }
+  for (const marker of [retryHeaderMarker, retryBodyMarker])
+    expect(JSON.stringify(events) + gatewayLogs + cliLogs).not.toContain(marker)
+}, 15000)
+
 it('propagates cancellation, timeout and midstream failure without replay or leaking upstream errors', async () => {
   mode = 'cancel'
   const abort = new AbortController()
@@ -1401,6 +1523,13 @@ it('rejects a second Gateway instance, disconnected connectors, identity rotatio
   expect(JSON.stringify(await (await listConnections(admin())).json())).not.toContain(pairingToken)
   expect(gatewayLogs + cliLogs).not.toContain(pairingToken)
   expect(gatewayLogs + cliLogs).not.toContain('private prompt marker')
-  for (const marker of [reasoningMarker, toolArgumentMarker, toolResultMarker, refusalMarker])
+  for (const marker of [
+    reasoningMarker,
+    toolArgumentMarker,
+    toolResultMarker,
+    refusalMarker,
+    retryHeaderMarker,
+    retryBodyMarker,
+  ])
     expect(gatewayLogs + cliLogs).not.toContain(marker)
 })
