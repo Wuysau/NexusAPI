@@ -26,6 +26,8 @@ Repository licenses are governed by their own LICENSE files. Integration here is
 
 Compatible message history follows the same parameter-fidelity principle: preserve caller-supplied `reasoning_content` needed for [DeepSeek tool follow-ups](https://api-docs.deepseek.com/guides/thinking_mode/), and map it to the `reasoning` field in [Ollama's OpenAI protocol](https://github.com/ollama/ollama/blob/main/openai/openai.go). Native adapters reject history they cannot translate. NexusAPI does not synthesize placeholder reasoning or infer thinking settings from model names. Two-turn HTTP and standalone-connector tests verify the original history and tool results survive the round trip.
 
+The same principle applies to output: [OpenAI structured-output refusals](https://developers.openai.com/api/docs/guides/structured-outputs) are preserved as typed Chat fields and Responses content/events, with assistant history available for continuation. A normal refusal retains completion and reliable usage facts; it is not an empty answer or a transport failure. Existing output bounds, privacy and replay rules still apply.
+
 ## External contracts
 
 - [Stripe Checkout fulfillment](https://docs.stripe.com/checkout/fulfillment): complete orders via verified server callbacks, not browser redirects.

@@ -30,7 +30,7 @@ func (a *Anthropic) ValidateRequest(req *CanonicalRequest) error {
 		return errNilRequest
 	}
 	for _, message := range req.Messages {
-		if message.ReasoningContent != nil {
+		if message.ReasoningContent != nil || message.Refusal != nil {
 			return &UnsupportedParameterError{Param: "messages"}
 		}
 	}
@@ -57,7 +57,7 @@ func (g *Gemini) ValidateRequest(req *CanonicalRequest) error {
 		return &UnsupportedParameterError{Param: "response_format"}
 	}
 	for _, message := range req.Messages {
-		if message.ReasoningContent != nil || message.Role == "tool" || message.ToolCallID != "" || !emptyJSONList(message.ToolCalls) || !textOnlyContent(message.Content) {
+		if message.ReasoningContent != nil || message.Refusal != nil || message.Role == "tool" || message.ToolCallID != "" || !emptyJSONList(message.ToolCalls) || !textOnlyContent(message.Content) {
 			return &UnsupportedParameterError{Param: "messages"}
 		}
 	}

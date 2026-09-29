@@ -45,13 +45,17 @@ func parseToolDeltas(raw json.RawMessage) ([]toolDelta, error) {
 type aggregateTool struct{ id, name, arguments strings.Builder }
 
 type responseAggregate struct {
-	text, reasoning strings.Builder
-	tools           map[int]*aggregateTool
-	size, limit     int
+	text, reasoning, refusal strings.Builder
+	refusalSeen              bool
+	tools                    map[int]*aggregateTool
+	size, limit              int
 }
 
 func (a *responseAggregate) add(c provider.CanonicalChunk, deltas []toolDelta) error {
 	size := len(c.Text) + len(c.Reasoning)
+	if c.Refusal != nil {
+		size += len(*c.Refusal)
+	}
 	for _, d := range deltas {
 		size += len(d.ID) + len(d.Function.Name) + len(d.Function.Arguments) + len(d.Type)
 	}
@@ -64,6 +68,10 @@ func (a *responseAggregate) add(c provider.CanonicalChunk, deltas []toolDelta) e
 	a.size += size
 	a.text.WriteString(c.Text)
 	a.reasoning.WriteString(c.Reasoning)
+	if c.Refusal != nil {
+		a.refusalSeen = true
+		a.refusal.WriteString(*c.Refusal)
+	}
 	for _, d := range deltas {
 		if a.tools == nil {
 			a.tools = make(map[int]*aggregateTool)
@@ -83,6 +91,12 @@ func (a *responseAggregate) message() map[string]any {
 	m := map[string]any{"role": "assistant", "content": a.text.String()}
 	if a.reasoning.Len() > 0 {
 		m["reasoning_content"] = a.reasoning.String()
+	}
+	if a.refusalSeen {
+		m["refusal"] = a.refusal.String()
+		if a.text.Len() == 0 {
+			m["content"] = nil
+		}
 	}
 	if len(a.tools) > 0 {
 		if a.text.Len() == 0 {
