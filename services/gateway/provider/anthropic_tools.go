@@ -70,18 +70,21 @@ func anthropicTools(tools, choice json.RawMessage) (json.RawMessage, json.RawMes
 }
 
 func anthropicMessageContent(msg Message) (json.RawMessage, error) {
+	content, err := anthropicImageContent(msg.Content)
+	if err != nil {
+		return nil, err
+	}
 	if msg.Role == "tool" {
 		if msg.ToolCallID == "" {
 			return nil, fmt.Errorf("anthropic: tool result missing call id")
 		}
-		content := msg.Content
 		if len(content) == 0 || string(content) == "null" {
 			content = json.RawMessage(`""`)
 		}
 		return json.Marshal([]any{map[string]any{"type": "tool_result", "tool_use_id": msg.ToolCallID, "content": content}})
 	}
 	if len(msg.ToolCalls) == 0 || string(msg.ToolCalls) == "null" {
-		return msg.Content, nil
+		return content, nil
 	}
 	if msg.Role != "assistant" {
 		return nil, fmt.Errorf("anthropic: tool calls require assistant role")
@@ -98,14 +101,14 @@ func anthropicMessageContent(msg Message) (json.RawMessage, error) {
 		return nil, fmt.Errorf("anthropic: invalid tool calls")
 	}
 	var blocks []json.RawMessage
-	if len(msg.Content) > 0 && string(msg.Content) != "null" {
+	if len(content) > 0 && string(content) != "null" {
 		var text string
-		if json.Unmarshal(msg.Content, &text) == nil {
+		if json.Unmarshal(content, &text) == nil {
 			if text != "" {
 				block, _ := json.Marshal(map[string]string{"type": "text", "text": text})
 				blocks = append(blocks, block)
 			}
-		} else if err := json.Unmarshal(msg.Content, &blocks); err != nil {
+		} else if err := json.Unmarshal(content, &blocks); err != nil {
 			return nil, fmt.Errorf("anthropic: invalid assistant content")
 		}
 	}

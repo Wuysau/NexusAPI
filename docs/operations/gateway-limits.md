@@ -4,6 +4,7 @@ Set these variables on the Go gateway process. The signed tenant policy may impo
 
 | Variable | Default | Meaning |
 |---|---|---|
+| `GATEWAY_MAX_BODY_BYTES` | `1048576` (1 MiB) | Complete incoming JSON request limit, including inline base64 media; configurable from 1024 bytes to 32 MiB. |
 | `GATEWAY_MAX_CONCURRENT` | `256` | Process concurrency ceiling; also the upper bound for tenant concurrency policy. |
 | `GATEWAY_CHANNEL_MAX_CONCURRENT` | `64` | Shared concurrent requests per channel across tenants and gateway instances; range 1–100000. |
 | `GATEWAY_CONCURRENCY_WAIT_MS` | `0` | Wait for admission capacity; 0 rejects immediately, maximum 30000 ms. Cancellation also stops waiting. |
@@ -82,6 +83,10 @@ Chat `stop` accepts a string, an array of at most four strings, or `null`. Omitt
 Each execution adapter also validates whether it can represent the canonical request before the Gateway resolves credentials, captures execution or reserves a budget. This validation only narrows the existing authorized, healthy and billable Router candidates. The selected compatible candidates retain the existing payment-mode, price and retry rules. When all eligible candidates reject an input field, the Gateway returns 400 `unsupported_parameter` with its field name and no upstream request or usage event.
 
 The current native Gemini adapter supports text messages and streaming. It rejects function definitions, forced tool selection, tool-call history/results, non-text content parts and structured response formats because those translations are not implemented. The native Anthropic adapter retains its existing tools support and rejects structured response formats. Omitted/null options, empty tool lists and the exact format `{"type":"text"}` add no constraint; Gemini also accepts `auto`/`none` tool choice with no tools. These are adapter implementation limits, not claims about the vendors' native capabilities.
+
+The native Anthropic adapter converts Chat `image_url` parts to `image/source` blocks, including image content in tool results and assistant tool history. Supported references are absolute HTTPS URLs without user information, or `data:image/{jpeg,png,gif,webp};base64,...` containing valid nonempty standard base64. Image `detail` may be omitted, null or `auto`; `low`, `high`, unknown image options and unsupported references return `unsupported_parameter` on `messages` before credentials or reservation. HTTPS-only is NexusAPI's current conversion subset. The Gateway forwards image references/data without downloading media or reading local files. Already-native image blocks retain their existing pass-through behavior.
+
+Anthropic system/developer messages currently become a plain system string. Images, other non-text parts and extra text metadata such as `cache_control` are rejected there because flattening would discard them. Ordinary text remains supported. The total request, including base64 and JSON overhead, must fit `GATEWAY_MAX_BODY_BYTES`; vendor image/model limits may be stricter. Image dimensions, token counts and prices are not inferred from the payload.
 
 OpenAI-compatible channels, including the local Ollama path, preserve tools, tool choice and response-format fields through the existing serializer. Custom model names are not used to reject those fields. Whether the selected model itself supports them remains subject to its approved configuration and upstream validation. Responses requests share the same checks after their existing conversion into Chat.
 
