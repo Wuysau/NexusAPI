@@ -468,7 +468,7 @@ func (p *Proxy) ServeChatCompletions(w http.ResponseWriter, r *http.Request) {
 		if result.err != nil || result.outcome != OutcomeCompleted {
 			p.writeStreamError(w, requestID, apiErrorForResult(result))
 		} else {
-			if err := p.writeSSE(http.NewResponseController(w), w, []byte("data: [DONE]\n\n")); err != nil {
+			if err := p.writeFinalSSE(w, []byte("data: [DONE]\n\n")); err != nil {
 				p.logger.Debug("terminal stream write failed", "request_id", requestID)
 			}
 		}
@@ -477,11 +477,16 @@ func (p *Proxy) ServeChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// Non-streaming bodies are written only now, after the usage fact is
 	// durable. A streaming response has necessarily already started.
 	if !streaming && result.body != nil && !result.wroteHeader {
-		w.Header().Set("content-type", "application/json")
-		w.Header().Set("x-request-id", requestID)
-		w.WriteHeader(http.StatusOK)
-		if _, err := w.Write(result.body); err != nil {
-			p.logger.Warn("client write failed after persist", "request_id", requestID, "err", err.Error())
+		if err := p.withDownstreamWriteDeadline(w, terminalWrite, func() error {
+			w.Header().Set("content-type", "application/json")
+			w.Header().Set("x-request-id", requestID)
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write(result.body); err != nil {
+				return err
+			}
+			return flushBufferedResponse(w)
+		}); err != nil {
+			p.logger.Warn("client write failed after persist", "request_id", requestID)
 		}
 		result.wroteHeader = true
 	}
@@ -1209,16 +1214,20 @@ var errUpstreamIdle = errors.New("upstream idle timeout")
 
 // writeSSE writes one event with a bounded write deadline.
 func (p *Proxy) writeSSE(controller *http.ResponseController, w http.ResponseWriter, payload []byte) error {
-	if p.limits.IdleTimeout > 0 {
-		_ = controller.SetWriteDeadline(time.Now().Add(p.limits.IdleTimeout))
-	}
-	if _, err := w.Write(payload); err != nil {
-		return &downstreamWriteError{err}
-	}
-	if err := controller.Flush(); err != nil {
-		return &downstreamWriteError{err}
-	}
-	return nil
+	return p.writeSSEWithPhase(controller, w, payload, intermediateWrite)
+}
+
+func (p *Proxy) writeFinalSSE(w http.ResponseWriter, payload []byte) error {
+	return p.writeSSEWithPhase(http.NewResponseController(w), w, payload, terminalWrite)
+}
+
+func (p *Proxy) writeSSEWithPhase(controller *http.ResponseController, w http.ResponseWriter, payload []byte, phase downstreamWritePhase) error {
+	return p.withDownstreamWriteDeadline(w, phase, func() error {
+		if _, err := w.Write(payload); err != nil {
+			return err
+		}
+		return controller.Flush()
+	})
 }
 
 func sseChunk(id, requestID, model string, created int64, delta map[string]any, finishReason any, usage map[string]any, includeUsageNull ...bool) []byte {
