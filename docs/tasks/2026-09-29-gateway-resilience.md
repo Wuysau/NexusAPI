@@ -340,3 +340,24 @@ Keep the existing resource projection and identities, applying the project's sep
 - Fourteen existing resource catalog/pool tests also passed, covering the base projection reused by the route (140 focused TypeScript tests in total).
 - `npm run typecheck`, independent `tsc --noEmit --incremental false`, targeted ESLint/Prettier, secret scan and diff checks passed. Root and independent reviews found no remaining blocking issue. Existing Go binaries were rebuilt for the process suite; no Go source changed after Round 14's complete native/race validation.
 - No migration, dependency, public resource identity or production deployment changed. Live inference authorization remains authoritative and is unchanged.
+
+Round 15 was committed as `37c3a29` and merged/pushed to main (`dd28d39`).
+
+## Round 16 design
+
+The existing cancelable snapshot gate merges successful refreshes but serializes failures. A real HTTP source returning 503 after 30 ms caused sixteen concurrent cold-cache callers to fetch sixteen times over 517.53 ms; an expired-cache group took 495.96 ms. Individual waiting callers could cancel, and the old generation remained intact. Authentication precedes the execution timeout, so this queue can add many fetch-timeout periods during a Control Plane outage.
+
+Apply the duplicate-work sharing pattern documented by [Go singleflight](https://pkg.go.dev/golang.org/x/sync/singleflight) within the current cache:
+
+- Track one typed refresh result per scope under a short mutex. Concurrent Get and background refresh callers share that operation's success or failure. Clear it immediately on completion; new requests can recover without waiting for a negative-cache TTL.
+- Keep the initiating caller's context and synchronous fetch lifecycle. Waiters observe their own cancellation without canceling someone else's fetch. Keep unrelated scopes independent and preserve background refresh of still-fresh directories for revocation propagation.
+- Preserve signature, schema, tenant and receipt/verification expiry checks, atomic generation replacement, original last-good expiry and existing stale-state error contracts. Recheck freshness after waiting so delayed delivery cannot return an expired successful result.
+- Verify deterministic concurrent HTTP failures, malformed envelopes, immediate recovery, mixed background/request callers, cancellation and scope isolation. No new dependency, migration or public protocol is required.
+
+## Round 16 validation
+
+- Four real HTTP cases cover cold/expired caches and 503/malformed responses with sixteen deterministically overlapping callers. Each previously fetched sixteen times; each now fetches once and permits the next request to recover immediately. A fifth case pauses delivery until the successful generation expires and verifies refusal without another fetch. These cases passed ten repetitions.
+- Nine independent scenarios cover both Get/background ownership orders, success/failure sharing, still-fresh background updates, retained fresh/expired generations, independent waiter cancellation, shared owner cancellation with immediate later recovery, and unrelated tenant progress. The old implementation failed the duplicate-refresh and owner-cancellation assertions; the new implementation passed ten repetitions. Independent production and test reviews found no blocking issue.
+- The original 30 ms delayed-503 HTTP fixture now performs one fetch for sixteen callers, measuring 52.83 ms cold and 30.54 ms expired on the shared host, versus the original 517.53/495.96 ms. Separate waiting callers still cancel in about 10 ms. These are local fault-fixture measurements, not production latency claims.
+- Full native `go test ./...` and `go vet ./...` passed (Gateway 26.629 seconds). Linux `go test -race ./...` passed (Gateway 94.872 seconds). Seventy TypeScript contract tests and all eleven independent-process PostgreSQL/TLS connector groups passed (17.04 seconds). Go formatting, secret scan and diff checks passed.
+- No migration, dependency, TypeScript production change, deployment or authorization-policy change was made. Completed failures are not cached and successful shared results retain signed freshness checks.
