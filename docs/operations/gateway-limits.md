@@ -71,6 +71,8 @@ Unverified connector models are omitted; other confirmed candidates can still be
 
 ## Request parameter validation
 
+Chat message history preserves an explicit string `reasoning_content`, including an empty string. Ollama channels receive the same value as `reasoning`; other compatible channels retain `reasoning_content`. Provider selection uses signed channel metadata, never model names or URLs. Missing/null history remains omitted, and invalid field types fail before execution. The gateway does not invent missing reasoning or enable a provider's thinking mode. Native Anthropic/Gemini adapters reject this history with `unsupported_parameter` on `messages` before credential access or reservation because their current translation cannot preserve it. Responses keeps its existing documented input subset.
+
 An explicit Chat `max_completion_tokens` keeps that field name for OpenAI, Qwen and custom compatible providers. Responses `max_output_tokens` uses the same path. Explicit `max_tokens` remains the legacy field; when both non-null fields are supplied, the existing modern-field precedence applies. Null or omitted limits do not invent an upstream cap. The reservation estimate uses the same effective value regardless of the wire name.
 
 Known Ollama and DeepSeek channels retain their documented `max_tokens` mapping, including modern client input. The adapter uses the provider code from the signed channel, with its registered adapter code as the legacy fallback. Model names and endpoint URLs do not select a parameter dialect. Anthropic and Gemini retain their native fields and existing defaults. A compatible endpoint or individual model may still reject a parameter it does not support; the Gateway does not retry inference under a different field name.

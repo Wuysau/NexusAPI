@@ -130,6 +130,8 @@ curl -N https://gateway.example.com/v1/chat/completions \
 
 Chat 的 `max_tokens` 和 `max_completion_tokens` 都会作为有效输出上限发给 Ollama 的 `max_tokens`；两者同时非空时采用 `max_completion_tokens`。远端启用 `GATEWAY_ENABLE_RESPONSES=true` 后，[现有 Responses 子集](./gateway-limits.md#responses-compatibility)也可经同一路径调用，其 `max_output_tokens` 使用同样的上限映射。Ollama 的本地接口仍为 `/v1/chat/completions`，无需更新连接器配置或 CLI。其他提供方的字段选择遵循各自已配置的协议。
 
+对于支持工具调用和推理输出的 Ollama 模型，Chat 会返回统一的 `reasoning_content`。下一轮请完整保留 assistant 消息中的该字段和 `tool_calls`，并按 `tool_call_id` 提供工具结果；网关会将推理历史映射回 Ollama 的 `reasoning`。普通及流式两轮调用、多个工具及分片参数均有本地 mock 验证。实际模型仍需支持对应能力；网关不会补造推理内容、代为执行工具或启用 thinking 模式。推理文本和工具参数、结果只进入模型请求，不写入用量记录或进程日志。
+
 ## 5. 撤销、轮换和故障排查
 
 重新生成配对令牌会立即撤销原身份与租约；用新的私有身份文件重新配对。撤销连接会同时撤销租约、身份、未使用配对令牌并停用关联 Channel，历史记录保留。取消项目绑定、归档项目、禁用项目 Key 或 Channel 后，下一次连接器调用会被实时授权检查拒绝，不等快照刷新。

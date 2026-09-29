@@ -61,6 +61,9 @@ type Message struct {
 	Name       string          `json:"name,omitempty"`
 	ToolCallID string          `json:"tool_call_id,omitempty"`
 	ToolCalls  json.RawMessage `json:"tool_calls,omitempty"`
+	// Explicit caller-supplied history, including an intentionally empty value.
+	// Never synthesize reasoning when the caller did not provide it.
+	ReasoningContent *string `json:"reasoning_content,omitempty"`
 }
 
 // CanonicalRequest is the provider-agnostic chat request.

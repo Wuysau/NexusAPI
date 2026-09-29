@@ -24,6 +24,8 @@ Research date: 2026-09-29. These are independently implemented design ideas; no 
 
 Repository licenses are governed by their own LICENSE files. Integration here is through documented protocols and original code; listing a project does not relicense its code. NexusAPI remains MIT. OAuth impersonation, copying browser cookies and treating subscription pools as unlimited API credits were not adopted.
 
+Compatible message history follows the same parameter-fidelity principle: preserve caller-supplied `reasoning_content` needed for [DeepSeek tool follow-ups](https://api-docs.deepseek.com/guides/thinking_mode/), and map it to the `reasoning` field in [Ollama's OpenAI protocol](https://github.com/ollama/ollama/blob/main/openai/openai.go). Native adapters reject history they cannot translate. NexusAPI does not synthesize placeholder reasoning or infer thinking settings from model names. Two-turn HTTP and standalone-connector tests verify the original history and tool results survive the round trip.
+
 ## External contracts
 
 - [Stripe Checkout fulfillment](https://docs.stripe.com/checkout/fulfillment): complete orders via verified server callbacks, not browser redirects.

@@ -29,6 +29,11 @@ func (a *Anthropic) ValidateRequest(req *CanonicalRequest) error {
 	if req == nil {
 		return errNilRequest
 	}
+	for _, message := range req.Messages {
+		if message.ReasoningContent != nil {
+			return &UnsupportedParameterError{Param: "messages"}
+		}
+	}
 	if !textOnlyResponseFormat(req.ResponseFormat) {
 		return &UnsupportedParameterError{Param: "response_format"}
 	}
@@ -52,7 +57,7 @@ func (g *Gemini) ValidateRequest(req *CanonicalRequest) error {
 		return &UnsupportedParameterError{Param: "response_format"}
 	}
 	for _, message := range req.Messages {
-		if message.Role == "tool" || message.ToolCallID != "" || !emptyJSONList(message.ToolCalls) || !textOnlyContent(message.Content) {
+		if message.ReasoningContent != nil || message.Role == "tool" || message.ToolCallID != "" || !emptyJSONList(message.ToolCalls) || !textOnlyContent(message.Content) {
 			return &UnsupportedParameterError{Param: "messages"}
 		}
 	}

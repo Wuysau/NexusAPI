@@ -48,6 +48,18 @@ let gatewayLogs = '',
 let gatewayEnv: NodeJS.ProcessEnv
 let tlsAgent: HTTPSAgent
 const upstreamTokenLimits: Array<{ max_tokens?: number; max_completion_tokens?: number }> = []
+const reasoningMarker = 'private reasoning marker d2f8'
+const toolArgumentMarker = 'private tool argument marker 19aa'
+const toolResultMarker = 'private tool result marker 380c'
+const reasoningToolCalls = [
+  {
+    id: 'call_lookup',
+    type: 'function',
+    function: { name: 'lookup', arguments: JSON.stringify({ query: toolArgumentMarker }) },
+  },
+  { id: 'call_status', type: 'function', function: { name: 'status', arguments: '{}' } },
+]
+let verifiedReasoningReplays = 0
 const params = () => ({ params: Promise.resolve({ id: connectionId }) })
 const admin = (method = 'GET', body?: unknown, authCookie = cookie) =>
   new Request('http://localhost/api/connections', {
@@ -210,9 +222,70 @@ beforeAll(async () => {
       res.end(JSON.stringify({ error: { message: 'SECRET-UPSTREAM-KEY private prompt marker 91fb' } }))
       return
     }
-    res.writeHead(200, { 'content-type': 'text/event-stream' })
     const event = (delta: unknown, finish: string | null = null) =>
       `data: ${JSON.stringify({ id: 'mock-1', object: 'chat.completion.chunk', model: body.model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`
+    if (mode === 'reasoning_tools') {
+      if (body.messages.length === 1) {
+        res.writeHead(200, { 'content-type': 'text/event-stream' })
+        res.write(event({ role: 'assistant', reasoning: reasoningMarker.slice(0, 12) }))
+        res.write(event({ reasoning: reasoningMarker.slice(12) }))
+        res.write(
+          event({
+            tool_calls: reasoningToolCalls.map((call, index) => ({
+              ...call,
+              index,
+              function: { name: call.function.name, arguments: call.function.arguments.slice(0, 1) },
+            })),
+          }),
+        )
+        res.write(
+          event({
+            tool_calls: reasoningToolCalls.map((call, index) => ({
+              index,
+              function: { arguments: call.function.arguments.slice(1) },
+            })),
+          }),
+        )
+        res.write(event({}, 'tool_calls'))
+        finished = true
+        res.end('data: [DONE]\n\n')
+        return
+      }
+      const assistant = body.messages[1]
+      const valid =
+        body.messages.length === 4 &&
+        assistant?.role === 'assistant' &&
+        assistant.reasoning === reasoningMarker &&
+        !Object.hasOwn(assistant, 'reasoning_content') &&
+        assistant.content === null &&
+        Array.isArray(assistant.tool_calls) &&
+        assistant.tool_calls.length === reasoningToolCalls.length &&
+        reasoningToolCalls.every((expected, index) => {
+          const call = assistant.tool_calls[index]
+          return (
+            call?.id === expected.id &&
+            call.type === expected.type &&
+            call.function?.name === expected.function.name &&
+            call.function.arguments === expected.function.arguments
+          )
+        }) &&
+        body.messages[2].role === 'tool' &&
+        body.messages[2].tool_call_id === reasoningToolCalls[0].id &&
+        body.messages[2].content === toolResultMarker &&
+        body.messages[3].role === 'tool' &&
+        body.messages[3].tool_call_id === reasoningToolCalls[1].id &&
+        body.messages[3].content === 'ready'
+      if (!valid) {
+        finished = true
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(
+          JSON.stringify({ error: { type: 'invalid_request_error', message: 'Tool history was not preserved.' } }),
+        )
+        return
+      }
+      verifiedReasoningReplays++
+    }
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
     res.write(event({ role: 'assistant', content: 'Hello ' }))
     if (mode === 'cancel') return
     if (mode === 'truncated') {
@@ -865,6 +938,143 @@ it('keeps modern Chat and Responses output limits effective at the local Ollama 
     })
 })
 
+it('preserves reasoning and two tool calls through the local connector across both Chat response modes', async () => {
+  type ToolCall = (typeof reasoningToolCalls)[number]
+  type AssistantMessage = {
+    role: 'assistant'
+    content: string | null
+    reasoning_content: string
+    tool_calls: ToolCall[]
+  }
+  async function assistantMessage(response: Response, stream: boolean): Promise<AssistantMessage> {
+    if (!stream) {
+      const body = await response.json()
+      expect(body.choices[0].finish_reason).toBe('tool_calls')
+      return body.choices[0].message
+    }
+    const text = await response.text()
+    expect(text).toContain('data: [DONE]')
+    const message: AssistantMessage = { role: 'assistant', content: null, reasoning_content: '', tool_calls: [] }
+    let finishReason = ''
+    for (const frame of text.split('\n\n')) {
+      if (!frame.startsWith('data: ') || frame === 'data: [DONE]') continue
+      const chunk = JSON.parse(frame.slice(6)) as {
+        choices: Array<{
+          finish_reason?: string | null
+          delta: {
+            content?: string
+            reasoning_content?: string
+            tool_calls?: Array<{
+              index: number
+              id?: string
+              type?: string
+              function?: { name?: string; arguments?: string }
+            }>
+          }
+        }>
+      }
+      for (const choice of chunk.choices) {
+        message.reasoning_content += choice.delta.reasoning_content ?? ''
+        if (choice.delta.content) message.content = (message.content ?? '') + choice.delta.content
+        for (const delta of choice.delta.tool_calls ?? []) {
+          const call = (message.tool_calls[delta.index] ??= {
+            id: '',
+            type: 'function',
+            function: { name: '', arguments: '' },
+          })
+          call.id += delta.id ?? ''
+          call.function.name += delta.function?.name ?? ''
+          call.function.arguments += delta.function?.arguments ?? ''
+        }
+        finishReason = choice.finish_reason ?? finishReason
+      }
+    }
+    expect(finishReason).toBe('tool_calls')
+    return message
+  }
+
+  const before = calls
+  const beforeVerified = verifiedReasoningReplays
+  const requestIds: string[] = []
+  const tools = reasoningToolCalls.map((call) => ({
+    type: 'function',
+    function: { name: call.function.name, parameters: { type: 'object' } },
+  }))
+  mode = 'reasoning_tools'
+  try {
+    for (const stream of [false, true]) {
+      const first = await gatewayFetch('/v1/chat/completions', { ...chat(stream), tools })
+      expect(first.status).toBe(200)
+      expect(first.headers.get('x-request-id')).toBeTruthy()
+      requestIds.push(first.headers.get('x-request-id')!)
+      const assistant = await assistantMessage(first, stream)
+      expect(assistant).toEqual({
+        role: 'assistant',
+        content: null,
+        reasoning_content: reasoningMarker,
+        tool_calls: reasoningToolCalls,
+      })
+      const second = await gatewayFetch('/v1/chat/completions', {
+        ...chat(stream),
+        tools,
+        messages: [
+          ...chat().messages,
+          assistant,
+          { role: 'tool', tool_call_id: reasoningToolCalls[0].id, content: toolResultMarker },
+          { role: 'tool', tool_call_id: reasoningToolCalls[1].id, content: 'ready' },
+        ],
+      })
+      const text = await second.text()
+      expect(second.status, text).toBe(200)
+      expect(text).toContain('Ollama')
+      if (stream) expect(text).toContain('[DONE]')
+      expect(second.headers.get('x-request-id')).toBeTruthy()
+      requestIds.push(second.headers.get('x-request-id')!)
+    }
+  } finally {
+    mode = 'normal'
+  }
+  expect(calls - before).toBe(4)
+  expect(verifiedReasoningReplays - beforeVerified).toBe(2)
+  await waitFor(
+    async () =>
+      (await db.query(`SELECT id FROM request_records WHERE id=ANY($1::text[]) AND status='completed'`, [requestIds]))
+        .rowCount === 4,
+  )
+  const records = (
+    await db.query(
+      `SELECT f.project_id,f.api_key_id,a.connection_id,a.price_version_id,a.execution_mode FROM request_project_facts f JOIN attempts a ON a.request_id=f.request_id WHERE f.request_id=ANY($1::text[])`,
+      [requestIds],
+    )
+  ).rows
+  expect(records).toHaveLength(4)
+  for (const record of records)
+    expect(record).toMatchObject({
+      project_id: 'connector-project',
+      api_key_id: 'connector-key',
+      connection_id: connectionId,
+      price_version_id: null,
+      execution_mode: 'byok',
+    })
+  const events = (
+    await db.query('SELECT aggregate_id,payload FROM outbox_events WHERE aggregate_id=ANY($1::text[])', [requestIds])
+  ).rows
+  expect(events).toHaveLength(4)
+  for (const event of events) {
+    expect(event.payload.price_version_id).toBeNull()
+    if ([requestIds[0], requestIds[2]].includes(event.aggregate_id)) {
+      expect(event.payload.usage.input_tokens).toBeNull()
+      expect(event.payload.usage.output_tokens).toBeNull()
+      expect(event.payload.usage.reasoning_tokens).toBeNull()
+    } else {
+      expect(event.payload.usage.input_tokens).toBe(5)
+      expect(event.payload.usage.output_tokens).toBe(2)
+    }
+  }
+  const retained = JSON.stringify(events) + gatewayLogs + cliLogs
+  for (const marker of [reasoningMarker, toolArgumentMarker, toolResultMarker]) expect(retained).not.toContain(marker)
+})
+
 it('rejects cross-project, cross-tenant and unconfigured models without reaching Ollama', async () => {
   const before = calls
   for (const token of [otherKey, tenantKey])
@@ -988,4 +1198,6 @@ it('rejects a second Gateway instance, disconnected connectors, identity rotatio
   expect(JSON.stringify(await (await listConnections(admin())).json())).not.toContain(pairingToken)
   expect(gatewayLogs + cliLogs).not.toContain(pairingToken)
   expect(gatewayLogs + cliLogs).not.toContain('private prompt marker')
+  for (const marker of [reasoningMarker, toolArgumentMarker, toolResultMarker])
+    expect(gatewayLogs + cliLogs).not.toContain(marker)
 })

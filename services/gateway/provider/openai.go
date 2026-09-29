@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-const openAIAdapterVersion = "1.0.1"
+const openAIAdapterVersion = "1.0.2"
 
 // OpenAICompatible implements Adapter for /chat/completions providers.
 type OpenAICompatible struct {
@@ -68,22 +68,29 @@ func (a *OpenAICompatible) Capabilities(model string) ModelCapabilities {
 	return caps
 }
 
+// openAIWireMessage permits a provider-specific field name without mutating
+// the canonical history retained by the request.
+type openAIWireMessage struct {
+	Message
+	Reasoning *string `json:"reasoning,omitempty"`
+}
+
 // openAIChatBody is the wire body. Optional fields are pointers so "unset" is
 // distinguishable from "zero".
 type openAIChatBody struct {
-	Model               string          `json:"model"`
-	Messages            []Message       `json:"messages"`
-	Stream              bool            `json:"stream"`
-	MaxTokens           *int            `json:"max_tokens,omitempty"`
-	MaxCompletionTokens *int            `json:"max_completion_tokens,omitempty"`
-	Temperature         *float64        `json:"temperature,omitempty"`
-	TopP                *float64        `json:"top_p,omitempty"`
-	Stop                []string        `json:"stop,omitempty"`
-	Tools               json.RawMessage `json:"tools,omitempty"`
-	ToolChoice          json.RawMessage `json:"tool_choice,omitempty"`
-	ResponseFormat      json.RawMessage `json:"response_format,omitempty"`
-	User                string          `json:"user,omitempty"`
-	StreamOptions       *streamOptions  `json:"stream_options,omitempty"`
+	Model               string              `json:"model"`
+	Messages            []openAIWireMessage `json:"messages"`
+	Stream              bool                `json:"stream"`
+	MaxTokens           *int                `json:"max_tokens,omitempty"`
+	MaxCompletionTokens *int                `json:"max_completion_tokens,omitempty"`
+	Temperature         *float64            `json:"temperature,omitempty"`
+	TopP                *float64            `json:"top_p,omitempty"`
+	Stop                []string            `json:"stop,omitempty"`
+	Tools               json.RawMessage     `json:"tools,omitempty"`
+	ToolChoice          json.RawMessage     `json:"tool_choice,omitempty"`
+	ResponseFormat      json.RawMessage     `json:"response_format,omitempty"`
+	User                string              `json:"user,omitempty"`
+	StreamOptions       *streamOptions      `json:"stream_options,omitempty"`
 }
 
 type streamOptions struct {
@@ -101,9 +108,26 @@ func (a *OpenAICompatible) BuildRequest(req *CanonicalRequest, cred Credential, 
 	if base == "" {
 		base = a.baseURL
 	}
+	code := ep.ProviderCode
+	if code == "" {
+		code = a.id
+	}
+	var messages []openAIWireMessage
+	if req.Messages != nil {
+		messages = make([]openAIWireMessage, len(req.Messages))
+		for i, message := range req.Messages {
+			messages[i].Message = message
+			if code == "ollama" {
+				// Change only the wire copy. The canonical message may still be
+				// inspected by another eligible adapter for this request.
+				messages[i].Reasoning = message.ReasoningContent
+				messages[i].ReasoningContent = nil
+			}
+		}
+	}
 	body := openAIChatBody{
 		Model:          req.Model,
-		Messages:       req.Messages,
+		Messages:       messages,
 		Stream:         req.Stream,
 		MaxTokens:      req.MaxTokens,
 		Temperature:    req.Temperature,
@@ -115,10 +139,6 @@ func (a *OpenAICompatible) BuildRequest(req *CanonicalRequest, cred Credential, 
 		User:           req.User,
 	}
 	if req.MaxCompletionTokens != nil {
-		code := ep.ProviderCode
-		if code == "" {
-			code = a.id
-		}
 		// Ollama and DeepSeek expose this cap as max_tokens. Other compatible
 		// endpoints receive the caller's explicit field without model guessing.
 		if code != "ollama" && code != "deepseek" {
