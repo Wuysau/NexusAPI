@@ -317,18 +317,44 @@ export async function authorizeConnector(input: ConnectorAuthorization) {
   }
 }
 
-export async function connectorState(ctx: ControlPlaneContext, id: string) {
+function projectedReadyModels(reported: unknown, approvedLists: unknown): string[] {
+  let ready: string[]
+  try {
+    ready = storedModelIDs(reported, true)
+  } catch {
+    return []
+  }
+  const approved = new Set<string>()
+  if (Array.isArray(approvedLists)) {
+    for (const list of approvedLists) {
+      try {
+        for (const model of storedModelIDs(list)) approved.add(model)
+      } catch {
+        // A malformed channel grants no models; other valid channels remain visible.
+      }
+    }
+  }
+  return ready.filter((model) => approved.has(model))
+}
+
+export async function connectorState(ctx: ControlPlaneContext, id: string, channelId?: string) {
   const row = (
     await pool.query(
       `SELECT c.id,c.revoked_at,c.project_id,c.capabilities->'models' models,
     l.expires_at,l.last_heartbeat_at,l.transport_seen_at,l.ready_models,l.revoked_at lease_revoked_at,i.revoked_at identity_revoked_at,
-    p.status project_status,p.archived_at project_archived_at,
-    EXISTS(SELECT 1 FROM channels ch WHERE ch.tenant_id=c.tenant_id AND ch.metadata->>'connection_id'=c.id AND ch.enabled=true) channel_enabled
+    p.status project_status,p.archived_at project_archived_at,o.status organization_status,o.deleted_at organization_deleted_at,
+    (SELECT jsonb_agg(ch.metadata->'models') FROM channels ch
+      JOIN provider_credentials pc ON pc.id=ch.provider_credential_id AND pc.tenant_id=ch.tenant_id AND pc.provider_id=ch.provider_id
+      JOIN providers provider ON provider.id=ch.provider_id AND provider.enabled=true
+      WHERE ch.tenant_id=c.tenant_id AND ch.metadata->>'connection_id'=c.id AND ch.enabled=true
+      AND ch.metadata->>'transport'='local_sidecar' AND pc.enabled=true AND pc.organization_id=p.organization_id
+      AND ($6::text IS NULL OR ch.id=$6)) approved_model_lists
     FROM owned_connections c LEFT JOIN connector_leases l ON l.connection_id=c.id AND l.tenant_id=c.tenant_id
     LEFT JOIN connector_identities i ON i.id=l.connector_id
     LEFT JOIN projects p ON p.id=c.project_id AND p.tenant_id=c.tenant_id
+    LEFT JOIN organizations o ON o.id=p.organization_id AND o.tenant_id=p.tenant_id
     WHERE ${connectionVisibility} AND c.id=$5 AND c.mode='local_sidecar'`,
-      [...workspaceParams(ctx), id],
+      [...workspaceParams(ctx), id, channelId ?? null],
     )
   ).rows[0]
   if (!row) throw new AuthzError('not_found', '本地连接不存在', 404)
@@ -342,8 +368,13 @@ export async function connectorState(ctx: ControlPlaneContext, id: string) {
     connectionId: id,
     models: row.models ?? [],
     readyModels:
-      online && row.channel_enabled && row.project_status === 'active' && !row.project_archived_at && !row.revoked_at
-        ? row.ready_models
+      online &&
+      row.project_status === 'active' &&
+      !row.project_archived_at &&
+      row.organization_status === 'active' &&
+      !row.organization_deleted_at &&
+      !row.revoked_at
+        ? projectedReadyModels(row.ready_models, row.approved_model_lists)
         : [],
     state: row.revoked_at
       ? 'revoked'
