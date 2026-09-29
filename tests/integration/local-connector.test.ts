@@ -42,7 +42,9 @@ let gatewayLogs = '',
   cliLogs = '',
   mode = 'normal',
   calls = 0,
-  cancelled = 0
+  cancelled = 0,
+  modelBatchRequests = 0,
+  singleModelAuthorizations = 0
 let gatewayEnv: NodeJS.ProcessEnv
 let tlsAgent: HTTPSAgent
 const params = () => ({ params: Promise.resolve({ id: connectionId }) })
@@ -120,6 +122,11 @@ async function relayRoute(req: IncomingMessage, res: ServerResponse) {
       ...(chunks.length ? { body: Buffer.concat(chunks) } : {}),
     })
     const pathname = new URL(request.url).pathname
+    if (pathname === '/api/internal/gateway/connector') {
+      const metadata = JSON.parse(Buffer.concat(chunks).toString())
+      if (Array.isArray(metadata.requestedModels)) modelBatchRequests++
+      if (metadata.scope === 'models:read' && typeof metadata.model === 'string') singleModelAuthorizations++
+    }
     const handler =
       pathname === '/api/connector/pair'
         ? pair
@@ -260,6 +267,200 @@ it('creates an owned connection, blocks viewer pairing and forged heartbeat, sto
   expect((await lease(runtime(oldIdentity.credential, { readyModels: models }))).status).toBe(401)
 })
 
+it('authorizes bounded model batches with live ownership checks and no heartbeat side effects', async () => {
+  const created = await createConnection(
+    admin('POST', { provider: 'ollama', mode: 'local_sidecar', projectId: 'connector-project' }),
+  )
+  expect(created.status).toBe(201)
+  const fixtureConnectionId = (await created.json()).connection.id
+  const fixtureParams = { params: Promise.resolve({ id: fixtureConnectionId }) }
+  try {
+    const configured = await configure(admin('POST', { models: [...models, 'not-installed'] }), fixtureParams)
+    expect(configured.status).toBe(200)
+    const configuration = await configured.json()
+    const paired = await pair(runtime(configuration.pairingToken))
+    expect(paired.status).toBe(200)
+    const identity = await paired.json()
+    const leased = await lease(runtime(identity.credential, { readyModels: [models[0]] }))
+    expect(leased.status).toBe(200)
+    const grant = await leased.json()
+    const channel = (await db.query('SELECT * FROM channels WHERE id=$1', [configuration.channelId])).rows[0]
+    const batch = {
+      leaseToken: grant.leaseToken,
+      tenantId: 'connector-tenant',
+      organizationId: 'connector-org',
+      projectId: 'connector-project',
+      keyId: 'connector-key',
+      connectionId: fixtureConnectionId,
+      channelId: configuration.channelId,
+      scope: 'models:read',
+      requestedModels: [...models, 'not-installed', 'unapproved-model'],
+    }
+    const check = (overrides: Record<string, unknown> = {}) =>
+      authorize(runtime(process.env.GATEWAY_INTERNAL_TOKEN!, { ...batch, ...overrides }))
+    const denied = async (name: string, overrides: Record<string, unknown> = {}) => {
+      const response = await check(overrides)
+      expect(response.status, name).toBe(403)
+      const body = await response.text()
+      expect(body).not.toContain(grant.leaseToken)
+      expect(body).not.toContain(identity.credential)
+    }
+    await db.query(
+      `UPDATE connector_leases SET transport_seen_at='2000-01-01',last_heartbeat_at='2000-01-02' WHERE id=$1`,
+      [grant.leaseId],
+    )
+    const activity = async () =>
+      (
+        await db.query(
+          `SELECT l.transport_seen_at,l.last_heartbeat_at,c.last_heartbeat_at connection_heartbeat
+           FROM connector_leases l JOIN owned_connections c ON c.id=l.connection_id WHERE l.id=$1`,
+          [grant.leaseId],
+        )
+      ).rows[0]
+    const before = await activity()
+    const partial = await check()
+    expect(partial.status).toBe(200)
+    expect(partial.headers.get('cache-control')).toBe('no-store')
+    expect(await partial.json()).toMatchObject({
+      leaseId: grant.leaseId,
+      connectorId: identity.connectorId,
+      tenantId: 'connector-tenant',
+      connectionId: fixtureConnectionId,
+      models: [models[0]],
+    })
+    expect((await (await check({ requestedModels: [models[0], models[0]] })).json()).models).toEqual([models[0]])
+    expect(
+      (await (await check({ requestedModels: [models[1], 'not-installed', 'unapproved-model'] })).json()).models,
+    ).toEqual([])
+    // A ready declaration cannot override a channel's approved model list.
+    await db.query('UPDATE connector_leases SET ready_models=$1::jsonb WHERE id=$2', [
+      JSON.stringify(models),
+      grant.leaseId,
+    ])
+    await db.query(`UPDATE channels SET metadata=jsonb_set(metadata,'{models}',$1::jsonb) WHERE id=$2`, [
+      JSON.stringify([models[0], 'not-installed']),
+      configuration.channelId,
+    ])
+    expect((await (await check()).json()).models).toEqual([models[0]])
+    await db.query('UPDATE channels SET metadata=$1::jsonb WHERE id=$2', [
+      JSON.stringify(channel.metadata),
+      configuration.channelId,
+    ])
+    await db.query('UPDATE connector_leases SET ready_models=$1::jsonb WHERE id=$2', [
+      JSON.stringify([models[0]]),
+      grant.leaseId,
+    ])
+
+    for (const [name, overrides] of [
+      ['wrong tenant', { tenantId: 'other-tenant' }],
+      ['wrong organization', { organizationId: 'other-org' }],
+      ['wrong project', { projectId: 'other-project' }],
+      ['other project key', { keyId: 'other-key' }],
+      ['other tenant key', { keyId: 'tenant-key' }],
+      ['wrong connection', { connectionId }],
+      ['wrong channel', { channelId: 'missing-channel' }],
+      ['mixed chat scope', { scope: 'chat:write' }],
+      ['mixed single model', { model: models[0] }],
+      ['mixed transport heartbeat', { transport: true }],
+      ['empty batch', { requestedModels: [] }],
+      ['non-array batch', { requestedModels: models[0] }],
+      ['null batch', { requestedModels: null }],
+      ['oversized batch', { requestedModels: Array.from({ length: 65 }, (_, i) => `model-${i}`) }],
+      ['oversized duplicate batch', { requestedModels: Array.from({ length: 65 }, () => models[0]) }],
+      ['invalid model ID', { requestedModels: [models[0], '../private model'] }],
+    ] as const)
+      await denied(name, overrides)
+    for (const field of ['tenantId', 'organizationId', 'projectId', 'keyId', 'connectionId', 'channelId'])
+      await denied(`missing ${field}`, { [field]: undefined })
+
+    const blockedStates = [
+      ['provider disabled', 'providers', channel.provider_id, 'enabled', false, true],
+      ['credential disabled', 'provider_credentials', channel.provider_credential_id, 'enabled', false, true],
+      [
+        'credential belongs to another organization',
+        'provider_credentials',
+        channel.provider_credential_id,
+        'organization_id',
+        'other-org',
+        'connector-org',
+      ],
+      ['channel disabled', 'channels', channel.id, 'enabled', false, true],
+      ['key disabled', 'downstream_api_keys', 'connector-key', 'enabled', false, true],
+      ['key revoked', 'downstream_api_keys', 'connector-key', 'revoked_at', new Date().toISOString(), null],
+      ['key expired', 'downstream_api_keys', 'connector-key', 'expires_at', '2000-01-01', null],
+      [
+        'key lacks models scope',
+        'downstream_api_keys',
+        'connector-key',
+        'scopes',
+        '["chat:write"]',
+        '["models:read","chat:write"]',
+      ],
+      [
+        'malformed key scopes scalar',
+        'downstream_api_keys',
+        'connector-key',
+        'scopes',
+        '"models:read"',
+        '["models:read","chat:write"]',
+      ],
+      [
+        'malformed key scopes object',
+        'downstream_api_keys',
+        'connector-key',
+        'scopes',
+        '{"models:read":true}',
+        '["models:read","chat:write"]',
+      ],
+      [
+        'malformed key scopes wildcard',
+        'downstream_api_keys',
+        'connector-key',
+        'scopes',
+        '{"*":true}',
+        '["models:read","chat:write"]',
+      ],
+      ['lease expired', 'connector_leases', grant.leaseId, 'expires_at', '2000-01-01', grant.expiresAt],
+      ['lease revoked', 'connector_leases', grant.leaseId, 'revoked_at', new Date().toISOString(), null],
+      ['identity revoked', 'connector_identities', identity.connectorId, 'revoked_at', new Date().toISOString(), null],
+      ['connection revoked', 'owned_connections', fixtureConnectionId, 'revoked_at', new Date().toISOString(), null],
+      ['project archived', 'projects', 'connector-project', 'archived_at', new Date().toISOString(), null],
+      ['organization deleted', 'organizations', 'connector-org', 'deleted_at', new Date().toISOString(), null],
+      [
+        'malformed ready models',
+        'connector_leases',
+        grant.leaseId,
+        'ready_models',
+        JSON.stringify(models[0]),
+        JSON.stringify([models[0]]),
+      ],
+      [
+        'malformed channel models',
+        'channels',
+        channel.id,
+        'metadata',
+        JSON.stringify({ ...channel.metadata, models: {} }),
+        JSON.stringify(channel.metadata),
+      ],
+    ] as const
+    for (const [name, table, id, field, blocked, restored] of blockedStates) {
+      // Identifiers come only from this fixed fixture matrix, never a request.
+      await db.query(`UPDATE ${table} SET ${field}=$1 WHERE id=$2`, [blocked, id])
+      try {
+        await denied(name)
+        if (field === 'scopes')
+          await denied(`${name} single-model authorization`, { requestedModels: undefined, model: models[0] })
+      } finally {
+        await db.query(`UPDATE ${table} SET ${field}=$1 WHERE id=$2`, [restored, id])
+      }
+    }
+    expect((await check()).status).toBe(200)
+    expect(await activity()).toEqual(before)
+  } finally {
+    expect((await revoke(admin('DELETE'), fixtureParams)).status).toBe(200)
+  }
+})
+
 it('pairs through the standalone CLI, starts a separate Gateway and lists only ready project-authorized models', async () => {
   const reservation = createServer()
   gatewayURL = (await listen(reservation)).replace('http:', 'https:')
@@ -337,9 +538,13 @@ it('pairs through the standalone CLI, starts a separate Gateway and lists only r
     const res = await gatewayFetch('/v1/models')
     return res.ok && (await res.json()).data.length === 2
   })
+  const batchesBefore = modelBatchRequests
+  const singlesBefore = singleModelAuthorizations
   expect((await (await gatewayFetch('/v1/models')).json()).data.map((m: { id: string }) => m.id).sort()).toEqual(
     [...models].sort(),
   )
+  expect(modelBatchRequests - batchesBefore).toBe(1)
+  expect(singleModelAuthorizations - singlesBefore).toBe(0)
   expect((await (await gatewayFetch('/v1/models', undefined, otherKey)).json()).data).toEqual([])
   expect((await (await gatewayFetch('/v1/models', undefined, tenantKey)).json()).data).toEqual([])
   const projected = (await (await resources(admin())).json()).resources.filter(
@@ -418,9 +623,15 @@ it('fails live authorization immediately after key, project, lease or channel re
   for (const [off, on] of checks) {
     const before = calls
     await db.query(off)
-    expect((await gatewayFetch('/v1/chat/completions', chat())).status).toBeGreaterThanOrEqual(400)
-    expect(calls).toBe(before)
-    await db.query(on)
+    try {
+      const listed = await gatewayFetch('/v1/models')
+      if (listed.status === 200) expect((await listed.json()).data).toEqual([])
+      else expect(listed.status).toBeGreaterThanOrEqual(400)
+      expect((await gatewayFetch('/v1/chat/completions', chat())).status).toBeGreaterThanOrEqual(400)
+      expect(calls).toBe(before)
+    } finally {
+      await db.query(on)
+    }
   }
   await waitFor(async () => (await (await gatewayFetch('/v1/models')).json()).data?.length === 2)
 }, 20000)
@@ -497,7 +708,7 @@ it('rejects a second Gateway instance, disconnected connectors, identity rotatio
   await new Promise((r) => setTimeout(r, 3200))
   expect((await (await gatewayFetch('/v1/models')).json()).data).toEqual([])
   expect((await gatewayFetch('/v1/chat/completions', chat())).status).toBeGreaterThanOrEqual(400)
-  const old = (await db.query('SELECT * FROM connector_leases')).rows[0]
+  const old = (await db.query('SELECT * FROM connector_leases WHERE connection_id=$1', [connectionId])).rows[0]
   expect((await configure(admin('POST', { models }), params())).status).toBe(200)
   expect(
     (await db.query('SELECT revoked_at FROM connector_leases WHERE id=$1', [old.id])).rows[0].revoked_at,

@@ -36,6 +36,12 @@ Invalid request and content-policy refusals do not count as upstream health fail
 
 The first local-connector transport forwards status and response body but does not forward retry headers. Its 429 responses use the default cooldown; per-provider hints apply to direct API channels.
 
+## Local connector model discovery
+
+`GET /v1/models` shares a five-second I/O deadline across API key authentication, snapshot loading and connector authorization. Eligible connector candidates still pass the existing Router policy and health filters first. Live checks are grouped by Channel, with at most 64 requested model IDs per batch and four batches running at once. The Control Plane intersects the request with currently ready and Channel-approved models after checking ownership, project, key and lease authorization.
+
+Unverified connector models are omitted; other confirmed candidates can still be returned. Results are not cached between requests, do not refresh transport liveness, and do not authorize later inference. Chat retains its per-call live authorization. Update Control Plane before Gateway when deploying this batch protocol; an older Control Plane rejects it safely.
+
 ## Streaming, output and accounting
 
 The SSE parser enforces a 1 MiB event budget while reading, including line bytes, comments and framing. The relay uses one reader per request and bounded handoff to the response writer. Chat streaming forwards deltas without retaining the full output. Buffered chat accumulates text, reasoning and function calls only up to `GATEWAY_MAX_RESPONSE_BYTES`. Responses also bounds the output retained for its final response object, including streamed requests.

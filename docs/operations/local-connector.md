@@ -75,6 +75,8 @@ Windows 使用 `go build -o nexus-connector.exe ./cmd/nexus-connector`，随后�
 
 模型 ID 必须同时位于管理员批准列表、本机配置列表和本机 `/v1/models` 返回列表中。地址必须是明确配置的回环或私有 IP，固定使用 `/v1/models` 和 `/v1/chat/completions`；不跟随重定向，不使用上游代理环境变量。`localhost` 会固定为 `127.0.0.1`。如果本机兼容服务需要密钥，设置 `apiKeyEnv` 为本机环境变量名；密钥值不会上传。私有 CA 可通过 `caFile` 指向本机 PEM 文件；没有跳过证书验证的选项。
 
+Gateway 查询模型列表时，先执行现有路由过滤，再按 Channel 批量实时校验本地模型；每批最多 64 个 ID，最多同时检查 4 批，整个列表的认证、快照读取和实时检查共用 5 秒期限。无法及时确认的连接器模型不会出现在结果中，其他已确认可用的模型可以正常返回。列表授权结果不跨请求缓存，也不延长在线状态；真正的 Chat 调用仍单独实时检查授权。
+
 开发测试可设置 `allowHttpDevelopment: true`，但它只允许远端地址为回环 HTTP，不能用于连接公网或内网远端机器。正式两机部署必须使用 HTTPS。
 
 ## 3. 创建、配对、启动
@@ -161,3 +163,5 @@ node --env-file=/path/to/disposable-test.env node_modules/vitest/vitest.mjs run 
 该测试调用真实控制面路由与数据库，以不同进程运行编译出的 Gateway 和 CLI，经不同监听端口访问 mock Ollama，检查请求归因及 Worker 未定价处理。Go 单元测试检查 TLS 信任、私有地址、重定向和协议边界。
 
 回退时先撤销连接并停止连接器，再关闭两端 `NEXUS_CONNECTORS_ENABLED`，回退应用。迁移 `0025` 为增量表/字段，不修改历史迁移；保留新增表和归因记录，不需要删除历史数据。
+
+升级批量模型发现时先更新 Control Plane，再更新 Gateway。新 Control Plane 兼容原单模型与传输授权请求；旧 Control Plane 会拒绝新的批量列表校验，模型会暂时隐藏。该升级不新增迁移，也不改变首版单 Gateway 的部署约束。

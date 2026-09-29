@@ -26,16 +26,17 @@ type connectorGrant struct {
 	Models       []string  `json:"models"`
 }
 type connectorAuth struct {
-	LeaseToken     string `json:"leaseToken"`
-	TenantID       string `json:"tenantId,omitempty"`
-	ConnectionID   string `json:"connectionId,omitempty"`
-	ChannelID      string `json:"channelId,omitempty"`
-	ProjectID      string `json:"projectId,omitempty"`
-	OrganizationID string `json:"organizationId,omitempty"`
-	KeyID          string `json:"keyId,omitempty"`
-	Model          string `json:"model,omitempty"`
-	Scope          string `json:"scope,omitempty"`
-	Transport      bool   `json:"transport,omitempty"`
+	LeaseToken      string   `json:"leaseToken"`
+	TenantID        string   `json:"tenantId,omitempty"`
+	ConnectionID    string   `json:"connectionId,omitempty"`
+	ChannelID       string   `json:"channelId,omitempty"`
+	ProjectID       string   `json:"projectId,omitempty"`
+	OrganizationID  string   `json:"organizationId,omitempty"`
+	KeyID           string   `json:"keyId,omitempty"`
+	Model           string   `json:"model,omitempty"`
+	RequestedModels []string `json:"requestedModels,omitempty"`
+	Scope           string   `json:"scope,omitempty"`
+	Transport       bool     `json:"transport,omitempty"`
 }
 type connectorSession struct {
 	token   string
@@ -93,7 +94,8 @@ func (h *ConnectorHub) authorize(ctx context.Context, input connectorAuth) (*con
 		return nil, errConnectorUnavailable
 	}
 	var grant connectorGrant
-	if json.NewDecoder(io.LimitReader(res.Body, 16384)).Decode(&grant) != nil || grant.ConnectionID == "" || !time.Now().Before(grant.ExpiresAt) {
+	response, err := io.ReadAll(io.LimitReader(res.Body, 16385))
+	if err != nil || len(response) > 16384 || json.Unmarshal(response, &grant) != nil || grant.ConnectionID == "" || !time.Now().Before(grant.ExpiresAt) {
 		return nil, errConnectorUnavailable
 	}
 	return &grant, nil
