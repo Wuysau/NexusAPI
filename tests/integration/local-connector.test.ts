@@ -51,6 +51,8 @@ const upstreamTokenLimits: Array<{ max_tokens?: number; max_completion_tokens?: 
 const reasoningMarker = 'private reasoning marker d2f8'
 const toolArgumentMarker = 'private tool argument marker 19aa'
 const toolResultMarker = 'private tool result marker 380c'
+const refusalMarker = 'private refusal marker 2da7'
+const refusalFragments = [refusalMarker.slice(0, 12), refusalMarker.slice(12)]
 const reasoningToolCalls = [
   {
     id: 'call_lookup',
@@ -224,6 +226,20 @@ beforeAll(async () => {
     }
     const event = (delta: unknown, finish: string | null = null) =>
       `data: ${JSON.stringify({ id: 'mock-1', object: 'chat.completion.chunk', model: body.model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`
+    // This fixture exercises compatible transport; it makes no claim about live Ollama model behavior.
+    if (mode === 'refusal' || mode === 'refusal_unknown') {
+      res.writeHead(200, { 'content-type': 'text/event-stream' })
+      res.write(event({ role: 'assistant', content: null, refusal: refusalFragments[0] }))
+      res.write(event({ refusal: refusalFragments[1] }))
+      res.write(event({}, 'stop'))
+      if (mode !== 'refusal_unknown')
+        res.write(
+          `data: ${JSON.stringify({ id: 'mock-1', model: body.model, choices: [], usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7, prompt_tokens_details: { cached_tokens: 0 }, completion_tokens_details: { reasoning_tokens: 0 } } })}\n\n`,
+        )
+      finished = true
+      res.end('data: [DONE]\n\n')
+      return
+    }
     if (mode === 'reasoning_tools') {
       if (body.messages.length === 1) {
         res.writeHead(200, { 'content-type': 'text/event-stream' })
@@ -313,8 +329,10 @@ afterAll(async () => {
       await new Promise<void>((resolve) => server.close(() => resolve()))
     }
   }
-  await writeFile(path.join(folder, 'process-summary.log'), `Gateway:\n${gatewayLogs}\nConnector:\n${cliLogs}`)
+  const processLogs = `Gateway:\n${gatewayLogs}\nConnector:\n${cliLogs}`
+  await writeFile(path.join(folder, 'process-summary.log'), processLogs)
   await db.end()
+  expect(processLogs).not.toContain(refusalMarker)
 })
 
 it('creates an owned connection, blocks viewer pairing and forged heartbeat, stores only a one-use pairing hash', async () => {
@@ -1075,6 +1093,191 @@ it('preserves reasoning and two tool calls through the local connector across bo
   for (const marker of [reasoningMarker, toolArgumentMarker, toolResultMarker]) expect(retained).not.toContain(marker)
 })
 
+it('preserves mock refusal fields and events across Chat and Responses with completed, unpriced connector attribution', async () => {
+  type ChatPayload = {
+    choices: Array<{
+      message?: unknown
+      delta?: { refusal?: string; content?: string | null }
+      finish_reason: string | null
+    }>
+    usage?: Record<string, unknown> | null
+  }
+  type ResponsePayload = {
+    status: string
+    error: unknown
+    incomplete_details: unknown
+    output: Array<{ id: string; type: string; role: string; status: string; content: unknown[] }>
+    usage: Record<string, unknown> | null
+  }
+  type ResponseEvent = {
+    type: string
+    sequence_number: number
+    item_id?: string
+    output_index?: number
+    content_index?: number
+    delta?: string
+    refusal?: string
+    part?: unknown
+    item?: unknown
+    response?: ResponsePayload
+  }
+  function dataFrames<T>(text: string): T[] {
+    return text.split('\n\n').flatMap((frame) => {
+      const data = frame.split('\n').find((line) => line.startsWith('data: '))
+      return data && data !== 'data: [DONE]' ? [JSON.parse(data.slice(6)) as T] : []
+    })
+  }
+
+  const before = calls
+  const requestIds: string[] = []
+  const chatUsage = {
+    prompt_tokens: 5,
+    completion_tokens: 2,
+    total_tokens: 7,
+    prompt_tokens_details: { cached_tokens: 0 },
+    completion_tokens_details: { reasoning_tokens: 0 },
+  }
+  const refusalPart = { type: 'refusal', refusal: refusalMarker }
+  try {
+    for (const endpoint of ['/v1/chat/completions', '/v1/responses']) {
+      for (const stream of [false, true]) {
+        mode = requestIds.length === 0 ? 'refusal_unknown' : 'refusal'
+        const body =
+          endpoint === '/v1/responses'
+            ? { model: models[0], input: chat().messages[0].content, stream, max_output_tokens: 32 }
+            : chat(stream)
+        const response = await gatewayFetch(endpoint, body)
+        const text = await response.text()
+        expect(response.status, text).toBe(200)
+        expect(response.headers.get('x-request-id')).toBeTruthy()
+        requestIds.push(response.headers.get('x-request-id')!)
+        if (stream) expect(response.headers.get('content-type')).toContain('text/event-stream')
+        if (endpoint === '/v1/chat/completions') {
+          if (stream) {
+            expect(text.trimEnd().endsWith('data: [DONE]')).toBe(true)
+            const chunks = dataFrames<ChatPayload>(text)
+            const choices = chunks.flatMap((chunk) => chunk.choices)
+            expect(
+              choices.filter((choice) => choice.delta?.refusal !== undefined).map((choice) => choice.delta!.refusal),
+            ).toEqual(refusalFragments)
+            expect(choices.every((choice) => choice.delta?.content == null)).toBe(true)
+            expect(
+              choices.filter((choice) => choice.finish_reason !== null).map((choice) => choice.finish_reason),
+            ).toEqual(['stop'])
+            expect(chunks.filter((chunk) => chunk.usage != null).map((chunk) => chunk.usage)).toEqual([chatUsage])
+          } else {
+            const completion = JSON.parse(text) as ChatPayload
+            expect(completion.choices).toHaveLength(1)
+            expect(completion.choices[0]).toMatchObject({
+              message: { role: 'assistant', content: null, refusal: refusalMarker },
+              finish_reason: 'stop',
+            })
+            expect(completion.usage).toBeUndefined()
+          }
+        } else {
+          const events = stream ? dataFrames<ResponseEvent>(text) : []
+          const completion = stream ? events.at(-1)!.response! : (JSON.parse(text) as ResponsePayload)
+          expect(completion.status).toBe('completed')
+          expect(completion.error).toBeNull()
+          expect(completion.incomplete_details).toBeNull()
+          expect(completion.output).toHaveLength(1)
+          expect(completion.output[0]).toMatchObject({ type: 'message', role: 'assistant', status: 'completed' })
+          expect(completion.output[0].content).toEqual([refusalPart])
+          expect(completion.usage).toEqual({
+            input_tokens: 5,
+            output_tokens: 2,
+            total_tokens: 7,
+            input_tokens_details: { cached_tokens: 0 },
+            output_tokens_details: { reasoning_tokens: 0 },
+          })
+          if (stream) {
+            expect(events.map((event) => event.type)).toEqual([
+              'response.created',
+              'response.in_progress',
+              'response.output_item.added',
+              'response.content_part.added',
+              'response.refusal.delta',
+              'response.refusal.delta',
+              'response.refusal.done',
+              'response.content_part.done',
+              'response.output_item.done',
+              'response.completed',
+            ])
+            expect(events.map((event) => event.sequence_number)).toEqual(events.map((_, index) => index))
+            const refusalEvents = events.filter((event) => event.type.startsWith('response.refusal.'))
+            for (const event of refusalEvents)
+              expect(event).toMatchObject({ item_id: completion.output[0].id, output_index: 0, content_index: 0 })
+            expect(refusalEvents.filter((event) => event.type.endsWith('.delta')).map((event) => event.delta)).toEqual(
+              refusalFragments,
+            )
+            expect(refusalEvents.at(-1)!.refusal).toBe(refusalMarker)
+            expect(events.find((event) => event.type === 'response.content_part.added')!.part).toEqual({
+              type: 'refusal',
+              refusal: '',
+            })
+            expect(events.find((event) => event.type === 'response.content_part.done')!.part).toEqual(refusalPart)
+            expect(events.find((event) => event.type === 'response.output_item.done')!.item).toEqual(
+              completion.output[0],
+            )
+          }
+        }
+      }
+    }
+  } finally {
+    mode = 'normal'
+  }
+  expect(calls - before).toBe(4)
+  expect(new Set(requestIds).size).toBe(4)
+  await waitFor(
+    async () =>
+      (await db.query(`SELECT id FROM request_records WHERE id=ANY($1::text[]) AND status='completed'`, [requestIds]))
+        .rowCount === 4,
+  )
+  const records = (
+    await db.query(
+      `SELECT f.request_id,f.project_id,f.api_key_id,a.connection_id,a.price_version_id,a.execution_mode,a.status FROM request_project_facts f JOIN attempts a ON a.request_id=f.request_id WHERE f.request_id=ANY($1::text[])`,
+      [requestIds],
+    )
+  ).rows
+  expect(records).toHaveLength(4)
+  expect(new Set(records.map((record) => record.request_id)).size).toBe(4)
+  for (const record of records)
+    expect(record).toMatchObject({
+      project_id: 'connector-project',
+      api_key_id: 'connector-key',
+      connection_id: connectionId,
+      price_version_id: null,
+      execution_mode: 'byok',
+      status: 'completed',
+    })
+  const events = (
+    await db.query('SELECT aggregate_id,payload FROM outbox_events WHERE aggregate_id=ANY($1::text[])', [requestIds])
+  ).rows
+  expect(events).toHaveLength(4)
+  for (const event of events) {
+    expect(event.payload.status).toBe('completed')
+    expect(event.payload.price_version_id).toBeNull()
+    expect(event.payload.attribution).toMatchObject({
+      project_id: 'connector-project',
+      api_key_id: 'connector-key',
+      connection_id: connectionId,
+      execution_mode: 'byok',
+    })
+    expect(event.payload.usage).toMatchObject(
+      event.aggregate_id === requestIds[0]
+        ? {
+            input_tokens: null,
+            output_tokens: null,
+            cached_input_tokens: null,
+            reasoning_tokens: null,
+            total_tokens: null,
+          }
+        : { input_tokens: 5, output_tokens: 2, cached_input_tokens: 0, reasoning_tokens: 0, total_tokens: 7 },
+    )
+  }
+  expect(JSON.stringify(events) + gatewayLogs + cliLogs).not.toContain(refusalMarker)
+})
+
 it('rejects cross-project, cross-tenant and unconfigured models without reaching Ollama', async () => {
   const before = calls
   for (const token of [otherKey, tenantKey])
@@ -1198,6 +1401,6 @@ it('rejects a second Gateway instance, disconnected connectors, identity rotatio
   expect(JSON.stringify(await (await listConnections(admin())).json())).not.toContain(pairingToken)
   expect(gatewayLogs + cliLogs).not.toContain(pairingToken)
   expect(gatewayLogs + cliLogs).not.toContain('private prompt marker')
-  for (const marker of [reasoningMarker, toolArgumentMarker, toolResultMarker])
+  for (const marker of [reasoningMarker, toolArgumentMarker, toolResultMarker, refusalMarker])
     expect(gatewayLogs + cliLogs).not.toContain(marker)
 })

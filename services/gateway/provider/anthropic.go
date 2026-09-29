@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	anthropicAdapterVersion = "1.0.2"
+	anthropicAdapterVersion = "1.0.3"
 	anthropicAPIVersion     = "2023-06-01"
 	// defaultAnthropicMaxTokens is applied when the client omits max_tokens,
 	// which the Messages API rejects. Chosen to match the legacy gateway's

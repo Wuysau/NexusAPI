@@ -183,11 +183,11 @@ func responsesInput(raw json.RawMessage) ([]provider.Message, *APIError) {
 			default:
 				return nil, errInvalidParam("input", "Unsupported message role.")
 			}
-			content, apiErr := responsesTextContent(item.Content, item.Role == "assistant")
+			content, refusal, apiErr := responsesMessageContent(item.Content, item.Role == "assistant")
 			if apiErr != nil {
 				return nil, apiErr
 			}
-			messages = append(messages, provider.Message{Role: item.Role, Content: content})
+			messages = append(messages, provider.Message{Role: item.Role, Content: content, Refusal: refusal})
 		case "function_call":
 			if item.CallID == "" || item.Name == "" || !json.Valid([]byte(item.Arguments)) {
 				return nil, errInvalidParam("input", "Invalid function call.")
@@ -221,23 +221,50 @@ func responsesInput(raw json.RawMessage) ([]provider.Message, *APIError) {
 }
 
 func responsesTextContent(raw json.RawMessage, allowOutput bool) (json.RawMessage, *APIError) {
+	content, refusal, apiErr := responsesMessageContent(raw, allowOutput)
+	if refusal != nil {
+		return nil, errUnsupportedParam("input.content")
+	}
+	return content, apiErr
+}
+
+func responsesMessageContent(raw json.RawMessage, allowOutput bool) (json.RawMessage, *string, *APIError) {
 	var text string
 	if json.Unmarshal(raw, &text) == nil && string(raw) != "null" {
-		return raw, nil
+		return raw, nil, nil
 	}
-	var parts []struct{ Type, Text string }
+	var parts []struct {
+		Type, Text string
+		Refusal    *string
+	}
 	if json.Unmarshal(raw, &parts) != nil || string(raw) == "null" {
-		return nil, errInvalidParam("input", "Message content must be text.")
+		return nil, nil, errInvalidParam("input", "Message content must be text or assistant refusal parts.")
 	}
-	var content strings.Builder
+	var content, refused strings.Builder
+	hasRefusal := false
 	for _, part := range parts {
+		if allowOutput && part.Type == "refusal" {
+			if part.Refusal == nil {
+				return nil, nil, errInvalidParam("input", "Invalid refusal content.")
+			}
+			hasRefusal = true
+			refused.WriteString(*part.Refusal)
+			continue
+		}
 		if part.Type != "input_text" && (!allowOutput || part.Type != "output_text") {
-			return nil, errUnsupportedParam("input.content")
+			return nil, nil, errUnsupportedParam("input.content")
 		}
 		content.WriteString(part.Text)
 	}
 	encoded, _ := json.Marshal(content.String())
-	return encoded, nil
+	if hasRefusal {
+		value := refused.String()
+		if content.Len() == 0 {
+			encoded = json.RawMessage("null")
+		}
+		return encoded, &value, nil
+	}
+	return encoded, nil, nil
 }
 
 type responsesItem struct {
@@ -250,10 +277,35 @@ func (i *responsesItem) value(status string) map[string]any {
 	if i.kind == "function_call" {
 		return map[string]any{"type": "function_call", "id": i.id, "call_id": i.callID, "name": i.name, "arguments": i.text.String(), "status": status}
 	}
-	return map[string]any{"type": "message", "id": i.id, "role": "assistant", "status": status, "content": []any{responsesTextPart(i.text.String())}}
+	return map[string]any{"type": "message", "id": i.id, "role": "assistant", "status": status, "content": []any{i.contentPart(i.text.String())}}
 }
 func responsesTextPart(text string) map[string]any {
 	return map[string]any{"type": "output_text", "text": text, "annotations": []any{}, "logprobs": []any{}}
+}
+
+func (i *responsesItem) contentPart(text string) map[string]any {
+	if i.kind == "refusal" {
+		return map[string]any{"type": "refusal", "refusal": text}
+	}
+	return responsesTextPart(text)
+}
+
+func (i *responsesItem) contentEvent(suffix string, index int, text string) responsesEvent {
+	kind := "output_text"
+	fields := map[string]any{"item_id": i.id, "output_index": index, "content_index": 0}
+	if i.kind == "refusal" {
+		kind = "refusal"
+	} else {
+		fields["logprobs"] = []any{}
+	}
+	if suffix == "delta" {
+		fields["delta"] = text
+	} else if i.kind == "refusal" {
+		fields["refusal"] = text
+	} else {
+		fields["text"] = text
+	}
+	return responsesEvent{kind: "response." + kind + "." + suffix, fields: fields}
 }
 
 type responsesWriter struct {
@@ -263,6 +315,7 @@ type responsesWriter struct {
 	id                                          string
 	created                                     int64
 	status, maxBytes, used, sequence, textIndex int
+	refusalIndex                                *int
 	buffer                                      []byte
 	items                                       []*responsesItem
 	tools                                       map[int]int
@@ -415,36 +468,69 @@ func (w *responsesWriter) textDelta(text string, stream bool) error {
 	if text == "" {
 		return nil
 	}
+	return w.contentDelta(text, stream, false)
+}
+
+func (w *responsesWriter) refusalDelta(refusal *string, stream bool) error {
+	if refusal == nil {
+		return nil
+	}
+	return w.contentDelta(*refusal, stream, true)
+}
+
+func (w *responsesWriter) contentDelta(text string, stream, refusal bool) error {
 	if err := w.addBytes(responsesStringSize(text)); err != nil {
 		return err
 	}
-	// Keep item ordering when a fragmented tool identity precedes new text.
-	if len(w.tools) > 0 && (w.textIndex < 0 || !w.items[w.textIndex].announced) {
-		stream = false
+	index := w.textIndex
+	if refusal {
+		index = -1
+		if w.refusalIndex != nil {
+			index = *w.refusalIndex
+		}
 	}
-	if w.textIndex < 0 {
+	newItem := index < 0
+	if newItem {
 		if err := w.addBytes(256); err != nil {
 			return err
 		}
-		w.textIndex = len(w.items)
-		item := &responsesItem{kind: "message", id: fmt.Sprintf("msg_%s_%d", w.id, w.textIndex)}
+		index = len(w.items)
+		kind := "message"
+		if refusal {
+			kind = "refusal"
+			w.refusalIndex = &index
+		} else {
+			w.textIndex = index
+		}
+		item := &responsesItem{kind: kind, id: fmt.Sprintf("msg_%s_%d", w.id, index)}
 		w.items = append(w.items, item)
+	}
+	// New content must not be announced ahead of an earlier pending tool.
+	// Deltas on an already announced earlier item may continue to flow.
+	for _, previous := range w.items[:index] {
+		if !previous.announced {
+			stream = false
+			break
+		}
+	}
+	item := w.items[index]
+	if newItem {
 		if stream {
 			added := item.value("in_progress")
 			added["content"] = []any{}
-			if err := w.event("response.output_item.added", map[string]any{"output_index": w.textIndex, "item": added}); err != nil {
+			if err := w.event("response.output_item.added", map[string]any{"output_index": index, "item": added}); err != nil {
 				return err
 			}
-			if err := w.event("response.content_part.added", map[string]any{"item_id": item.id, "output_index": w.textIndex, "content_index": 0, "part": responsesTextPart("")}); err != nil {
+			if err := w.event("response.content_part.added", map[string]any{"item_id": item.id, "output_index": index, "content_index": 0, "part": item.contentPart("")}); err != nil {
 				return err
 			}
 			item.announced = true
 		}
 	}
-	item := w.items[w.textIndex]
 	item.text.WriteString(text)
 	if stream {
-		return w.event("response.output_text.delta", map[string]any{"item_id": item.id, "output_index": w.textIndex, "content_index": 0, "delta": text, "logprobs": []any{}})
+		event := item.contentEvent("delta", index, text)
+		return w.event(event.kind, event.fields)
 	}
 	return nil
 }
@@ -521,6 +607,7 @@ func (w *responsesWriter) consume(payload []byte) error {
 		Choices []struct {
 			Delta struct {
 				Content   string          `json:"content"`
+				Refusal   *string         `json:"refusal"`
 				ToolCalls json.RawMessage `json:"tool_calls"`
 			} `json:"delta"`
 			FinishReason string `json:"finish_reason"`
@@ -544,6 +631,9 @@ func (w *responsesWriter) consume(payload []byte) error {
 	}
 	for _, choice := range chunk.Choices {
 		if err := w.textDelta(choice.Delta.Content, true); err != nil {
+			return err
+		}
+		if err := w.refusalDelta(choice.Delta.Refusal, true); err != nil {
 			return err
 		}
 		if len(choice.Delta.ToolCalls) > 0 && string(choice.Delta.ToolCalls) != "null" {
@@ -596,6 +686,7 @@ func (w *responsesWriter) prepareCompletion(body []byte) error {
 			Choices []struct {
 				Message struct {
 					Content   string          `json:"content"`
+					Refusal   *string         `json:"refusal"`
 					ToolCalls json.RawMessage `json:"tool_calls"`
 				} `json:"message"`
 				FinishReason string `json:"finish_reason"`
@@ -609,6 +700,9 @@ func (w *responsesWriter) prepareCompletion(body []byte) error {
 		w.finishReason = choice.FinishReason
 		w.usage = responsesUsage(completion.Usage)
 		if err := w.textDelta(choice.Message.Content, false); err != nil {
+			return err
+		}
+		if err := w.refusalDelta(choice.Message.Refusal, false); err != nil {
 			return err
 		}
 		if len(choice.Message.ToolCalls) > 0 && string(choice.Message.ToolCalls) != "null" {
@@ -670,15 +764,17 @@ func (w *responsesWriter) completionEvents(final []byte) []responsesEvent {
 			if item.kind == "function_call" {
 				add("response.function_call_arguments.delta", map[string]any{"item_id": item.id, "output_index": index, "delta": item.text.String()})
 			} else {
-				add("response.content_part.added", map[string]any{"item_id": item.id, "output_index": index, "content_index": 0, "part": responsesTextPart("")})
-				add("response.output_text.delta", map[string]any{"item_id": item.id, "output_index": index, "content_index": 0, "delta": item.text.String(), "logprobs": []any{}})
+				add("response.content_part.added", map[string]any{"item_id": item.id, "output_index": index, "content_index": 0, "part": item.contentPart("")})
+				event := item.contentEvent("delta", index, item.text.String())
+				add(event.kind, event.fields)
 			}
 		}
 		if item.kind == "function_call" {
 			add("response.function_call_arguments.done", map[string]any{"item_id": item.id, "output_index": index, "arguments": item.text.String(), "name": item.name})
 		} else {
-			add("response.output_text.done", map[string]any{"item_id": item.id, "output_index": index, "content_index": 0, "text": item.text.String(), "logprobs": []any{}})
-			add("response.content_part.done", map[string]any{"item_id": item.id, "output_index": index, "content_index": 0, "part": responsesTextPart(item.text.String())})
+			event := item.contentEvent("done", index, item.text.String())
+			add(event.kind, event.fields)
+			add("response.content_part.done", map[string]any{"item_id": item.id, "output_index": index, "content_index": 0, "part": item.contentPart(item.text.String())})
 		}
 		add("response.output_item.done", map[string]any{"output_index": index, "item": item.value(w.finalStatus())})
 	}

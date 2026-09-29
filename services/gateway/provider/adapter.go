@@ -64,6 +64,8 @@ type Message struct {
 	// Explicit caller-supplied history, including an intentionally empty value.
 	// Never synthesize reasoning when the caller did not provide it.
 	ReasoningContent *string `json:"reasoning_content,omitempty"`
+	// Refusal retains assistant refusal history separately from ordinary text.
+	Refusal *string `json:"refusal,omitempty"`
 }
 
 // CanonicalRequest is the provider-agnostic chat request.
@@ -117,6 +119,8 @@ type CanonicalChunk struct {
 	Text string
 	// Reasoning is incremental reasoning text where the provider exposes it.
 	Reasoning string
+	// Refusal is incremental refusal text. A non-nil empty value remains explicit.
+	Refusal *string
 	// ToolCallDelta is an OpenAI-compatible tool_calls JSON array. Function
 	// arguments are incremental strings, which may contain incomplete JSON.
 	ToolCallDelta json.RawMessage

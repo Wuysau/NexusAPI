@@ -1150,7 +1150,7 @@ func (p *Proxy) relayWithOptions(ctx context.Context, w http.ResponseWriter, str
 			}
 			return usage, nil, err
 		}
-		if opts.firstToken != nil && (chunk.Text != "" || chunk.Reasoning != "" || len(chunk.ToolCallDelta) > 0) {
+		if opts.firstToken != nil && (chunk.Text != "" || chunk.Reasoning != "" || (chunk.Refusal != nil && *chunk.Refusal != "") || len(chunk.ToolCallDelta) > 0) {
 			opts.firstToken()
 			opts.firstToken = nil
 		}
@@ -1173,6 +1173,9 @@ func (p *Proxy) relayWithOptions(ctx context.Context, w http.ResponseWriter, str
 			}
 			if chunk.Reasoning != "" {
 				delta["reasoning_content"] = chunk.Reasoning
+			}
+			if chunk.Refusal != nil {
+				delta["refusal"] = *chunk.Refusal
 			}
 			if chunk.ToolCallDelta != nil {
 				delta["tool_calls"] = chunk.ToolCallDelta
@@ -1483,7 +1486,7 @@ func parseChatRequest(body []byte, maxTokensEstimate int) (*chatRequest, *APIErr
 		default:
 			return nil, errInvalidParam(fmt.Sprintf("messages[%d].role", i), "Unsupported message role.")
 		}
-		if len(message.Content) == 0 && len(message.ToolCalls) == 0 {
+		if len(message.Content) == 0 && len(message.ToolCalls) == 0 && !(message.Role == "assistant" && message.Refusal != nil) {
 			return nil, errInvalidParam(fmt.Sprintf("messages[%d].content", i), "Message content is required.")
 		}
 	}

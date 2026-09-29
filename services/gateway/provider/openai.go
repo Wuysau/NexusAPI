@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-const openAIAdapterVersion = "1.0.2"
+const openAIAdapterVersion = "1.0.3"
 
 // OpenAICompatible implements Adapter for /chat/completions providers.
 type OpenAICompatible struct {
@@ -273,7 +273,7 @@ func (s *openAIStream) Next() (CanonicalChunk, error) {
 		if chunk.FinishReason != "" {
 			s.terminalSeen = true
 		}
-		if chunk.Text == "" && chunk.Reasoning == "" && chunk.ToolCallDelta == nil && chunk.FinishReason == "" {
+		if chunk.Text == "" && chunk.Reasoning == "" && chunk.Refusal == nil && chunk.ToolCallDelta == nil && chunk.FinishReason == "" {
 			continue // keep-alive / role-only delta
 		}
 		return chunk, nil
@@ -290,6 +290,7 @@ type openAIWireChunk struct {
 			Content          string          `json:"content"`
 			ReasoningContent string          `json:"reasoning_content"`
 			Reasoning        string          `json:"reasoning"`
+			Refusal          *string         `json:"refusal"`
 			ToolCalls        json.RawMessage `json:"tool_calls"`
 		} `json:"delta"`
 		FinishReason *string `json:"finish_reason"`
@@ -332,6 +333,7 @@ func parseOpenAIChunk(raw []byte) (CanonicalChunk, error) {
 	if len(wire.Choices) > 0 {
 		choice := wire.Choices[0]
 		out.Text = choice.Delta.Content
+		out.Refusal = choice.Delta.Refusal
 		out.Reasoning = choice.Delta.ReasoningContent
 		if out.Reasoning == "" {
 			out.Reasoning = choice.Delta.Reasoning
