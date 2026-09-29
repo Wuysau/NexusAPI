@@ -55,6 +55,7 @@ const refusalMarker = 'private refusal marker 2da7'
 const refusalFragments = [refusalMarker.slice(0, 12), refusalMarker.slice(12)]
 const retryHeaderMarker = 'private retry header marker 12cb'
 const retryBodyMarker = 'private retry body marker 513a'
+const localDeadlineMarker = 'private local deadline output marker 93d2'
 const reasoningToolCalls = [
   {
     id: 'call_lookup',
@@ -239,6 +240,15 @@ beforeAll(async () => {
     }
     const event = (delta: unknown, finish: string | null = null) =>
       `data: ${JSON.stringify({ id: 'mock-1', object: 'chat.completion.chunk', model: body.model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`
+    if (mode === 'body_deadline') {
+      res.writeHead(200, { 'content-type': 'text/event-stream' })
+      res.write(event({ role: 'assistant', content: localDeadlineMarker }))
+      // Keep the Gateway's two-second idle limit alive until the independent
+      // CLI's three-second upstream deadline cancels its response-body read.
+      const keepAlive = setInterval(() => res.write(event({ content: '.' })), 250)
+      res.once('close', () => clearInterval(keepAlive))
+      return
+    }
     // This fixture exercises compatible transport; it makes no claim about live Ollama model behavior.
     if (mode === 'refusal' || mode === 'refusal_unknown') {
       res.writeHead(200, { 'content-type': 'text/event-stream' })
@@ -346,7 +356,8 @@ afterAll(async () => {
   await writeFile(path.join(folder, 'process-summary.log'), processLogs)
   await db.end()
   expect(processLogs).not.toContain(refusalMarker)
-  for (const marker of [retryHeaderMarker, retryBodyMarker]) expect(processLogs).not.toContain(marker)
+  for (const marker of [retryHeaderMarker, retryBodyMarker, localDeadlineMarker])
+    expect(processLogs).not.toContain(marker)
 })
 
 it('creates an owned connection, blocks viewer pairing and forged heartbeat, stores only a one-use pairing hash', async () => {
@@ -1460,6 +1471,92 @@ it('honors bounded local retry hints for later requests while preserving model i
     expect(JSON.stringify(events) + gatewayLogs + cliLogs).not.toContain(marker)
 }, 15000)
 
+it('preserves the standalone CLI body-read deadline as a timeout after partial output in both Chat modes', async () => {
+  const before = calls
+  const beforeCancelled = cancelled
+  const requestIds: string[] = []
+  mode = 'body_deadline'
+  try {
+    for (const stream of [false, true]) {
+      const started = calls
+      const response = await gatewayFetch('/v1/chat/completions', chat(stream))
+      const text = await response.text()
+      expect(response.status, text).toBe(stream ? 200 : 504)
+      expect(calls).toBe(started + 1)
+      expect(response.headers.get('x-request-id')).toBeTruthy()
+      requestIds.push(response.headers.get('x-request-id')!)
+      if (stream) {
+        expect(response.headers.get('content-type')).toContain('text/event-stream')
+        expect(text).toContain(localDeadlineMarker)
+        expect(text).not.toContain('[DONE]')
+        const frames = text
+          .split('\n\n')
+          .filter((frame) => frame.startsWith('data: '))
+          .map((frame) => JSON.parse(frame.slice(6)))
+        expect(frames.filter((frame) => frame.error)).toHaveLength(1)
+        expect(frames.at(-1).error.code).toBe('upstream_timeout')
+      } else {
+        expect(JSON.parse(text).error.code).toBe('upstream_timeout')
+        expect(text).not.toContain(localDeadlineMarker)
+      }
+      expect(text).not.toContain('private prompt marker')
+      expect(text).not.toContain('upstream_protocol_error')
+    }
+  } finally {
+    mode = 'normal'
+  }
+  expect(calls - before).toBe(2)
+  expect(new Set(requestIds).size).toBe(2)
+  await waitFor(async () => cancelled === beforeCancelled + 2)
+  await waitFor(
+    async () =>
+      (await db.query('SELECT id FROM outbox_events WHERE aggregate_id=ANY($1::text[])', [requestIds])).rowCount === 2,
+  )
+  const records = (
+    await db.query(
+      `SELECT r.id,r.status,r.error_code,f.project_id,f.api_key_id,a.connection_id,a.price_version_id,a.execution_mode,a.status attempt_status
+       FROM request_records r JOIN request_project_facts f ON f.request_id=r.id JOIN attempts a ON a.request_id=r.id WHERE r.id=ANY($1::text[])`,
+      [requestIds],
+    )
+  ).rows
+  expect(records).toHaveLength(2)
+  expect(new Set(records.map((record) => record.id)).size).toBe(2)
+  for (const record of records)
+    expect(record).toMatchObject({
+      status: 'unknown',
+      error_code: 'upstream_timeout',
+      project_id: 'connector-project',
+      api_key_id: 'connector-key',
+      connection_id: connectionId,
+      price_version_id: null,
+      execution_mode: 'byok',
+      attempt_status: 'unknown',
+    })
+  const events = (
+    await db.query('SELECT aggregate_id,payload FROM outbox_events WHERE aggregate_id=ANY($1::text[])', [requestIds])
+  ).rows
+  expect(events).toHaveLength(2)
+  for (const event of events) {
+    expect(event.payload.status).toBe('unknown')
+    expect(event.payload.price_version_id).toBeNull()
+    expect(event.payload.attribution).toMatchObject({
+      project_id: 'connector-project',
+      api_key_id: 'connector-key',
+      connection_id: connectionId,
+      execution_mode: 'byok',
+    })
+    expect(event.payload.usage).toMatchObject({
+      input_tokens: null,
+      output_tokens: null,
+      cached_input_tokens: null,
+      reasoning_tokens: null,
+      total_tokens: null,
+    })
+  }
+  const retained = JSON.stringify(events) + gatewayLogs + cliLogs
+  for (const marker of [localDeadlineMarker, 'private prompt marker']) expect(retained).not.toContain(marker)
+}, 15000)
+
 it('propagates cancellation, timeout and midstream failure without replay or leaking upstream errors', async () => {
   mode = 'cancel'
   const abort = new AbortController()
@@ -1530,6 +1627,7 @@ it('rejects a second Gateway instance, disconnected connectors, identity rotatio
     refusalMarker,
     retryHeaderMarker,
     retryBodyMarker,
+    localDeadlineMarker,
   ])
     expect(gatewayLogs + cliLogs).not.toContain(marker)
 })

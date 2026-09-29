@@ -349,7 +349,11 @@ func (c *Client) execute(parent context.Context, token string, j job) {
 				if e == io.EOF {
 					_ = encoder.Encode(frame{Type: "end"})
 				} else {
-					_ = encoder.Encode(frame{Type: "error"})
+					code := ""
+					if errors.Is(e, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+						code = "timeout"
+					}
+					_ = encoder.Encode(frame{Type: "error", Code: code})
 				}
 				return
 			}

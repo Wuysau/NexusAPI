@@ -241,7 +241,7 @@ func (h *ConnectorHub) result(w http.ResponseWriter, r *http.Request, job *conne
 		select {
 		case <-job.ctx.Done():
 			_ = r.Body.Close()
-			_ = job.writer.CloseWithError(context.Canceled)
+			_ = job.writer.CloseWithError(job.ctx.Err())
 		case <-finished:
 		}
 	}()
@@ -340,7 +340,9 @@ func (t connectorTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	t.hub.mu.Unlock()
 	go func() {
 		<-ctx.Done()
-		_ = pr.CloseWithError(ctx.Err())
+		// Closing the writer wakes both pipe ends while preserving an earlier
+		// terminal cause. Closing the reader here would mask that cause with
+		// ErrClosedPipe before the response consumer has observed it.
 		_ = pw.CloseWithError(ctx.Err())
 		t.hub.mu.Lock()
 		delete(t.hub.jobs, job.ID)
