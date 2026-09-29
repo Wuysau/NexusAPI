@@ -80,7 +80,7 @@ func (o *cliOutput) String() string {
 	return o.buffer.String()
 }
 
-func startConnectorCLIAction(t *testing.T, config connectorclient.Config, identity connectorclient.Identity, action string, stdin io.Reader) *cliProcess {
+func startConnectorCLIAction(t *testing.T, config connectorclient.Config, identity connectorclient.Identity, action string, stdin io.Reader, identityPaths ...string) *cliProcess {
 	t.Helper()
 	dir := t.TempDir()
 	writeFixture := func(name string, value any) string {
@@ -96,7 +96,12 @@ func startConnectorCLIAction(t *testing.T, config connectorclient.Config, identi
 		return path
 	}
 	configPath := writeFixture("connector.json", config)
-	identityPath := writeFixture("identity.json", identity)
+	var identityPath string
+	if len(identityPaths) > 0 {
+		identityPath = identityPaths[0]
+	} else {
+		identityPath = writeFixture("identity.json", identity)
+	}
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -142,7 +147,7 @@ func (p *cliProcess) wait(t *testing.T, wantCode int) string {
 }
 
 const (
-	cliIdentitySecret = "nxidentity_PRIVATE_CLI_IDENTITY"
+	cliIdentitySecret = "nxidentity_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 	cliLeaseSecret    = "nxlease_PRIVATE_CLI_LEASE"
 	cliUpstreamSecret = "PRIVATE_CLI_UPSTREAM_KEY"
 	cliPrivatePrompt  = "PRIVATE_CLI_PROMPT_BODY"
@@ -366,5 +371,28 @@ func TestReadPairingTokenNormalInput(t *testing.T) {
 		if got != token || (err != nil && !errors.Is(err, io.EOF)) {
 			t.Fatalf("normal pairing input changed: got %q, %v", got, err)
 		}
+	}
+}
+
+func TestConnectorCLIPairExistingIdentityDoesNotConsumeToken(t *testing.T) {
+	f := newCLIFixture(t, func(w http.ResponseWriter, _ *http.Request, _ int32) {
+		rejectCLILease(w, http.StatusUnauthorized)
+	})
+	identityPath := filepath.Join(t.TempDir(), "PRIVATE_EXISTING_IDENTITY_PATH")
+	original := []byte("PRIVATE_EXISTING_IDENTITY_BYTES")
+	if err := os.WriteFile(identityPath, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	p := startConnectorCLIAction(t, f.config, f.identity, "pair", strings.NewReader("nxpair_PRIVATE_PAIR_TOKEN\n"), identityPath)
+	output := p.wait(t, 1)
+	if f.pairCalls.Load() != 0 {
+		t.Fatalf("unusable identity destination consumed a pairing attempt: calls = %d", f.pairCalls.Load())
+	}
+	if strings.Contains(output, filepath.Base(identityPath)) || strings.Contains(output, "nxpair_PRIVATE_PAIR_TOKEN") {
+		t.Fatal("destination rejection disclosed a private path or token")
+	}
+	saved, err := os.ReadFile(identityPath)
+	if err != nil || !bytes.Equal(saved, original) {
+		t.Fatalf("existing identity was changed: %v", err)
 	}
 }

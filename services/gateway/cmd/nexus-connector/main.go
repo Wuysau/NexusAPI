@@ -55,19 +55,24 @@ func run() error {
 		if err != nil && err != io.EOF {
 			return fmt.Errorf("pairing input unavailable")
 		}
-		identity, err := client.Pair(ctx, token)
+		destination, err := reservePairingDestination(*identityPath)
 		if err != nil {
 			return err
 		}
-		raw, _ := json.MarshalIndent(identity, "", "  ")
-		f, err := os.OpenFile(*identityPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-		if err != nil {
-			return fmt.Errorf("identity file exists or cannot be created; choose a new private identity path")
+		defer destination.cleanup()
+		if ctx.Err() != nil {
+			return nil
 		}
-		_, err = f.Write(raw)
-		closeErr := f.Close()
-		if err != nil || closeErr != nil {
-			return fmt.Errorf("identity could not be saved; generate a new pairing token")
+		identity, err := client.Pair(ctx, token)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return err
+		}
+		raw, _ := json.MarshalIndent(identity, "", "  ")
+		if err := destination.save(raw); err != nil {
+			return err
 		}
 		fmt.Println("Paired. Identity saved locally. Start with the run command.")
 		return nil
