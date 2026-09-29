@@ -136,21 +136,8 @@ func (a *Authenticator) Authenticate(ctx context.Context, presented, requiredSco
 	if subtle.ConstantTimeCompare([]byte(key.HashSHA256), []byte(hash)) != 1 {
 		return nil, errInvalidAPIKey()
 	}
-	if key.RevokedAt != nil && *key.RevokedAt != "" {
-		return nil, errKeyRevoked()
-	}
-	if !key.Enabled {
-		return nil, errKeyDisabled()
-	}
-	if key.ExpiresAt != nil && *key.ExpiresAt != "" {
-		expiresAt, err := time.Parse(time.RFC3339, *key.ExpiresAt)
-		if err != nil || !a.now().Before(expiresAt) {
-			return nil, errKeyExpired()
-		}
-	}
-	if key.TenantID == "" || key.OrganizationID == "" || key.KeyID == "" {
-		// A key without a tenant cannot scope any data access.
-		return nil, errInvalidAPIKey()
+	if err := validateSnapshotKey(key, a.now()); err != nil {
+		return nil, err
 	}
 	if !scopeMatches(key.Scopes, requiredScope) {
 		return nil, errScopeDenied(requiredScope)
@@ -170,6 +157,29 @@ func (a *Authenticator) Authenticate(ctx context.Context, presented, requiredSco
 		ExecutionMode:     key.ExecutionMode,
 		DirectoryEpoch:    bundle.RevocationEpoch,
 	}, nil
+}
+
+// validateSnapshotKey checks the signed key's own eligibility. Authentication
+// separately requires a fresh directory, matching hash and operation scope.
+// Background refresh can share these checks without granting any permission.
+func validateSnapshotKey(key *SnapshotKey, now time.Time) *APIError {
+	if key.RevokedAt != nil && *key.RevokedAt != "" {
+		return errKeyRevoked()
+	}
+	if !key.Enabled {
+		return errKeyDisabled()
+	}
+	if key.ExpiresAt != nil && *key.ExpiresAt != "" {
+		expiresAt, err := time.Parse(time.RFC3339, *key.ExpiresAt)
+		if err != nil || !now.Before(expiresAt) {
+			return errKeyExpired()
+		}
+	}
+	if key.TenantID == "" || key.OrganizationID == "" || key.KeyID == "" {
+		// A key without a tenant cannot scope any data access.
+		return errInvalidAPIKey()
+	}
+	return nil
 }
 
 // bearerToken extracts the presented key from the Authorization header. It

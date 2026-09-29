@@ -154,7 +154,16 @@ func run() error {
 	}
 	cancelWarm()
 
-	go snapshots.RunRefresher(rootCtx)
+	refreshCtx, cancelRefresh := context.WithCancel(rootCtx)
+	refreshDone := make(chan struct{})
+	go func() {
+		defer close(refreshDone)
+		snapshots.RunRefresher(refreshCtx)
+	}()
+	cleanup.add(func() {
+		cancelRefresh()
+		<-refreshDone
+	})
 
 	shutdownTelemetry := SetupTelemetry(os.Getenv("GATEWAY_OTEL_DISABLED") == "true", logger)
 	cleanup.add(func() {
