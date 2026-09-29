@@ -437,29 +437,18 @@ func (s *SnapshotState) Fresh(now time.Time) bool {
 }
 
 type snapshotEntry struct {
-	state       atomic.Pointer[SnapshotState]
-	refreshGate chan struct{}
+	state   atomic.Pointer[SnapshotState]
+	mu      sync.Mutex
+	refresh *snapshotRefresh
 }
 
-// A waiting request must be able to leave without canceling the refresh owned
-// by another request or the background refresher.
-func (e *snapshotEntry) acquireRefresh(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	select {
-	case e.refreshGate <- struct{}{}:
-		if err := ctx.Err(); err != nil {
-			e.releaseRefresh()
-			return err
-		}
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+// Results belong to this refresh, including failures. Waiters must not read
+// the outcome of a later refresh that happens to finish before they wake.
+type snapshotRefresh struct {
+	done  chan struct{}
+	state *SnapshotState
+	err   error
 }
-
-func (e *snapshotEntry) releaseRefresh() { <-e.refreshGate }
 
 func snapshotRefreshError(stale *SnapshotState, err error) (*SnapshotState, error) {
 	if stale != nil {
@@ -469,7 +458,8 @@ func snapshotRefreshError(stale *SnapshotState, err error) (*SnapshotState, erro
 }
 
 // SnapshotCache keeps per-tenant last-known-good bundles with single-flight
-// refresh. Reads are lock-free; only refresh serialises.
+// refresh. Fresh state reads need no per-entry lock; concurrent refresh callers
+// share one result and retain independent cancellation.
 type SnapshotCache struct {
 	source  SnapshotSource
 	keyring *Keyring
@@ -505,7 +495,7 @@ func (c *SnapshotCache) entryFor(tenantID string) *snapshotEntry {
 	defer c.mu.Unlock()
 	e, ok := c.entries[tenantID]
 	if !ok {
-		e = &snapshotEntry{refreshGate: make(chan struct{}, 1)}
+		e = &snapshotEntry{}
 		c.entries[tenantID] = e
 	}
 	return e
@@ -525,25 +515,65 @@ func (c *SnapshotCache) Get(ctx context.Context, tenantID string) (*SnapshotStat
 		return st, nil
 	}
 
-	if err := e.acquireRefresh(ctx); err != nil {
-		return snapshotRefreshError(e.state.Load(), err)
+	state, err := c.refreshSnapshot(ctx, tenantID, e, false)
+	if err != nil {
+		return snapshotRefreshError(state, err)
 	}
-	defer e.releaseRefresh()
+	// A waiter can resume after the verified generation's validity window.
+	if !state.Fresh(c.now()) {
+		return snapshotRefreshError(state, &SnapshotError{Reason: ReasonSnapshotExpired})
+	}
+	return state, nil
+}
 
-	now = c.now()
+func (c *SnapshotCache) refreshSnapshot(ctx context.Context, tenantID string, e *snapshotEntry, force bool) (*SnapshotState, error) {
+	e.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		e.mu.Unlock()
+		return e.state.Load(), err
+	}
 	stale := e.state.Load()
-	if stale != nil && stale.Fresh(now) {
+	if !force && stale != nil && stale.Fresh(c.now()) {
+		e.mu.Unlock()
 		return stale, nil
 	}
+	if pending := e.refresh; pending != nil {
+		e.mu.Unlock()
+		select {
+		case <-pending.done:
+			// Cancellation wins even if the result became ready concurrently.
+			if err := ctx.Err(); err != nil {
+				return e.state.Load(), err
+			}
+			return pending.state, pending.err
+		case <-ctx.Done():
+			return e.state.Load(), ctx.Err()
+		}
+	}
+	pending := &snapshotRefresh{
+		done: make(chan struct{}), state: stale,
+		err: errors.New("snapshot refresh interrupted"),
+	}
+	e.refresh = pending
+	e.mu.Unlock()
+	// Keep the original owner's context and synchronous lifecycle. Even an
+	// unexpected panic must release waiters and allow a later refresh to run.
+	defer func() {
+		e.mu.Lock()
+		e.refresh = nil
+		close(pending.done)
+		e.mu.Unlock()
+	}()
 
 	fresh, err := c.fetchAndVerify(ctx, tenantID)
+	pending.err = err
 	if err == nil {
 		e.state.Store(fresh)
-		return fresh, nil
+		pending.state = fresh
+	} else {
+		c.logger.Warn("snapshot refresh failed", "tenant", tenantID, "reason", err.Error())
 	}
-	c.logger.Warn("snapshot refresh failed", "tenant", tenantID, "reason", err.Error())
-
-	return snapshotRefreshError(stale, err)
+	return pending.state, pending.err
 }
 
 func (c *SnapshotCache) fetchAndVerify(ctx context.Context, tenantID string) (*SnapshotState, error) {
@@ -617,20 +647,12 @@ func (c *SnapshotCache) KnownTenants() []string {
 // background refresher must not stop on one bad scope.
 func (c *SnapshotCache) WarmAll(ctx context.Context) {
 	for _, tenant := range c.KnownTenants() {
-		e := c.entryFor(tenant)
-		if err := e.acquireRefresh(ctx); err != nil {
+		if ctx.Err() != nil {
 			return
 		}
-		fresh, err := c.fetchAndVerify(ctx, tenant)
-		if err == nil {
-			e.state.Store(fresh)
-		} else {
-			// Keep the last verified state and its original expiry. Background
-			// polls must fetch even before expiry so key changes take effect
-			// within RefreshInterval without adding I/O to authenticated traffic.
-			c.logger.Warn("snapshot refresh failed", "tenant", tenant, "reason", err.Error())
-		}
-		e.releaseRefresh()
+		// Fetch even before expiry so key changes propagate within the refresh
+		// interval. Join an existing refresh without queuing a duplicate fetch.
+		_, _ = c.refreshSnapshot(ctx, tenant, c.entryFor(tenant), true)
 	}
 }
 
