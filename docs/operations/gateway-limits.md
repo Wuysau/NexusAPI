@@ -8,8 +8,8 @@ Set these variables on the Go gateway process. The signed tenant policy may impo
 | `GATEWAY_CHANNEL_MAX_CONCURRENT` | `64` | Shared concurrent requests per channel across tenants and gateway instances; range 1–100000. |
 | `GATEWAY_CONCURRENCY_WAIT_MS` | `0` | Wait for admission capacity; 0 rejects immediately, maximum 30000 ms. Cancellation also stops waiting. |
 | `GATEWAY_MAX_RESPONSE_BYTES` | `16777216` (16 MiB) | Maximum buffered response size, including serialized JSON; range 4096–67108864 bytes (64 MiB). Also bounds the content retained for Responses completion events. |
-| `GATEWAY_STREAM_IDLE_TIMEOUT_SECONDS` | `60` | Upstream chunk idle timeout and downstream write deadline. |
-| `GATEWAY_TOTAL_TIMEOUT_SECONDS` | `300` | Whole-request time budget. |
+| `GATEWAY_STREAM_IDLE_TIMEOUT_SECONDS` | `60` | Upstream chunk idle timeout and downstream write/flush budget, including buffered Chat and Responses output. |
+| `GATEWAY_TOTAL_TIMEOUT_SECONDS` | `300` | Upstream execution time budget; authentication, terminal persistence and downstream delivery have separate limits. |
 | `GATEWAY_ENABLE_RESPONSES` | `false` | Enable the supported Responses subset described below. |
 
 ## Shared admission
@@ -47,6 +47,8 @@ Unverified connector models are omitted; other confirmed candidates can still be
 The SSE parser enforces a 1 MiB event budget while reading, including line bytes, comments and framing. The relay uses one reader per request and bounded handoff to the response writer. Chat streaming forwards deltas without retaining the full output. Buffered chat accumulates text, reasoning and function calls only up to `GATEWAY_MAX_RESPONSE_BYTES`. Responses also bounds the output retained for its final response object, including streamed requests.
 
 Transport EOF alone does not prove completion. Missing protocol completion, malformed/oversized events, idle timeout and disconnect retain the available usage evidence without reporting a completed request. Unknown counters remain unknown rather than becoming fabricated zeros. An ambiguous upstream outcome is recorded as `unknown`; it is not automatically charged, and its budget hold remains subject to reconciliation. Terminal persistence uses a bounded context independent of client cancellation. See [reconciliation](./reconciliation.md).
+
+Buffered Chat and Responses delivery also has a write/flush deadline. A client that stops reading cannot indefinitely hold the handler or Chat's tenant concurrency slot after terminal persistence. A delivery failure after persistence does not replay inference or rewrite its completed usage fact. Successful intermediate SSE flushes clear their write deadline while the handler waits for more upstream data or durable terminal storage; this prevents an unrelated HTTP/2 reset during a storage wait. Final writes retain their deadline for the HTTP server's remaining protocol framing. Long upstream execution remains governed by its own timeout rather than a server-wide response write timer.
 
 Once upstream execution may have occurred, the gateway does not switch providers to replay the request. Same-priority eligible channels use weighted selection informed by health, in-flight work and time to first token; this does not override eligibility or circuit-breaker checks.
 

@@ -157,3 +157,23 @@ Review also found that the existing snapshot refresh mutex could outlive a calle
 - `npm run typecheck` passed. Seven focused TypeScript unit/contract files passed all 100 tests. Go formatting, targeted TypeScript ESLint/Prettier, secret scan and diff checks passed.
 - Independent CP and Go reviews found no blocking issues. The final response loop retains each model row's status check, so an active ID cannot restore a deprecated row that shares the same ID. No migration or production deployment was performed; CP-first rollout and the existing single-Gateway connector deployment constraint remain documented.
 - Final combined `go test ./...` and `go vet ./...` passed (Gateway 21.453 seconds). Linux `go test -race ./...` passed (Gateway 65.004 seconds), including the final inactive-row regression and snapshot cancellation changes.
+
+Round 6 was committed as `e9930f3` and merged/pushed to main (`970167a`).
+
+## Round 7 design
+
+Buffered inference currently writes the final JSON without a downstream deadline. A real Linux TCP fixture with an 8 MiB response and a client that stops reading leaves both Chat and Responses handlers blocked beyond the configured write budget. Chat also retains its tenant concurrency lease; Responses releases that lease before its final adapter write but still blocks its HTTP handler and graceful shutdown. Windows socket buffering did not reproduce blocking in the same fixture, so Linux verification is required.
+
+Apply operation-specific deadlines, following the distinction between streaming and buffered I/O used in [Bifrost's provider design](https://github.com/maximhq/bifrost/blob/dev/AGENTS.md) and the bounded writes in [Caddy's HTTP transport](https://github.com/caddyserver/caddy/blob/master/modules/caddyhttp/reverseproxy/httptransport.go). NexusAPI uses its existing `IdleTimeout`, original Go code and no new dependency.
+
+- Cover the actual buffered Chat write and flush, and the final Responses adapter write/flush, after existing durable terminal persistence. Failure releases request resources without replaying inference or rewriting completed usage facts.
+- Share deadline ownership with SSE: set a fresh deadline for each write/flush operation and clear successful intermediate deadlines. An armed HTTP/2 deadline can otherwise reset a healthy stream while terminal persistence is still running. Terminal writes retain the deadline for HTTP/1 chunk termination and HTTP/2 END_STREAM after the handler returns. Failed operations retain the failure instead of reopening the connection.
+- Validate real TCP backpressure, HTTP/2 with verified TLS and slow terminal persistence, normal large outputs, downstream write/flush failures, exactly-once execution and unchanged accounting. Keep whole-request server WriteTimeout disabled so valid long inference is not cut off before output starts.
+
+## Round 7 validation
+
+- Real Linux TCP tests reproduced both buffered handlers remaining blocked beyond two seconds with a 150 ms write budget. After the change, both finish in about 290 ms including generation and serialization, release request resources, and retain exactly one completed terminal record/outbox event. Healthy clients receive the entire 8 MiB JSON content. Windows kernel buffering accepted this fixture without blocking, so its passing native run alone is not the backpressure proof.
+- Verified TLS HTTP/2 tests reproduced `INTERNAL_ERROR` resets on both streaming APIs when persistence waited 300 ms after a successful write with a 100 ms deadline. Both now deliver their terminal completion marker, one execution, one terminal record and unchanged measured usage. Eight connection-reuse cases cover HTTP/1 and HTTP/2, both APIs, and JSON/streaming; after waiting longer than the completed response's write deadline, the same connection still serves the next request.
+- Nine fault/lifecycle cases check deadline setup, intermediate cleanup, terminal retention, write/flush failures, unsupported in-memory writers and zero-timeout compatibility. Independent review verified that terminal deadlines remain armed for the standard library's final chunk/END_STREAM flush and found no blocking issues.
+- Final `go test ./...` and `go vet ./...` passed (Gateway 23.350 seconds). Linux `go test -race ./...` passed (Gateway 76.425 seconds). Six TypeScript contract files passed all 70 tests; no TypeScript production source changed in this round.
+- `node .test-artifacts/resilience/verify-connector.mjs` passed all nine real PostgreSQL/TLS independent-process connector groups (18.17 seconds), including streaming, cancellation, timeout, live authorization and attribution. Go formatting, secret scan and diff checks passed. No schema change, new dependency or production deployment was made.

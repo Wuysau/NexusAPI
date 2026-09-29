@@ -59,7 +59,16 @@ func (p *Proxy) ServeResponses(w http.ResponseWriter, r *http.Request) {
 	}
 	mapper := &responsesWriter{w: w, header: make(http.Header), request: req, id: "resp_" + requestID, created: p.now().Unix(), maxBytes: limit, textIndex: -1, tools: make(map[int]int)}
 	p.ServeChatCompletions(mapper, forward)
-	mapper.finish()
+	// Buffered Chat writes only populate mapper memory. This is the actual
+	// downstream delivery, including terminal Responses events after persistence.
+	if err := p.withDownstreamWriteDeadline(w, terminalWrite, func() error {
+		if err := mapper.finish(); err != nil {
+			return err
+		}
+		return flushBufferedResponse(w)
+	}); err != nil {
+		p.logger.Debug("responses terminal write failed", "request_id", requestID)
+	}
 }
 
 func parseResponsesRequest(body []byte) (*responsesRequest, map[string]any, *APIError) {
@@ -670,45 +679,45 @@ func (w *responsesWriter) completionEvents(final []byte) []responsesEvent {
 	return events
 }
 
-func (w *responsesWriter) finish() {
+func (w *responsesWriter) finish() error {
 	if w.status >= 400 {
 		w.copyHeaders()
 		w.w.WriteHeader(w.status)
-		_, _ = w.w.Write(w.buffer)
-		return
+		_, err := w.w.Write(w.buffer)
+		return err
 	}
 	if !w.request.Stream {
-		w.finishJSON()
-		return
+		return w.finishJSON()
 	}
 	if w.writeErr != nil || w.failed || !w.done || w.ValidateCompletion(nil) != nil {
-		w.failStream()
-		return
+		return w.failStream()
 	}
 	for _, event := range w.validatedEvents {
-		if w.event(event.kind, event.fields) != nil {
-			w.failStream()
-			return
+		if err := w.event(event.kind, event.fields); err != nil {
+			return err
 		}
 	}
-	_ = w.FlushError()
+	return w.FlushError()
 }
 
-func (w *responsesWriter) failStream() {
+func (w *responsesWriter) failStream() error {
 	// Deltas already delivered remain visible, but do not duplicate a possibly
 	// oversized partial object in the failure event.
 	response := map[string]any{"id": w.id, "object": "response", "created_at": w.created, "model": w.request.Model, "status": "failed", "output": []any{}, "usage": w.usage, "incomplete_details": nil, "error": map[string]string{"code": "server_error", "message": "The response did not complete successfully."}}
-	_ = w.event("response.failed", map[string]any{"response": response})
-	_ = w.FlushError()
+	if err := w.event("response.failed", map[string]any{"response": response}); err != nil {
+		return err
+	}
+	return w.FlushError()
 }
 
-func (w *responsesWriter) finishJSON() {
+func (w *responsesWriter) finishJSON() error {
 	if w.ValidateCompletion(w.buffer) != nil {
 		writeAPIError(w.w, w.id, errUpstreamProtocol())
-		return
+		return nil
 	}
 	w.copyHeaders()
 	w.w.Header().Set("Content-Type", "application/json")
 	w.w.WriteHeader(http.StatusOK)
-	_, _ = w.w.Write(w.validatedJSON)
+	_, err := w.w.Write(w.validatedJSON)
+	return err
 }
