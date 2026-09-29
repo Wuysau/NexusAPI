@@ -30,6 +30,8 @@ A valid signature and HTTP 200 are insufficient to refresh authorization. A fetc
 
 Failed candidates retain the last accepted snapshot and its original expiry; repeated successful HTTP responses containing an expired bundle do not extend its lifetime. With no previously valid state, requests fail with 503. API key authentication always requires a fresh platform directory. Previously accepted tenant snapshots retain the existing explicit legacy BYOK stale-policy behavior; managed and v2 execution fail closed on expiry. This does not allow a newly received expired bundle to enable that policy.
 
+After verification, each generation builds a private API key hash index. Requests still check current directory freshness, key state, expiry and scopes; the index stores directory positions, not authentication results. A newly accepted generation replaces the whole index, so revocation and project changes retain their existing snapshot refresh boundary. The signed envelope and 8 MiB response limit are unchanged. From `services/gateway`, run `go test . -run '^$' -bench 'BenchmarkSnapshot(Authentication|KeyIndexBuild)' -benchmem -cpu=1` to measure authentication and refresh-index costs with 1,000 and 10,000 representative keys. These measurements exclude HTTP, model execution and snapshot verification.
+
 If the Control Plane responds but requests report snapshot errors, check that its signed `expires_at` is current, Gateway and Control Plane clocks are synchronized, and intermediary caches are not replaying old responses. Readiness remains false when the platform directory is expired. Do not change host time or extend cached expiry to bypass authorization checks.
 
 ## Health probes and provider cooldown

@@ -256,3 +256,24 @@ Extend the [LiteLLM explicit-parameter principle](https://docs.litellm.ai/docs/c
 - Provider tests cover 23 unsupported Gemini/Anthropic cases, compatible defaults, null and empty options, immutable validation, sanitized typed errors and accurate capabilities/adapter versions. Direct `BuildRequest` callers receive the same validation. Independent reviews of both routing and adapter changes found no blocking issues.
 - Full native `go test ./...` and `go vet ./...` passed (Gateway 27.844 seconds). Linux `go test -race ./...` passed (Gateway 93.759 seconds). Six TypeScript contract files passed all 70 tests. The independent-process PostgreSQL/TLS connector suite passed all nine groups (19.32 seconds).
 - Go formatting, secret scan and diff checks passed. No migration, dependency, TypeScript production change or production deployment was performed. The custom-model tool test exercises the OpenAI-compatible HTTP adapter; the existing connector end-to-end suite separately verifies connector transport and lifecycle.
+
+Round 11 was committed as `05f2e54` and merged/pushed to main (`ae6bb78`).
+
+## Round 12 design
+
+Every authenticated request currently scans the platform API key directory. On a Windows amd64 Intel Ultra 7 255H benchmark with one CPU, a prewarmed 10,000-key directory takes 38.7–42.1 microseconds for successful full authentication at its last entry, and 41.3–48.3 microseconds for a missing key. A prototype generation-local index reduces those to approximately 0.43 and 0.26 microseconds without changing per-request allocations. Its representative serialized directory is 5.76 MB, within the current 8 MiB transport limit; the 50,000-key stress fixture exceeds that limit and is not a supported production-size claim.
+
+Apply the version-local indexing pattern from [Envoy's resource groups](https://github.com/envoyproxy/go-control-plane/blob/main/pkg/cache/v3/resources.go) within the existing signed snapshot cache:
+
+- Build a private hash-to-position map only after signature, schema, tenant and expiry checks pass. Preserve exact, case-sensitive hashes and first-match duplicate behavior. The index adds no signed or serialized fields and is published atomically with its generation.
+- Keep authentication checks on every request: freshness, revoked/disabled/expired state, tenant and organization binding, scopes and project attribution. Do not cache authentication results or retain indexes across generations. Invalid refreshes preserve the previous generation and its original expiry.
+- Retain a read-only linear fallback for manually constructed bundles; production verification always builds the index, including empty directories. Verify signed interoperability, refresh/revocation boundaries and concurrent reads/swaps under the race detector. Keep a reproducible benchmark for actual authentication and index construction costs.
+- The prototype index costs about 0.42 MiB and 0.62–0.78 ms to build at 10,000 entries. No dependency, migration, protocol change or deployment change is required.
+
+## Round 12 validation
+
+- Three focused test groups verify signed lookup, first-match duplicates, exact hash case, empty directories, read-only manual fixtures and unchanged JSON/canonical HMAC. Four authentication groups with ten scenarios cover revoked/disabled/expired keys, removed scopes, changed tenant/organization/project, added/reordered/removed hashes and rejected tampered/expired refreshes. Sixteen concurrent readers observe coherent identities during 41 snapshot publications; the prior generation and existing identities remain unchanged.
+- The retained benchmark compares full authentication on identical prewarmed directories using the production indexed path and the linear compatibility path. At 10,000 representative keys (5,760,436 serialized bytes), successful last-entry lookup measured 47.9–54.1 microseconds versus 0.479–0.672 microseconds, with the same 432 bytes/four allocations. Missing-key results varied more on the shared host (38.4–109.7 versus 0.256–0.270 microseconds), with unchanged 240 bytes/four allocations. Index construction measured 0.388–0.392 ms and 436,912 bytes. These are single-CPU Windows amd64 microbenchmarks, not end-to-end throughput or latency claims.
+- Full native `go test ./...` and `go vet ./...` passed (Gateway 27.345 seconds); the additional authentication file passed its focused checks and repeated concurrent-refresh run. Six TypeScript contract files passed all 70 tests. The independent-process PostgreSQL/TLS connector suite passed all nine groups (16.36 seconds).
+- Final Linux `go test -race ./...` passed (Gateway 96.651 seconds), including the added concurrent authentication and signed-generation refresh tests.
+- Go formatting, secret scan and diff checks passed. Independent production review found no blocking issues. No migration, dependency, signed-wire-format, TypeScript production or deployment change was made.
