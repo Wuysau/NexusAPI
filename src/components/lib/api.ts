@@ -35,11 +35,16 @@ export function readCookie(name: string): string | null {
 }
 
 async function parse<T>(res: Response): Promise<T> {
+  if (res.status === 204 || res.status === 205) return null as T
   let body: unknown = null
   try {
     body = await res.json()
-  } catch {
-    body = null
+  } catch (error) {
+    if (res.ok) {
+      if (error instanceof Error && error.name === 'AbortError') throw error
+      // A mutation may already have succeeded. Do not replay it or expose parser excerpts.
+      throw new ApiError(res.status, 'invalid_response', '响应内容无法读取，请刷新页面确认操作结果。')
+    }
   }
   if (!res.ok) {
     const err = (body as { error?: { code?: string; message?: string } } | null)?.error
