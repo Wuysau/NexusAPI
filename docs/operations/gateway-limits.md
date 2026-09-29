@@ -18,6 +18,24 @@ Production requires `REDIS_URL`. Tenant and channel concurrency use expiring Red
 
 Missing or unavailable Redis rejects production admission; adding replicas does not enable a local fallback. Only explicit development/test profiles allow local limits. During a Redis incident, restore Redis connectivity before expecting new production requests to succeed. Expired leases reclaim abandoned capacity; do not delete live lease keys to bypass caps.
 
+The configured process concurrency cap is applied before the first admission. Startup does not consume a slot; caps below and above the default 256 are supported.
+
+## Health probes and provider cooldown
+
+`/healthz` reports process liveness. `/readyz` returns 200 only with a fresh verified platform key directory and a responsive database; production also requires a successful live Redis ping. A fresh tenant bundle cannot mask an expired platform directory, which every API key authentication needs. Database and Redis checks run concurrently with a shared two-second deadline. Development/test may report `admission_mode: "local"` and `checks.redis: false` while remaining ready. A production Redis outage returns 503. Health responses disable caching and omit dependency error details. Probe traffic never calls a model.
+
+Database failure deliberately makes whole-instance readiness fail. The existing direct-request BYOK degradation policy remains, but a load balancer using `/readyz` removes that instance until persistence is healthy again.
+
+The container runs `/app/nexus-healthcheck`, which probes the configured `GATEWAY_ADDR` port on loopback with a three-second deadline and a 64 KiB response bound. It requires all three dependency checks to be true. With `GATEWAY_TLS_CERT` and `GATEWAY_TLS_KEY` configured, it uses HTTPS and verifies certificates. For a certificate issued to a DNS name, set `GATEWAY_HEALTHCHECK_TLS_SERVER_NAME` to that name; the network target remains local. For a private CA, mount its PEM bundle and set `GATEWAY_HEALTHCHECK_CA_FILE` to the mounted path. System trust roots are used otherwise. Bind the Gateway to a wildcard or loopback address reachable by the probe. There is no insecure verification mode, redirect following or environment proxy use.
+
+`/versionz` reports adapter versions and aggregate counts of closed/open/half-open breakers. Channel IDs and model names are not public diagnostics. Update any monitor that previously consumed the channel-keyed `breaker` object to use the aggregate state counts.
+
+An upstream 429 immediately cools down its channel/model for later requests. `Retry-After` (seconds or HTTP date), `retry-after-ms` and `x-ms-retry-after-ms` are parsed as positive durations and capped at 60 seconds. Invalid hints are ignored; a 429 without a valid hint uses the existing breaker duration (30 seconds in the default runtime). A 503 with a valid hint also enters cooldown. The same channel's other models keep their independent state. Cooldown expires into the existing limited half-open probing path, and a concurrent earlier success cannot clear an active cooldown.
+
+Invalid request and content-policy refusals do not count as upstream health failures. This avoids one caller's bad input removing capacity for other callers. Cooldown affects subsequent routing and does not sleep, retry, or fail over a request whose upstream execution may already have started. These states are per Gateway process; they are not a new distributed rate limiter.
+
+The first local-connector transport forwards status and response body but does not forward retry headers. Its 429 responses use the default cooldown; per-provider hints apply to direct API channels.
+
 ## Streaming, output and accounting
 
 The SSE parser enforces a 1 MiB event budget while reading, including line bytes, comments and framing. The relay uses one reader per request and bounded handoff to the response writer. Chat streaming forwards deltas without retaining the full output. Buffered chat accumulates text, reasoning and function calls only up to `GATEWAY_MAX_RESPONSE_BYTES`. Responses also bounds the output retained for its final response object, including streamed requests.

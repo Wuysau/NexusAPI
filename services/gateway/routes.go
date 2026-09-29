@@ -28,6 +28,7 @@ func NewHTTPRouter(proxy *Proxy, snapshots *SnapshotCache, limiter *Limiter, sto
 	router.Use(headerLimitMiddleware(int64(proxy.limits.MaxHeaderBytes)))
 
 	router.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("cache-control", "no-store")
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status":  "ok",
 			"service": "nexus-gateway",
@@ -36,28 +37,29 @@ func NewHTTPRouter(proxy *Proxy, snapshots *SnapshotCache, limiter *Limiter, sto
 	})
 
 	router.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		ready := snapshots.Ready()
-		checks := map[string]any{
-			"snapshot": ready,
-			"database": store.Ping(r.Context()) == nil,
-			"redis":    !limiter.Degraded(),
+		w.Header().Set("cache-control", "no-store")
+		checks := probeDependencies(r.Context(), store, limiter)
+		checks["snapshot"] = snapshots.Ready()
+		localAdmission := proxy.env != nil && (proxy.env.Environment == "development" || proxy.env.Environment == "test")
+		ready := checks["snapshot"] && checks["database"] && (checks["redis"] || localAdmission)
+		admissionMode := "shared"
+		if localAdmission && !checks["redis"] {
+			admissionMode = "local"
 		}
 		status := http.StatusOK
 		if !ready {
-			// No verified snapshot means no request can be authorized or
-			// routed: the instance is not ready, and saying otherwise would
-			// keep it in the load balancer while it fails every request.
 			status = http.StatusServiceUnavailable
 		}
-		writeJSON(w, status, map[string]any{"status": statusText(ready), "checks": checks})
+		writeJSON(w, status, map[string]any{"status": statusText(ready), "checks": checks, "admission_mode": admissionMode})
 	})
 
 	// Adapter versions are part of the ProviderAdapterV1 contract ("adapter
 	// 版本可观测"), so they are exposed here.
 	router.Get("/versionz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("cache-control", "no-store")
 		writeJSON(w, http.StatusOK, map[string]any{
 			"adapters": proxy.registry.Versions(),
-			"breaker":  proxy.breaker.Snapshot(),
+			"breaker":  breakerCounts(proxy.breaker),
 		})
 	})
 

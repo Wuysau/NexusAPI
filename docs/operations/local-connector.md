@@ -32,6 +32,9 @@ GATEWAY_REPLICAS=1
 CONTROL_PLANE_URL=https://control.example.com
 GATEWAY_TLS_CERT=/run/tls/fullchain.pem
 GATEWAY_TLS_KEY=/run/tls/key.pem
+GATEWAY_HEALTHCHECK_TLS_SERVER_NAME=gateway.example.com
+# 私有 CA 部署时，容器健康检查还需挂载并指定 CA 文件：
+# GATEWAY_HEALTHCHECK_CA_FILE=/run/tls/ca.pem
 # 私有 CA 时另设 CONTROL_PLANE_CA_FILE=/run/tls/control-ca.pem
 ```
 

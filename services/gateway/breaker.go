@@ -26,6 +26,7 @@ type breakerEntry struct {
 	state               BreakerState
 	consecutiveFailures int
 	openedAt            time.Time
+	retryAt             time.Time
 	// latencyEwmaMs is the smoothed observed latency used for soft scoring.
 	latencyEwmaMs float64
 	samples       int
@@ -102,7 +103,7 @@ func (b *Breaker) Allow(key string) bool {
 	case BreakerClosed:
 		return true
 	case BreakerOpen:
-		if b.now().Sub(e.openedAt) >= b.cfg.OpenDuration {
+		if !b.now().Before(e.retryAt) {
 			e.state = BreakerHalfOpen
 			b.probes[key] = 0
 			return b.admitProbeLocked(key)
@@ -122,7 +123,7 @@ func (b *Breaker) Available(key string) bool {
 	defer b.mu.Unlock()
 	e := b.entryLocked(key)
 	if e.state == BreakerOpen {
-		return b.now().Sub(e.openedAt) >= b.cfg.OpenDuration
+		return !b.now().Before(e.retryAt)
 	}
 	if e.state == BreakerHalfOpen {
 		return b.probes[key] < b.cfg.HalfOpenProbes
@@ -172,9 +173,14 @@ func (b *Breaker) RecordSuccess(key string, latency time.Duration) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	e := b.entryLocked(key)
-	e.state = BreakerClosed
-	e.consecutiveFailures = 0
-	b.probes[key] = 0
+	// An older in-flight request may finish after another request received a
+	// provider cooldown. Its success must not make that cooldown disappear.
+	if e.state != BreakerOpen || !b.now().Before(e.retryAt) {
+		e.state = BreakerClosed
+		e.consecutiveFailures = 0
+		b.probes[key] = 0
+		e.retryAt = time.Time{}
+	}
 	e.latencyEwmaMs = ewma(e.latencyEwmaMs, float64(latency.Milliseconds()), b.cfg.LatencyAlpha, e.samples)
 	e.samples++
 	e.failureEwma = ewma(e.failureEwma, 0, b.cfg.LatencyAlpha, e.healthSamples)
@@ -193,6 +199,10 @@ func (b *Breaker) RecordFailure(key string) {
 	if e.state == BreakerHalfOpen || e.consecutiveFailures >= b.cfg.FailureThreshold {
 		e.state = BreakerOpen
 		e.openedAt = b.now()
+		until := e.openedAt.Add(b.cfg.OpenDuration)
+		if until.After(e.retryAt) {
+			e.retryAt = until
+		}
 		b.probes[key] = 0
 	}
 }
@@ -200,12 +210,29 @@ func (b *Breaker) RecordFailure(key string) {
 // Open marks a confirmed resource exhaustion unavailable immediately. The
 // usual failure threshold remains reserved for transient health failures.
 func (b *Breaker) Open(key string) {
+	b.Cooldown(key, 0)
+}
+
+// Cooldown excludes the channel/model immediately without blocking a request.
+// An absent provider hint uses the existing circuit-open duration. Repeated
+// hints can extend a cooldown, but cannot shorten one already in force.
+func (b *Breaker) Cooldown(key string, delay time.Duration) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if delay <= 0 {
+		delay = b.cfg.OpenDuration
+	} else if delay > time.Minute {
+		delay = time.Minute
+	}
 	e := b.entryLocked(key)
 	e.state = BreakerOpen
 	e.consecutiveFailures = b.cfg.FailureThreshold
 	e.openedAt = b.now()
+	until := e.openedAt.Add(delay)
+	if e.retryAt.After(until) {
+		until = e.retryAt
+	}
+	e.retryAt = until
 	b.probes[key] = 0
 	e.failureEwma = ewma(e.failureEwma, 1, b.cfg.LatencyAlpha, e.healthSamples)
 	e.healthSamples++

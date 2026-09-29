@@ -140,7 +140,7 @@ func (g *Gemini) Stream(ctx context.Context, client *http.Client, call *Provider
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		defer func() { _ = resp.Body.Close() }()
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		return nil, &UpstreamHTTPError{Status: resp.StatusCode, Body: body}
+		return nil, newUpstreamHTTPError(resp.StatusCode, body, resp.Header, time.Now())
 	}
 	return &geminiStream{
 		resp:              resp,
