@@ -109,6 +109,7 @@ type Client struct {
 	remote, local *http.Client
 	mu            sync.RWMutex
 	lease         lease
+	pollTimeout   time.Duration // zero uses the production 35-second poll limit
 }
 
 func New(config Config) (*Client, error) {
@@ -146,10 +147,13 @@ func (c *Client) remoteJSON(ctx context.Context, path, token string, body any, o
 		return errRemote
 	}
 	defer res.Body.Close()
+	if path == "/api/connector/lease" && (res.StatusCode == http.StatusUnauthorized || res.StatusCode == http.StatusForbidden) {
+		return ErrAuthorizationRejected
+	}
 	if res.StatusCode != 200 {
 		return errRemote
 	}
-	if json.NewDecoder(io.LimitReader(res.Body, 16384)).Decode(out) != nil {
+	if decodeBoundedJSON(res.Body, 16384, out) != nil {
 		return errRemote
 	}
 	return nil
@@ -188,7 +192,7 @@ func (c *Client) readyModels(ctx context.Context) []string {
 			ID string `json:"id"`
 		} `json:"data"`
 	}
-	if json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&catalog) != nil {
+	if decodeBoundedJSON(res.Body, 1<<20, &catalog) != nil {
 		return []string{}
 	}
 	ready := []string{}
@@ -202,95 +206,34 @@ func (c *Client) readyModels(ctx context.Context) []string {
 	}
 	return ready
 }
-func (c *Client) renew(ctx context.Context, identity Identity) error {
+func (c *Client) renew(ctx context.Context, identity Identity, enforceLease bool) error {
+	current := c.currentLease()
+	if enforceLease {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, current.ExpiresAt)
+		defer cancel()
+	}
 	var next lease
-	if err := c.remoteJSON(ctx, "/api/connector/lease", identity.Credential, map[string]any{"leaseToken": c.currentLease().Token, "readyModels": c.readyModels(ctx)}, &next); err != nil {
+	if err := c.remoteJSON(ctx, "/api/connector/lease", identity.Credential, map[string]any{"leaseToken": current.Token, "readyModels": c.readyModels(ctx)}, &next); err != nil {
 		return err
 	}
-	if next.Token == "" || time.Now().After(next.ExpiresAt) {
+	if next.Token == "" || !time.Now().Before(next.ExpiresAt) {
 		return errRemote
 	}
 	c.mu.Lock()
+	defer c.mu.Unlock()
+	// A late response cannot revive a runtime whose previously known lease expired.
+	if enforceLease && !time.Now().Before(c.lease.ExpiresAt) {
+		return ErrLeaseExpired
+	}
+	if ctx.Err() != nil {
+		return errRemote
+	}
+	if !time.Now().Before(next.ExpiresAt) {
+		return errRemote
+	}
 	c.lease = next
-	c.mu.Unlock()
 	return nil
-}
-func (c *Client) Run(ctx context.Context, identity Identity) error {
-	if identity.ControlURL != c.config.ControlURL || !strings.HasPrefix(identity.Credential, "nxidentity_") {
-		return errors.New("identity is not bound to this control origin; pair again")
-	}
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	if err := c.renew(ctx, identity); err != nil {
-		return err
-	}
-	var workers sync.WaitGroup
-	defer workers.Wait()
-	workers.Add(1)
-	go func() {
-		defer workers.Done()
-		ticker := time.NewTicker(20 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if c.renew(ctx, identity) != nil && time.Now().After(c.currentLease().ExpiresAt) {
-					cancel()
-					return
-				}
-			}
-		}
-	}()
-	sem := make(chan struct{}, 4)
-	for ctx.Err() == nil {
-		select {
-		case sem <- struct{}{}:
-		case <-ctx.Done():
-			return nil
-		}
-		current := c.currentLease()
-		res, e := c.request(ctx, "POST", "/connector/poll", current.Token, nil)
-		if e != nil {
-			<-sem
-			if !pause(ctx, time.Second) {
-				break
-			}
-			continue
-		}
-		if res.StatusCode == 204 {
-			res.Body.Close()
-			<-sem
-			continue
-		}
-		if res.StatusCode != 200 {
-			res.Body.Close()
-			<-sem
-			if !pause(ctx, time.Second) {
-				break
-			}
-			continue
-		}
-		var j job
-		e = json.NewDecoder(io.LimitReader(res.Body, 2<<20)).Decode(&j)
-		res.Body.Close()
-		if e != nil {
-			<-sem
-			continue
-		}
-		workers.Add(1)
-		go func() { defer workers.Done(); defer func() { <-sem }(); c.execute(ctx, current.Token, j) }()
-	}
-	return nil
-}
-func pause(ctx context.Context, d time.Duration) bool {
-	select {
-	case <-ctx.Done():
-		return false
-	case <-time.After(d):
-		return true
-	}
 }
 func (c *Client) localAuth(r *http.Request) {
 	if c.config.APIKeyEnv != "" {
@@ -298,16 +241,7 @@ func (c *Client) localAuth(r *http.Request) {
 	}
 }
 func (c *Client) execute(parent context.Context, token string, j job) {
-	allowed := false
-	for _, m := range c.config.Models {
-		if m == j.Model {
-			allowed = true
-		}
-	}
-	var parsed struct {
-		Model string `json:"model"`
-	}
-	if !allowed || json.Unmarshal(j.Body, &parsed) != nil || parsed.Model != j.Model || !validJobID(j.ID) {
+	if !c.validJob(j) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(parent, time.Duration(c.config.UpstreamTimeoutSeconds)*time.Second)
@@ -317,8 +251,15 @@ func (c *Client) execute(parent context.Context, token string, j job) {
 		ctx, deadlineCancel = context.WithDeadline(ctx, j.Deadline)
 		defer deadlineCancel()
 	}
+	watcherDone := make(chan struct{})
+	defer func() {
+		cancel()
+		<-watcherDone
+	}()
 	go func() {
+		defer close(watcherDone)
 		for ctx.Err() == nil {
+			started := time.Now()
 			res, e := c.request(ctx, "GET", "/connector/cancel/"+j.ID, token, nil)
 			if e != nil {
 				cancel()
@@ -327,6 +268,11 @@ func (c *Client) execute(parent context.Context, token string, j job) {
 			res.Body.Close()
 			if res.StatusCode != 202 {
 				cancel()
+				return
+			}
+			// Successful cancellation long polls normally take 20 seconds.
+			// A fast 202 must not cause a busy loop; failures still cancel once.
+			if !pause(ctx, max(0, retryBase-time.Since(started))) {
 				return
 			}
 		}

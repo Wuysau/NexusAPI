@@ -48,7 +48,10 @@ func run() error {
 	case "pair":
 		// Read from stdin, keeping one-time credentials out of shell history and argv.
 		fmt.Fprintln(os.Stderr, "Paste one-time pairing token, then press Enter:")
-		token, err := bufio.NewReader(io.LimitReader(os.Stdin, 256)).ReadString('\n')
+		token, err := readPairingToken(ctx, os.Stdin)
+		if ctx.Err() != nil {
+			return nil
+		}
 		if err != nil && err != io.EOF {
 			return fmt.Errorf("pairing input unavailable")
 		}
@@ -81,5 +84,37 @@ func run() error {
 		return client.Run(ctx, identity)
 	default:
 		return fmt.Errorf("unknown action; use pair or run")
+	}
+}
+
+// readPairingToken is only for this one-shot CLI process. Windows console reads
+// and Close can both block; cancellation must let main exit without joining
+// them. Redirected input is closed asynchronously so its read can finish too.
+// Do not reuse this process-scoped pattern in the connector client library.
+func readPairingToken(ctx context.Context, input io.ReadCloser) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	type result struct {
+		token string
+		err   error
+	}
+	read := make(chan result, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		token, err := bufio.NewReader(io.LimitReader(input, 256)).ReadString('\n')
+		read <- result{token: token, err: err}
+	}()
+	select {
+	case <-ctx.Done():
+		go input.Close()
+		return "", ctx.Err()
+	case value := <-read:
+		<-done
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		return value.token, value.err
 	}
 }
