@@ -634,8 +634,8 @@ func (c *SnapshotCache) Ready() bool {
 	return false
 }
 
-// KnownTenants lists the tenant scopes the cache has seen, so the background
-// refresher can keep them warm. The platform scope is always included.
+// KnownTenants lists every scope the cache has seen, including retained stale
+// states. The platform scope is always included.
 func (c *SnapshotCache) KnownTenants() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -662,9 +662,56 @@ func (c *SnapshotCache) WarmAll(ctx context.Context) {
 	}
 }
 
-// RunRefresher keeps known scopes warm until ctx is cancelled. It is a single
-// goroutine that exits with the process (no leaked tickers).
+// warmInterestedTenants uses a fresh directory to avoid background requests for
+// tenants whose keys are all unusable. Missing/stale directory state retains the
+// conservative all-known behavior; it never removes last-good tenant state.
+func (c *SnapshotCache) warmInterestedTenants(ctx context.Context) {
+	tenants := c.KnownTenants()
+	var interested map[string]bool
+	now := c.now()
+	if st := c.entryFor("").state.Load(); st != nil && st.Fresh(now) && st.Verified != nil {
+		interested = make(map[string]bool)
+		bundle := st.Verified.Bundle
+		for i := range bundle.Keys {
+			key := &bundle.Keys[i]
+			// Authentication uses the first directory entry for a hash.
+			if bundle.KeyByHash(key.HashSHA256) == key && validateSnapshotKey(key, now) == nil {
+				interested[key.TenantID] = true
+			}
+		}
+	}
+	for _, tenant := range tenants {
+		if ctx.Err() != nil {
+			return
+		}
+		if tenant == "" || (interested != nil && !interested[tenant]) {
+			continue
+		}
+		_, _ = c.refreshSnapshot(ctx, tenant, c.entryFor(tenant), true)
+	}
+}
+
+// RunRefresher isolates platform-directory propagation from the serial tenant
+// sweep. Exactly two fixed loops perform background work; ticks never overlap
+// their own sweep and all fetches retain the per-scope single-flight contract.
+// Cancellation stops and joins the tenant worker before this method returns.
 func (c *SnapshotCache) RunRefresher(ctx context.Context) {
+	ctx, cancel := context.WithCancel(ctx)
+	tenantDone := make(chan struct{})
+	go func() {
+		defer close(tenantDone)
+		c.runRefreshLoop(ctx, c.warmInterestedTenants)
+	}()
+	defer func() {
+		cancel()
+		<-tenantDone
+	}()
+	c.runRefreshLoop(ctx, func(ctx context.Context) {
+		_, _ = c.refreshSnapshot(ctx, "", c.entryFor(""), true)
+	})
+}
+
+func (c *SnapshotCache) runRefreshLoop(ctx context.Context, refresh func(context.Context)) {
 	ticker := time.NewTicker(c.cfg.RefreshInterval)
 	defer ticker.Stop()
 	for {
@@ -672,7 +719,10 @@ func (c *SnapshotCache) RunRefresher(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			c.WarmAll(ctx)
+			if ctx.Err() != nil {
+				return
+			}
+			refresh(ctx)
 		}
 	}
 }
