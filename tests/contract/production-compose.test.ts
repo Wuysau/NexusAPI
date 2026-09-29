@@ -40,4 +40,9 @@ describe('canonical production topology', () => {
     expect(compose.services.app.environment.KMS_PROVIDER).not.toContain(':-local')
     expect(compose.services.budget.environment.GATEWAY_INTERNAL_TOKEN).toBeUndefined()
   })
+  it('allows Gateway draining and terminal persistence before container termination', () => {
+    const grace = String(compose.services.gateway.stop_grace_period)
+    expect(grace).toMatch(/^\d+s$/)
+    expect(Number.parseInt(grace, 10)).toBeGreaterThanOrEqual(45)
+  })
 })

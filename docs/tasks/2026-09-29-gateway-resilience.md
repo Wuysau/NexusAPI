@@ -48,3 +48,25 @@ These references inform behavior; NexusAPI keeps its stricter replay and financi
 ## Next round
 
 Investigate and fix server request identity versus client correlation, plus two-phase shutdown that allows terminal persistence to finish. Both defects have been reproduced with real HTTP requests. Keep these changes separate from the first verified commit.
+
+## Round 2 design
+
+Round 1 was committed as `a3ab3a8` and merged/pushed to main (`43f3745`).
+
+- Generate each authoritative request ID on the Gateway and carry it through a private request context. A client-provided correlation header must not become the global database primary key. Responses, Chat, errors, response headers, budgets and usage facts must use the same server-generated ID. Echo only a bounded safe client correlation value in a separate `x-client-request-id` header; do not persist it as identity.
+- Preserve explicit `Idempotency-Key` behavior. A scoped durable duplicate returns 409 even when the local guard was lost/restarted; unrelated database errors remain storage failures. Make MemoryStore model the database's global request-ID uniqueness so tests cannot hide cross-tenant collisions.
+- Stop admitting requests when shutdown starts, drain during the caller's grace period, then cancel remaining server request contexts and close sockets if the grace expires. Allow up to 12 additional seconds for handler cleanup (the terminal write budget is 10 seconds) before releasing registered dependencies. Report cleanup timeouts explicitly; do not claim graceful success or rewrite unknown execution as completed.
+- Regression tests cover duplicate caller correlations, concurrent calls, explicit durable duplicate keys, Responses identity consistency, graceful stream completion, cancellation, delayed terminal persistence before resource closure, and the bounded emergency path.
+
+The identity change intentionally changes the response `x-request-id` from an echo to the authoritative server ID. Clients needing their original correlation should read `x-client-request-id`; clients needing deduplication must use `Idempotency-Key`. No database migration is required.
+
+## Round 2 validation
+
+- `go test ./...` and `go vet ./...` passed. Shutdown tests use real listeners and delayed terminal persistence; main lifecycle tests cover cleanup transfer, HTTP/TLS listener startup failure and emergency cleanup.
+- Docker Desktop was started for isolated verification. `docker run --rm ... golang:1.27 go test -race ./...` passed on Linux; this closes the earlier host CGO limitation for the tested code.
+- `docker build -t nexus-gateway:resilience-check -f services/gateway/Dockerfile .` passed. The resulting image uses UID/GID 1001 and the compiled readiness command. No production container or existing image tag was replaced.
+- Prepared only disposable `convergence_gateway18` through `scripts/prepare-project-gateway-fixture.mjs`, then ran `go test . -run '^TestProjectV2PostgresCaptureTerminal$' -count=1 -v` with the explicit `127.0.0.1:55439/convergence_gateway27` fixture DSN. Passed with two valid tenant/organization/credential scopes, repeated caller correlation, durable v2 duplicate detection, immutable project facts and atomic outbox rollback.
+- `tests/integration/local-connector.test.ts` passed all 8 groups using separate compiled Gateway/connector processes, verified TLS, real PostgreSQL in disposable `connector_test_resilience`, and mock Ollama.
+- Six related TypeScript contract files passed, 70 tests. Go formatting, modified Compose/test formatting, secret scan and diff checks passed.
+- Independent review found and fixed main's deferred cleanup bypassing Server's emergency protection. Dependencies are now transferred to Server; the startup defer only handles initialization failures. Telemetry shutdown has a separate two-second bound. Compose now provides 60 seconds before forced termination.
+- Review also reproduced a pre-existing legacy v1 BYOK gap: after the admission claim expires or is lost, terminal-only persistence cannot prevent upstream replay of an explicit idempotency key. The v2 fix is not presented as legacy durable replay protection; a separate bounded round will address that path.

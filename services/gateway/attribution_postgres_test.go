@@ -148,6 +148,9 @@ func TestProjectV2PostgresCaptureTerminal(t *testing.T) {
 	if err = store.PersistTerminal(ctx, rec); !errors.Is(err, ErrReservationConflict) {
 		t.Fatalf("replay accepted: %v", err)
 	}
+	t.Run("caller correlation and scoped durable idempotency", func(t *testing.T) {
+		verifyPostgresRequestIdentity(t, db, store)
+	})
 	// Changes to current entities after capture cannot rewrite the historical fact.
 	exec("UPDATE downstream_api_keys SET project_id='project-b' WHERE id='key-test'; UPDATE projects SET name='Renamed' WHERE id='project-test'")
 	var project, name string
@@ -226,6 +229,10 @@ func TestProjectV2PostgresCaptureTerminal(t *testing.T) {
 	}
 	// Fail the outbox write after request/attempt updates: the whole terminal
 	// transaction must roll back while the pre-forward identity remains durable.
+	var priorAttempts, priorOutbox int
+	if err = db.QueryRow(ctx, "SELECT (SELECT count(*) FROM attempts),(SELECT count(*) FROM outbox_events)").Scan(&priorAttempts, &priorOutbox); err != nil {
+		t.Fatal(err)
+	}
 	exec("ALTER TABLE outbox_events ADD CONSTRAINT reject_v2_fixture CHECK(event_type NOT LIKE 'usage.v2.%') NOT VALID")
 	capture.record = nil
 	response = h.doChat(chatBody(chatBodyOptions{}), nil)
@@ -243,7 +250,7 @@ func TestProjectV2PostgresCaptureTerminal(t *testing.T) {
 	if err = db.QueryRow(ctx, "SELECT count(*) FROM outbox_events").Scan(&outbox); err != nil {
 		t.Fatal(err)
 	}
-	if created != 1 || attempts != 6 || outbox != 5 {
+	if created != 1 || attempts != priorAttempts+1 || outbox != priorOutbox {
 		t.Fatalf("partial terminal commit created=%d attempts=%d outbox=%d", created, attempts, outbox)
 	}
 	var pending int

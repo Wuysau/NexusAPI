@@ -23,7 +23,7 @@ type RouteOptions struct {
 // NewRouter wires the HTTP surface.
 func NewHTTPRouter(proxy *Proxy, snapshots *SnapshotCache, limiter *Limiter, store Store, options RouteOptions) http.Handler {
 	router := chi.NewRouter()
-	router.Use(middleware.RequestID)
+	router.Use(requestIdentityMiddleware)
 	router.Use(middleware.Recoverer)
 	router.Use(headerLimitMiddleware(int64(proxy.limits.MaxHeaderBytes)))
 

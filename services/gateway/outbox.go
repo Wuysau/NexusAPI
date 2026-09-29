@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -455,6 +456,8 @@ func orDefault(value, fallback string) string {
 type MemoryStore struct {
 	capturedAttempts map[string]AttemptRecord
 	captured         map[string]*FrozenRequest
+	capturedByID     map[string]*FrozenRequest
+	terminalIDs      map[string]struct{}
 	mu               sync.Mutex
 	requests         map[string]*TerminalRecord
 	outbox           map[string]int
@@ -466,7 +469,7 @@ type MemoryStore struct {
 }
 
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{requests: make(map[string]*TerminalRecord), outbox: make(map[string]int), captured: make(map[string]*FrozenRequest), capturedAttempts: make(map[string]AttemptRecord)}
+	return &MemoryStore{requests: make(map[string]*TerminalRecord), outbox: make(map[string]int), captured: make(map[string]*FrozenRequest), capturedByID: make(map[string]*FrozenRequest), terminalIDs: make(map[string]struct{}), capturedAttempts: make(map[string]AttemptRecord)}
 }
 
 // SetHealthy simulates an outbox that cannot commit.
@@ -515,11 +518,26 @@ func (m *MemoryStore) PersistTerminal(ctx context.Context, rec *TerminalRecord) 
 	if rec.IdempotencyKey == "" {
 		key = rec.TenantID + "|req:" + rec.RequestID
 	}
+	if _, exists := m.terminalIDs[rec.RequestID]; exists {
+		return ErrReservationConflict
+	}
+	if captured, exists := m.capturedByID[rec.RequestID]; exists {
+		if captured.TenantID != rec.TenantID || captured.OrganizationID != rec.OrganizationID ||
+			captured.IdempotencyKey != rec.IdempotencyKey || captured.Attribution.APIKeyID != rec.DownstreamKeyID ||
+			captured.Attribution.RequestedModel != rec.RequestModel || rec.ChannelKind != "byok" ||
+			!reflect.DeepEqual(&captured.Attribution, rec.AttributionContext) {
+			return ErrReservationConflict
+		}
+	}
+	if captured, exists := m.captured[key]; exists && captured.RequestID != rec.RequestID {
+		return ErrReservationConflict
+	}
 	if _, exists := m.requests[key]; exists {
 		return ErrDuplicateRequest
 	}
 	copied := *rec
 	m.requests[key] = &copied
+	m.terminalIDs[rec.RequestID] = struct{}{}
 	m.outbox[rec.TenantID+"|usage:"+rec.RequestID]++
 	return nil
 }

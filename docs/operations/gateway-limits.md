@@ -44,6 +44,16 @@ Transport EOF alone does not prove completion. Missing protocol completion, malf
 
 Once upstream execution may have occurred, the gateway does not switch providers to replay the request. Same-priority eligible channels use weighted selection informed by health, in-flight work and time to first token; this does not override eligibility or circuit-breaker checks.
 
+## Request identity and shutdown
+
+Every Gateway call receives a new server-generated `x-request-id`. That ID is used by response/error bodies, budget authorization, request/attempt records and usage events, including calls through the Responses adapter. Repeating a caller's `x-request-id` no longer causes a database primary-key collision. A safe caller correlation (at most 128 letters, digits, dots, underscores or hyphens) is echoed separately as `x-client-request-id`; this value is not an accounting or authorization identity. Prefer sending it in `x-client-request-id`; legacy incoming `x-request-id` is accepted as correlation only.
+
+Use `Idempotency-Key` to identify an operation explicitly. The v2 BYOK path captures identity before dispatch and returns 409 for same-tenant durable duplicates, including after the in-memory guard was lost. A correlation header has no deduplication semantics. The legacy v1 BYOK path still depends on the shared/local admission claim before terminal persistence; its durable replay protection after claim expiry is under separate review.
+
+Shutdown stops admission and allows active requests 30 seconds to complete. When grace expires, request contexts are canceled and sockets closed. A separate cleanup window of up to 12 seconds lets handlers finish detached terminal persistence (which has a 10-second deadline) before dependencies close. Canceled or partial execution stays unknown with its available usage evidence. Shutdown reports a missed grace deadline even when cleanup succeeds. If a handler remains stuck beyond cleanup, an explicit incomplete-cleanup error is returned; process exit remains an emergency boundary, not a claim that all usage was persisted.
+
+The production Compose Gateway has a 60-second `stop_grace_period`. Give other orchestrators at least 30 + 12 seconds plus teardown margin (telemetry flush has a separate two-second bound), or they may kill the process during terminal persistence. Main transfers dependency ownership to Server and skips blocking dependency closes when emergency cleanup remains incomplete. Keep the database and Redis available while the Gateway drains.
+
 ## Credential-bound connection reuse
 
 Local and Vault credential paths reuse HTTP/1.1 connections only for equivalent immutable authorization grants. The pool key covers tenant/reference/version, encrypted binding, grant deadlines, target and destination policy; it contains no plaintext credential. Fresh credential resolution still occurs. Issuance windows permit equivalent grants to share an expiry without extending the maximum 30-second grant lifetime.
