@@ -4,6 +4,8 @@
 
 工具身份来自对应的日志适配器或明确的遥测字段，不根据模型名称猜测。Claude Code 使用自定义模型时仍显示 Claude Code。连接绑定项目并不会自动拦截该连接的请求；项目归属以会话工作目录匹配已登记的项目目录为准。
 
+工具目录当前列出 **42 种工具身份**，包括原生日志、导出、Hook、通用桥接和尚未适配的工具，不能理解为 42 种原生支持。面板可按工具类别和接入方式筛选；逐项范围见[完整覆盖矩阵](agent-tool-coverage.md)。
+
 ## 开始自动采集
 
 1. 在「项目」中登记实际代码工作目录。
@@ -27,10 +29,18 @@
 | Kilo Code | 自动发现兼容扩展日志 | 兼容旧版 `globalStorage/kilocode.kilo-code/tasks`；新版 CLI 使用通用接入 |
 | GitHub Copilot | 自动发现 CLI 日志 | `~/.copilot/session-state/*/events.jsonl`；未持久化的 Token 显示未知；IDE 使用通用接入 |
 | Kimi CLI | 自动发现原生日志 | `~/.kimi/sessions` 中的 `wire.jsonl` |
+| Pi Coding Agent | 自动发现原生日志 | `~/.pi/agent/sessions`，支持 `PI_CODING_AGENT_DIR`；已验证 v2/v3 JSONL，旧版无稳定 ID 的记录不支持 |
+| Qoder IDE | 自动发现原生活动 | `~/.qoder/projects/*/transcript/*.jsonl`；只记录 assistant 活动，模型与 Token 未知；CLI 可另选 PostToolUse Hook |
 | Cursor | 官方 Hook | 配置 `afterAgentResponse` / `stop`，记录活动；官方 Hook 未提供的 Token 保持未知 |
-| Windsurf、Kiro、TRAE | 通用接入 | 需要工具实际提供的 Hook、遥测或导出数据，转换成通用事件；没有已验证的原生日志适配器 |
-| Continue、Aider、Goose | 通用接入 | 将实际开发数据、用量导出或遥测转换为通用事件 |
+| Windsurf / Cascade | 官方 Hook | `post_cascade_response`，用 `trajectory_id` 与 `execution_id` 记录回合活动；Token 未知 |
+| CodeBuddy | 官方 Hook | `Stop` 需要 `generation_id`；缺失时跳过，不以正文或时间生成回合 ID |
+| Factory Droid | SDK 导出 / 官方 Hook | SDK 单轮 `DroidResult` 导出需明确路径与工作目录；Stop Hook 需要 `message_id`；不扫描私有原生日志 |
+| Kiro CLI | 官方会话开始 Hook | `SessionStart` / 旧版 `agentSpawn`，每个会话记录一次存在，不代表完整回合数或 Token |
+| Google Antigravity | 官方 PostToolUse Hook | `conversationId` 与 `stepIdx` 记录工具活动；多工作目录保持未归属；Token 未知 |
+| OpenClaw | 旧版导出文件 | 仅已导出的 Pi v2/v3 形状 JSONL；明确指定来源，不自动读取当前 SQLite |
+| TRAE、Continue、Aider、Goose | 通用接入 | 部署方需提供稳定会话/事件 ID 的实际元数据；Continue 的 dev_data 本身不足以关联调用 |
 | Amp、Augment、JetBrains Junie | 通用接入 | 使用工具提供的元数据导出；没有可用导出时不能自动捕获 |
+| Crush、Hermes、OpenHands、SWE-agent、Zed、Warp 等 | 尚未内置适配 | 安装或登记工具不会自动采集；包括未实现本地格式适配与未实现远程同步的工具，详见完整矩阵 |
 | 其他新工具 | 自定义工具 ID | 通用事件支持新的工具 ID，无需改数据库或重新发布前端 |
 
 自动发现是对已支持日志格式的持续扫描，不是对任意软件流量的拦截。需要配置的工具会明确显示「Hook 接入」或「通用接入」。工具版本更换存储格式后，应查看采集状态并更新适配器。经过 NexusAPI 网关的模型请求仍在网关用量中记录；网关不凭模型或供应商猜测客户端工具。
@@ -41,11 +51,13 @@
 
 如果原生日志只保存项目 hash，或 IDE 任务不带工作目录，应针对**单个项目/任务目录**指定工作目录。不要将包含多个项目的全局日志目录全部映射到一个项目。配置的工作目录用于补充日志缺失的目录，不覆盖日志明确报告的目录。未匹配到项目的记录进入「未归属」；登记目录后使用现有归属功能处理历史记录，已归属的历史记录不会随意移动。
 
-默认发现支持 Windows/Linux 常见路径；自定义编辑器数据目录、容器目录、远程主机日志请添加明确的来源。Observer 必须能访问这些文件。后台不会扫描任意文件夹寻找聊天正文，也不会读取供应商认证文件。
+默认发现支持 Windows/Linux/macOS 常见路径；自定义编辑器数据目录、容器目录、远程主机日志请添加明确的来源。Observer 必须能访问这些文件。后台不会扫描任意文件夹寻找聊天正文，也不会读取供应商认证文件。
 
 ## Hook 接入
 
 Cursor 可按[官方 Hook 配置示例](agent-telemetry.md#cursor-官方-hooks)合并现有 `.cursor/hooks.json`。其他项目需把示例中的脚本及 TypeScript loader 改成 NexusAPI 检出目录的绝对路径。系统不会自动覆盖已有 Hook。
+
+Windsurf、CodeBuddy、Qoder CLI、Factory Droid、Kiro CLI 和 Antigravity 使用 `--format agent-hook`，各自配置文件与允许事件见[六类官方 Hook 指南](agent-hooks.md)。这些 Hook 仅记录活动，Token 全部保持未知。缺少每次事件稳定 ID 的 Stop 会被跳过；Kiro 默认只配置会话开始。Antigravity 只配置 PostToolUse，不要用于权限控制的 PreToolUse。
 
 通用接入器从 stdin 接收规范化事件或 OTLP JSON，输出到 `~/.nexusapi/usage/<tool>.jsonl`；开启自动发现后，该目录的新工具文件也会被采集。例如，在 NexusAPI 仓库目录运行：
 
@@ -57,6 +69,8 @@ Get-Content -Raw .\agent-event.json | npm run --silent agent:usage -- --tool my_
 
 同一调用选择一种采集路径，避免同时导入原生日志、Hook 和 OTLP 的独立事件造成重复。相同工具、会话和事件 ID 的重放可去重，后续完整计数可以补齐原来的未知值。
 
+Factory SDK 单轮导出与 OpenClaw 旧版 JSONL 应添加为**明确路径的原生格式来源**；界面的“原生格式”在此表示选择已实现的导出解析器，不表示自动扫描。不要把它们放入仅接收规范化遥测的 `~/.nexusapi/usage` 目录。Factory 的缓存/推理计数语义不明确时，输入、输出和总计仍可能未知；父级 SDK 结果已包含委派用量，不能再独立计入同一批子调用。详见 [Pi / Factory / OpenClaw 指南](agent-extended-cli-sources.md)。
+
 ## 如何理解记录
 
 - 会话按工具分别统计；不同工具出现相同会话 ID 不会被合并。
@@ -67,3 +81,5 @@ Get-Content -Raw .\agent-event.json | npm run --silent agent:usage -- --tool my_
 - 文件最多 64 MiB、每次快照最多 50,000 个标准化事件。达到上限会报告来源异常；先确认已导入，再轮换日志。停止自动发现不会删除历史记录。
 
 格式依据和版本边界见 [CLI 原生适配](agent-native-cli-sources.md)、[IDE / Copilot / Kimi 原生适配](agent-native-ide-sources.md)。
+
+新增适配的来源证据见 [Pi / Factory / OpenClaw](agent-extended-cli-sources.md)、[Qoder IDE 与未适配格式调查](agent-extended-ide-sources.md)、[官方 Hook 配置](agent-hooks.md)。这些实现已使用官方形状的合成样例验证，不等同于每个厂商客户端的现场验收。

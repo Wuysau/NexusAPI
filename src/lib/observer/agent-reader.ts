@@ -5,10 +5,29 @@ import type { AgentSource, NativeRecord } from './agent-types'
 import type { ObservedUsageEvent } from './codex'
 import { parseNativeCli } from './adapters/native-cli'
 import { parseNativeIde } from './adapters/native-ide'
-import { parseTelemetry } from './adapters/telemetry'
+import { parseTelemetry, mergeTelemetryRecord, TelemetryError } from './adapters/telemetry'
+import { parseExtendedCli } from './adapters/extended-cli'
+import { parseExtendedIde } from './adapters/extended-ide'
 
-export const AGENT_PARSER_VERSION = 'agent-snapshot-v1'
+export const AGENT_PARSER_VERSION = 'agent-snapshot-v2'
 const MAX_BYTES = 64 * 1024 * 1024
+const MAX_EVENTS = 50000
+
+/** A persisted spool is many bounded input batches, not one CLI invocation. */
+function parseTelemetrySnapshot(tool: string, value: unknown, context: { file: string; workspace?: string }) {
+  const records = new Map<string, NativeRecord>()
+  for (const item of Array.isArray(value) ? value : [value]) {
+    if (Array.isArray(item)) throw new TelemetryError('telemetry_batch_too_large')
+    // Per-payload OTLP and validation limits remain enforced by the normalizer.
+    for (const row of parseTelemetry(tool, item, context)) {
+      const key = JSON.stringify([row.sessionId, row.eventId])
+      const previous = records.get(key)
+      records.set(key, previous ? mergeTelemetryRecord(previous, row) : row)
+      if (records.size > MAX_EVENTS) throw new Error('agent_event_limit')
+    }
+  }
+  return [...records.values()]
+}
 export async function readAgentSnapshot(
   file: string,
   source: AgentSource,
@@ -45,6 +64,7 @@ export async function readAgentSnapshot(
       try {
         records.push(JSON.parse(line))
       } catch {
+        if (source.format === 'telemetry') throw new TelemetryError('invalid_telemetry_json')
         warnings++
       }
     }
@@ -52,11 +72,14 @@ export async function readAgentSnapshot(
   } else value = JSON.parse(contents.toString('utf8'))
   const context = { file, workspace: source.workspace }
   let records: NativeRecord[]
-  if (source.format === 'telemetry') records = parseTelemetry(source.tool, value, context)
+  if (source.format === 'telemetry') records = parseTelemetrySnapshot(source.tool, value, context)
+  else if (['pi', 'factory_droid', 'openclaw'].includes(source.tool))
+    records = parseExtendedCli(source.tool, value, context)
+  else if (source.tool === 'qoder') records = parseExtendedIde(source.tool, value, context)
   else if (['gemini_cli', 'qwen_code', 'opencode'].includes(source.tool))
     records = parseNativeCli(source.tool, value, context)
   else records = parseNativeIde(source.tool, value, context)
-  if (records.length > 50000) throw new Error('agent_event_limit')
+  if (records.length > MAX_EVENTS) throw new Error('agent_event_limit')
   const events: ObservedUsageEvent[] = []
   for (const r of records) {
     if (!validRecord(r)) {

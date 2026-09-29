@@ -67,7 +67,7 @@ afterAll(async () => {
   await pool.end()
   await rm(dir, { recursive: true, force: true })
 })
-it('accepts every catalog tool, source-aware session IDs, no content persistence or financial side effects', async () => {
+it('accepts canonical metadata for any catalog identity without implying native support, preserving isolation and privacy', async () => {
   const result = await scanCodex(pool, config)
   expect(result.sourceErrors).toEqual([])
   expect(result.newEvents).toBe(AGENT_TOOLS.length)
@@ -81,6 +81,90 @@ it('accepts every catalog tool, source-aware session IDs, no content persistence
   expect((await readSessionDetails(pool, access, query(), null)).sessions).toHaveLength(AGENT_TOOLS.length)
   for (const table of ['external_observed_usage', 'observer_scan_cursors'])
     expect(JSON.stringify((await pool.query(`SELECT * FROM ${table}`)).rows)).not.toContain('PRIVATE_')
+  for (const table of ['ledger_transactions', 'request_records', 'usage_events'])
+    expect((await pool.query(`SELECT * FROM ${table}`)).rowCount).toBe(0)
+})
+
+it('imports Pi, Qoder, Factory SDK and legacy OpenClaw artifacts with workspace attribution and idempotent replay', async () => {
+  const pi = [
+    { type: 'session', version: 3, id: 'native-session', timestamp, cwd: 'D:/AgentProject' },
+    {
+      type: 'message',
+      id: 'native-message',
+      timestamp,
+      message: {
+        role: 'assistant',
+        model: 'fixture-model',
+        content: 'PRIVATE_NATIVE_CONTENT',
+        usage: { input: 60, cacheRead: 30, cacheWrite: 10, output: 20, reasoning: 5, totalTokens: 120 },
+      },
+    },
+  ]
+  const qoder = [
+    {
+      type: 'assistant',
+      sessionId: 'native-session',
+      uuid: 'native-message',
+      timestamp,
+      cwd: 'D:/AgentProject',
+      message: { content: 'PRIVATE_NATIVE_CONTENT' },
+    },
+  ]
+  const factory = {
+    type: 'result',
+    subtype: 'success',
+    sessionId: 'native-session',
+    turnCount: 1,
+    messages: ['user', 'assistant'].map((role) => ({
+      type: role,
+      message: {
+        id: role + '-native',
+        role,
+        createdAt: Date.parse(timestamp),
+        updatedAt: Date.parse(timestamp),
+        content: 'PRIVATE_NATIVE_CONTENT',
+      },
+    })),
+    tokenUsage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheCreationTokens: 0, thinkingTokens: 0 },
+  }
+  const agentSources = []
+  for (const [tool, rows] of [
+    ['pi', pi],
+    ['qoder', qoder],
+    ['openclaw', pi],
+    ['factory_droid', [factory]],
+  ] as const) {
+    const file = path.join(dir, tool + '-native.jsonl')
+    await writeFile(file, rows.map((row) => JSON.stringify(row)).join('\n') + '\n')
+    agentSources.push({ tool, path: file, format: 'native' as const, workspace: 'D:/AgentProject' })
+  }
+  const scoped = { ...config, agentSources }
+  const result = await scanCodex(pool, scoped)
+  expect(result.sourceErrors).toEqual([])
+  expect(result.newEvents).toBe(4)
+  expect(result.newSessions).toBe(4)
+  const rows = (
+    await pool.query(`SELECT usage_source,project_id,total_tokens,authority FROM external_observed_usage
+    WHERE external_session_id='native-session' ORDER BY usage_source`)
+  ).rows
+  expect(rows).toEqual([
+    {
+      usage_source: 'agent:factory_droid',
+      project_id: 'agent-project',
+      total_tokens: null,
+      authority: 'client_observed',
+    },
+    { usage_source: 'agent:openclaw', project_id: 'agent-project', total_tokens: '120', authority: 'client_observed' },
+    { usage_source: 'agent:pi', project_id: 'agent-project', total_tokens: '120', authority: 'client_observed' },
+    { usage_source: 'agent:qoder', project_id: 'agent-project', total_tokens: null, authority: 'client_observed' },
+  ])
+  expect((await scanCodex(pool, scoped)).newEvents).toBe(0)
+  for (const source of agentSources) {
+    const copy = source.path.replace('-native', '-copy')
+    await copyFile(source.path, copy)
+    expect((await scanCodex(pool, { ...config, agentSources: [{ ...source, path: copy }] })).newEvents).toBe(0)
+  }
+  expect(JSON.stringify((await pool.query('SELECT * FROM external_observed_usage')).rows)).not.toContain('PRIVATE_')
   for (const table of ['ledger_transactions', 'request_records', 'usage_events'])
     expect((await pool.query(`SELECT * FROM ${table}`)).rowCount).toBe(0)
 })

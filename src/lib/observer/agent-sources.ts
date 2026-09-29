@@ -1,7 +1,7 @@
 import { lstat, readdir, realpath } from 'node:fs/promises'
 import path from 'node:path'
 import { homedir } from 'node:os'
-import { AGENT_TOOL_ID } from './agent-tools'
+import { AGENT_TOOL_ID, AGENT_TOOLS } from './agent-tools'
 import type { AgentSource } from './agent-types'
 
 export function validateAgentSource(value: unknown): AgentSource {
@@ -25,9 +25,8 @@ export function validateAgentSource(value: unknown): AgentSource {
     throw new Error('invalid_agent_source')
   if (
     s.format === 'native' &&
-    !['gemini_cli', 'qwen_code', 'opencode', 'cline', 'roo_code', 'kilo_code', 'github_copilot', 'kimi_cli'].includes(
-      s.tool,
-    )
+    (!AGENT_TOOLS.some((tool) => tool.id === s.tool && ['native', 'export'].includes(tool.capture)) ||
+      ['codex', 'claude_code'].includes(s.tool))
   )
     throw new Error('native_adapter_unavailable')
   return {
@@ -48,14 +47,29 @@ export async function sourceExists(file: string) {
 export async function discoverAgentSources(
   home = homedir(),
   env: Record<string, string | undefined> = process.env,
+  platform: string = process.platform,
 ): Promise<AgentSource[]> {
   const candidates: AgentSource[] = [
     { tool: 'gemini_cli', path: path.join(home, '.gemini', 'tmp'), format: 'native' },
     { tool: 'qwen_code', path: path.join(home, '.qwen', 'projects'), format: 'native' },
     { tool: 'github_copilot', path: path.join(home, '.copilot', 'session-state'), format: 'native' },
     { tool: 'kimi_cli', path: path.join(home, '.kimi', 'sessions'), format: 'native' },
+    {
+      tool: 'pi',
+      path: path.join(
+        env.PI_CODING_AGENT_DIR && path.isAbsolute(env.PI_CODING_AGENT_DIR)
+          ? env.PI_CODING_AGENT_DIR
+          : path.join(home, '.pi', 'agent'),
+        'sessions',
+      ),
+      format: 'native',
+    },
+    { tool: 'qoder', path: path.join(home, '.qoder', 'projects'), format: 'native' },
   ]
-  const userData = env.APPDATA || path.join(home, '.config')
+  const userData =
+    platform === 'darwin'
+      ? path.join(home, 'Library', 'Application Support')
+      : env.APPDATA || path.join(home, '.config')
   for (const app of ['Code', 'Code - Insiders', 'Cursor', 'Windsurf']) {
     for (const [tool, extension] of [
       ['cline', 'saoudrizwan.claude-dev'],
@@ -87,6 +101,11 @@ export function matchesAgentFile(source: AgentSource, file: string) {
   if (['cline', 'roo_code', 'kilo_code'].includes(source.tool)) return name === 'ui_messages.json'
   if (source.tool === 'github_copilot') return name === 'events.jsonl'
   if (source.tool === 'kimi_cli') return name === 'wire.jsonl'
+  if (source.tool === 'pi') return name.endsWith('.jsonl')
+  if (source.tool === 'qoder')
+    return name.endsWith('.jsonl') && (source.path === file || path.basename(path.dirname(file)) === 'transcript')
+  if (source.tool === 'openclaw') return name.endsWith('.jsonl')
+  if (source.tool === 'factory_droid') return /\.(json|jsonl)$/.test(name)
   return source.tool === 'opencode' && name.endsWith('.json')
 }
 export async function agentSourceFiles(source: AgentSource) {

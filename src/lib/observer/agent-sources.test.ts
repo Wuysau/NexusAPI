@@ -36,3 +36,34 @@ it('selects native telemetry filenames and ignores unrelated JSON files', async 
   const files = await agentSourceFiles({ tool: 'cline', path: path.dirname(task), format: 'native' })
   expect(files.map((x) => path.basename(x))).toEqual(['ui_messages.json'])
 })
+it('discovers Pi and Qoder without opening sibling config/credentials and honors a Pi override', async () => {
+  const root = await mkdtemp(path.join(home, 'more-tools-'))
+  const pi = path.join(root, 'pi-profile', 'sessions')
+  const qoder = path.join(root, '.qoder', 'projects', 'project', 'transcript')
+  await mkdir(pi, { recursive: true })
+  await mkdir(qoder, { recursive: true })
+  await writeFile(path.join(pi, 'session.jsonl'), '{}\n')
+  await writeFile(path.join(qoder, 'session.jsonl'), '{}\n')
+  await writeFile(path.join(root, '.qoder', 'projects', 'credentials.jsonl'), 'PRIVATE')
+  const found = await discoverAgentSources(root, { PI_CODING_AGENT_DIR: path.dirname(pi) })
+  expect(found.map((source) => source.tool).sort()).toEqual(['pi', 'qoder'])
+  expect(await agentSourceFiles(found.find((source) => source.tool === 'qoder')!)).toEqual([
+    path.join(qoder, 'session.jsonl'),
+  ])
+  expect(validateAgentSource(found.find((source) => source.tool === 'pi'))).toMatchObject({ tool: 'pi' })
+})
+it('discovers supported extensions in macOS Application Support', async () => {
+  const root = await mkdtemp(path.join(home, 'mac-tools-'))
+  const tasks = path.join(
+    root,
+    'Library',
+    'Application Support',
+    'Code',
+    'User',
+    'globalStorage',
+    'saoudrizwan.claude-dev',
+    'tasks',
+  )
+  await mkdir(tasks, { recursive: true })
+  expect((await discoverAgentSources(root, {}, 'darwin')).map((source) => source.tool)).toEqual(['cline'])
+})

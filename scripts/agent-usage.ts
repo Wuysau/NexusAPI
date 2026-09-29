@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
+import { parseAgentHook, supportsAgentHook } from '../src/lib/observer/adapters/agent-hooks'
 import {
   parseTelemetry,
   mergeTelemetryRecord,
@@ -17,7 +18,7 @@ const MAX_SPOOL = 64 * 1024 * 1024
 const fail = (code: string): never => {
   throw new TelemetryError(code)
 }
-type Format = 'canonical' | 'otlp' | 'cursor-hook'
+type Format = 'canonical' | 'otlp' | 'cursor-hook' | 'agent-hook'
 export function parseArguments(args: string[]) {
   const options = new Map<string, string>()
   for (let index = 0; index < args.length; index++) {
@@ -35,8 +36,9 @@ export function parseArguments(args: string[]) {
   const format = options.get('--format')
   if (
     !validTool(tool) ||
-    !['canonical', 'otlp', 'cursor-hook'].includes(format ?? '') ||
-    (format === 'cursor-hook' && tool !== 'cursor')
+    !['canonical', 'otlp', 'cursor-hook', 'agent-hook'].includes(format ?? '') ||
+    (format === 'cursor-hook' && tool !== 'cursor') ||
+    (format === 'agent-hook' && !supportsAgentHook(tool))
   )
     return fail('invalid_arguments')
   return { tool, format: format as Format, output: options.get('--output') }
@@ -69,7 +71,9 @@ function checkFormat(value: unknown, format: Format) {
         ? row.schemaVersion === 1
         : format === 'otlp'
           ? row.resourceLogs !== undefined || row.resourceSpans !== undefined
-          : row.hook_event_name !== undefined && row.schemaVersion === undefined
+          : format === 'agent-hook'
+            ? row.schemaVersion === undefined
+            : row.hook_event_name !== undefined && row.schemaVersion === undefined
     if (!matches) fail('unsupported_telemetry_format')
   }
 }
@@ -176,7 +180,7 @@ export async function appendTelemetry(
 async function main() {
   if (process.argv.slice(2).some((arg) => arg === '--help')) {
     console.log(
-      'Usage: node --import tsx scripts/agent-usage.ts --tool <id> --format canonical|otlp|cursor-hook [--output <absolute ~/.nexusapi/usage/name.jsonl>]\nReads one JSON payload (max 1 MiB) from stdin; appends metadata only to ~/.nexusapi/usage/<tool>.jsonl. No network listener, database or credentials.',
+      'Usage: node --import tsx scripts/agent-usage.ts --tool <id> --format canonical|otlp|cursor-hook|agent-hook [--output <absolute ~/.nexusapi/usage/name.jsonl>]\nReads one JSON payload (max 1 MiB) from stdin; appends metadata only to ~/.nexusapi/usage/<tool>.jsonl. No network listener, database or credentials.',
     )
     return
   }
@@ -184,10 +188,13 @@ async function main() {
     const options = parseArguments(process.argv.slice(2))
     const value = await readTelemetryInput(process.stdin)
     checkFormat(value, options.format)
-    const records = parseTelemetry(options.tool, value, { file: 'stdin' })
+    const records =
+      options.format === 'agent-hook'
+        ? parseAgentHook(options.tool, value, { file: 'stdin', workspace: process.cwd() })
+        : parseTelemetry(options.tool, value, { file: 'stdin' })
     const result = await appendTelemetry(options.tool, records, options.output)
-    // Cursor hooks expect a JSON response. Diagnostics/counters go to stderr, never raw inputs.
-    if (options.format === 'cursor-hook') {
+    // Hook protocols expect JSON. Diagnostics/counters go to stderr, never raw inputs.
+    if (options.format === 'cursor-hook' || options.format === 'agent-hook') {
       console.log('{}')
       console.error(JSON.stringify(result))
     } else console.log(JSON.stringify(result))

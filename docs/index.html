@@ -462,9 +462,13 @@ npm run nexus -- continue --project PROJECT_ID --task TASK_ID --instruction "继
               <li>
                 <strong>按工具完成接入</strong>
                 <p>
-                  Codex、Claude Code、Gemini CLI、Qwen Code、Cline、Roo Code、兼容版 Kilo 扩展、Copilot CLI 和 Kimi CLI
-                  支持原生日志；OpenCode 使用导出 JSON；Cursor 使用官方 Hook。其余工具可通过通用元数据接口接入，工具 ID
-                  可扩展，无需修改数据库。
+                  Codex、Claude Code、Gemini CLI、Qwen Code、Cline、Roo Code、兼容版 Kilo 扩展、Copilot CLI、Kimi
+                  CLI、Pi 和 Qoder IDE 支持本地记录扫描；Qoder IDE 仅提供活动。OpenCode 使用会话导出，Factory 使用 SDK
+                  单轮导出，OpenClaw 仅支持旧版 Pi 形状 JSONL 导出，后两者需明确配置路径。
+                </p>
+                <p>
+                  Cursor、Windsurf、CodeBuddy、Qoder CLI、Factory Droid、Kiro CLI 和 Antigravity 可按指南配置官方 Hook。
+                  Kiro 只记录会话开始；其他活动 Hook 缺少稳定事件 ID 时不会推算回合，未报告的 Token 保持未知。
                 </p>
               </li>
               <li>
@@ -477,7 +481,9 @@ npm run nexus -- continue --project PROJECT_ID --task TASK_ID --instruction "继
             <div class="callout">
               <strong>接入能力以工具实际提供的数据为准</strong>
               <p>
-                不提供可读日志的工具需要配置 Hook、遥测或导出，安装工具本身不代表已接入。仅报告活动、不报告 Token
+                目录的 42 项是工具身份，不是 42
+                种原生支持。面板可按工具类别和接入方式筛选；通用桥接仍需部署方提供真实事件，
+                “尚未适配”表示没有内置格式解析或远程同步。安装工具本身不代表已接入。仅报告活动、不报告 Token
                 的记录显示未知；不会推算 Token、保存聊天正文或产生钱包扣费。网关请求和订阅剩余额度分别查看。
               </p>
             </div>
@@ -485,6 +491,21 @@ npm run nexus -- continue --project PROJECT_ID --task TASK_ID --instruction "继
               <a href="https://github.com/Wuysau/NexusAPI/blob/main/docs/operations/agent-observer.md"
                 >查看完整工具支持表、目录配置与 Hook 接入说明 ↗</a
               >
+            </p>
+            <p>
+              <a href="https://github.com/Wuysau/NexusAPI/blob/main/docs/operations/agent-tool-coverage.md"
+                >42 项能力矩阵 ↗</a
+              >
+              ·
+              <a href="https://github.com/Wuysau/NexusAPI/blob/main/docs/operations/agent-extended-cli-sources.md"
+                >Pi / Factory / OpenClaw 指南 ↗</a
+              >
+              ·
+              <a href="https://github.com/Wuysau/NexusAPI/blob/main/docs/operations/agent-extended-ide-sources.md"
+                >Qoder IDE 格式边界 ↗</a
+              >
+              ·
+              <a href="https://github.com/Wuysau/NexusAPI/blob/main/docs/operations/agent-hooks.md">官方 Hook 配置 ↗</a>
             </p>
           </section>
 

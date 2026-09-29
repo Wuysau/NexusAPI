@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useSession } from '@/components/SessionProvider'
 import { useApiData } from '@/components/lib/useApiData'
 import { apiSend, errorMessage } from '@/components/lib/api'
+import { AGENT_CATEGORIES, agentCategory, filterAgentTools } from '@/lib/observer/agent-tools'
 import { localDate, WorkspaceNotice } from './Workspace'
 import styles from './workspace.module.css'
 
@@ -56,7 +57,8 @@ const captures: Record<string, string> = {
   native: '本地记录',
   export: '导出文件',
   hook: 'Hook 接入',
-  bridge: '通用接入',
+  bridge: '仅通用事件',
+  unavailable: '尚未内置适配',
 }
 const sourceErrors: Record<string, string> = {
   source_unavailable: '来源路径不可访问，请检查路径和权限',
@@ -75,8 +77,12 @@ export function AgentObserverPanel() {
   const [format, setFormat] = useState<'native' | 'telemetry'>('native')
   const [sourcePath, setSourcePath] = useState('')
   const [workspace, setWorkspace] = useState('')
+  const [toolSearch, setToolSearch] = useState('')
+  const [category, setCategory] = useState('all')
+  const [capture, setCapture] = useState('all')
   if (!admin) return null
   const data = state.data
+  const shownTools = filterAgentTools(data?.tools ?? [], toolSearch, category, capture)
   async function act(body: Record<string, unknown>) {
     if (busy) return
     setBusy(true)
@@ -149,6 +155,42 @@ export function AgentObserverPanel() {
             <dd>{localDate(data.runtime?.lastSuccessfulSync ?? null)}</dd>
           </dl>
           {data.runtime?.error && <WorkspaceNotice error>最近同步失败，请检查来源路径与本机配置。</WorkspaceNotice>}
+          <div className={styles.analyticsFilters}>
+            <label className={styles.field}>
+              搜索 Agent 工具
+              <input
+                value={toolSearch}
+                onChange={(event) => setToolSearch(event.target.value)}
+                placeholder="工具名称、中文名称或标识"
+              />
+            </label>
+            <label className={styles.field}>
+              工具类别
+              <select value={category} onChange={(event) => setCategory(event.target.value)}>
+                <option value="all">全部类别</option>
+                {Object.entries(AGENT_CATEGORIES).map(([id, name]) => (
+                  <option key={id} value={id}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className={styles.field}>
+              采集接入方式
+              <select value={capture} onChange={(event) => setCapture(event.target.value)}>
+                <option value="all">全部接入方式</option>
+                {Object.entries(captures).map(([id, name]) => (
+                  <option key={id} value={id}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <p className={styles.hint}>
+            显示 {shownTools.length} / {data.tools?.length ?? 0}{' '}
+            个工具。目录列出工具并不代表已适配；“仅通用事件”需要自行对接元数据，“尚未内置适配”不能自动采集。
+          </p>
           <div className={styles.tableScroll}>
             <table className={styles.comparisonTable}>
               <thead>
@@ -161,7 +203,7 @@ export function AgentObserverPanel() {
                 </tr>
               </thead>
               <tbody>
-                {(data.tools ?? []).map((entry) => {
+                {shownTools.map((entry) => {
                   const detected = data.detected?.filter((source) => source.tool === entry.id) ?? []
                   const configured = data.sources?.filter((source) => source.tool === entry.id) ?? []
                   const failures = [
@@ -175,6 +217,7 @@ export function AgentObserverPanel() {
                     <tr key={entry.id}>
                       <td>
                         <strong>{entry.name}</strong>
+                        <span className={styles.badge}>{AGENT_CATEGORIES[agentCategory(entry.id)]}</span>
                         <p className={styles.hint}>{entry.hint}</p>
                       </td>
                       <td>{captures[entry.capture] ?? entry.capture}</td>
@@ -189,7 +232,15 @@ export function AgentObserverPanel() {
                                 ? data.autoDiscover
                                   ? '已发现，自动采集'
                                   : '已发现，尚未启用'
-                                : '未发现来源'}
+                                : entry.capture === 'unavailable'
+                                  ? '尚未内置适配'
+                                  : entry.capture === 'hook'
+                                    ? '待配置 Hook'
+                                    : entry.capture === 'export'
+                                      ? '待添加导出文件'
+                                      : entry.capture === 'bridge'
+                                        ? '待对接通用事件'
+                                        : '未发现来源'}
                       </td>
                       <td>
                         {entry.sessions} 个会话 · {entry.events} 条记录
@@ -200,6 +251,7 @@ export function AgentObserverPanel() {
                 })}
               </tbody>
             </table>
+            {!shownTools.length && <p className={styles.hint}>没有符合筛选条件的工具。</p>}
           </div>
           <details>
             <summary>管理采集路径</summary>
@@ -281,7 +333,7 @@ export function AgentObserverPanel() {
               <label className={styles.field}>
                 记录格式
                 <select value={format} onChange={(event) => setFormat(event.target.value as 'native' | 'telemetry')}>
-                  <option value="native">工具原生记录 / OpenCode 导出</option>
+                  <option value="native">工具原生记录 / 已支持的导出</option>
                   <option value="telemetry">NexusAPI 通用用量事件</option>
                 </select>
               </label>
