@@ -209,6 +209,9 @@ type Adapter interface {
 	Version() string
 	// Capabilities reports what a model on this provider supports.
 	Capabilities(model string) ModelCapabilities
+	// ValidateRequest checks whether the adapter can preserve the requested
+	// semantics. It is pure: no credentials, I/O or request mutation.
+	ValidateRequest(req *CanonicalRequest) error
 	// BuildRequest transforms a canonical request into a provider call. It must
 	// never include the secret in a place that could be logged.
 	BuildRequest(req *CanonicalRequest, cred Credential, ep Endpoint) (*ProviderRequest, error)

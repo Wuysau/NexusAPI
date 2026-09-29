@@ -93,8 +93,8 @@ func (a *OpenAICompatible) BuildRequest(req *CanonicalRequest, cred Credential, 
 	if cred.AuthorizationBinding != "" && ep.AuthScheme == "query" {
 		return nil, fmt.Errorf("credential query authentication is forbidden")
 	}
-	if req == nil {
-		return nil, fmt.Errorf("openai: nil request")
+	if err := a.ValidateRequest(req); err != nil {
+		return nil, err
 	}
 	base := ep.BaseURL
 	if base == "" {

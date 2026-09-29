@@ -236,3 +236,23 @@ Use the explicit-input principle documented by [LiteLLM](https://docs.litellm.ai
 - Twenty-two real HTTP sampling cases cover Chat and Responses, negative/greater-than-one values, wrong types, exact 0/1 boundaries, fractional values, null/omission and corrected retries under the same idempotency key. Before the fix, out-of-range calls executed and made the corrected retry conflict; now only the valid operation executes.
 - Full native `go test ./...` and `go vet ./...` passed (Gateway 22.939 seconds). Linux `go test -race ./...` passed (Gateway 78.171 seconds). Six TypeScript contract files passed all 70 tests. The independent-process PostgreSQL/TLS connector suite passed all nine groups (16.76 seconds).
 - Go formatting, secret scan and diff checks passed. Independent production-code review found no blocking issue. No migration, dependency, TypeScript production change or deployment was performed.
+
+Round 10 was committed as `7580348` and merged/pushed to main (`553582d`).
+
+## Round 11 design
+
+The native Gemini adapter declares tools, vision and structured-output capabilities while its request serializer only handles text and sampling. It drops tools, tool choice, response formats and tool history; text extraction also discards non-text parts. Anthropic drops `response_format`. Real Gateway/mock-provider tests reproduce successful inference with the requested semantics missing, one credential resolution, reservation and terminal event per case.
+
+Extend the [LiteLLM explicit-parameter principle](https://docs.litellm.ai/docs/completion/drop_params) to actual adapter behavior:
+
+- Require a pure `ValidateRequest(*CanonicalRequest) error` on Go execution adapters. Return a typed unsupported-parameter error with a fixed field name, without request values. `BuildRequest` reuses the same validation for direct callers. Keep OpenAI-compatible serialization and arbitrary model IDs working; do not infer protocol support from model-name heuristics.
+- Gemini rejects unimplemented tools, forced tool selection, tool history/results, non-text parts and structured output. Its advertised tools/vision/structured-output flags become false. Anthropic retains current tool support and rejects structured output. Null/omitted options, empty tools and exact text-only format remain compatible; Gemini accepts no-tool auto/none selection.
+- Share canonical request construction between validation and dispatch. Narrow the existing Router's authorized, healthy and billable candidates before credentials, payment-mode choice, immutable price pinning and reservation. All later attempts use that compatible set. A compatible authorized candidate may serve the initial request; unsupported candidates never become a lossy fallback.
+- Verify zero side effects and idempotency recovery for unsupported requests, both public APIs, supported Anthropic tools, custom-model OpenAI wire fidelity, mixed candidates and safe pre-connection failure. Preserve existing execution/replay and accounting rules. No schema, dependency or deployment change is needed.
+
+## Round 11 validation
+
+- Fifteen Gateway integration cases verify unsupported semantics are rejected before credentials, reservations, upstream execution and accounting. Corrected calls can reuse their undispatched idempotency key. Supported Anthropic tools and custom-model OpenAI-compatible parameters retain their actual wire values. Existing compatible candidates can serve requests, while excluded candidates and incompatible fallback attempts remain unavailable.
+- Provider tests cover 23 unsupported Gemini/Anthropic cases, compatible defaults, null and empty options, immutable validation, sanitized typed errors and accurate capabilities/adapter versions. Direct `BuildRequest` callers receive the same validation. Independent reviews of both routing and adapter changes found no blocking issues.
+- Full native `go test ./...` and `go vet ./...` passed (Gateway 27.844 seconds). Linux `go test -race ./...` passed (Gateway 93.759 seconds). Six TypeScript contract files passed all 70 tests. The independent-process PostgreSQL/TLS connector suite passed all nine groups (19.32 seconds).
+- Go formatting, secret scan and diff checks passed. No migration, dependency, TypeScript production change or production deployment was performed. The custom-model tool test exercises the OpenAI-compatible HTTP adapter; the existing connector end-to-end suite separately verifies connector transport and lifecycle.

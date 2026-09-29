@@ -594,6 +594,30 @@ func (p *Proxy) route(
 	if len(candidates) == 0 {
 		return nil, errSnapshot(ReasonSnapshotUnavailable)
 	}
+	// Request fidelity is another eligibility check on the existing Router
+	// result. Validate before choosing a payment mode/price or resolving secrets;
+	// later attempts must also come from this same compatible candidate set.
+	canonical := canonicalChatRequest(req, model)
+	compatible := candidates[:0]
+	var validationError *APIError
+	for _, candidate := range candidates {
+		if err := candidate.Adapter.ValidateRequest(canonical); err != nil {
+			if validationError == nil {
+				var unsupported *provider.UnsupportedParameterError
+				if errors.As(err, &unsupported) {
+					validationError = errUnsupportedParam(unsupported.Param)
+				} else {
+					validationError = errInvalidParam("model", "The selected provider protocol cannot represent this request.")
+				}
+			}
+			continue
+		}
+		compatible = append(compatible, candidate)
+	}
+	candidates = compatible
+	if len(candidates) == 0 {
+		return nil, validationError
+	}
 	first := candidates[0]
 	// A request cannot switch between paid managed execution and owned access.
 	sameMode := candidates[:0]
@@ -840,23 +864,7 @@ func (p *Proxy) attempt(
 			credential = resolved
 		}
 
-		canonical := &provider.CanonicalRequest{
-			Model: model.ID,
-			// The canonical request always asks for a stream internally: one
-			// upstream code path means one usage accounting path. A
-			// non-streaming client still gets a single JSON object, assembled
-			// from the same chunks.
-			Messages:       req.Messages,
-			MaxTokens:      effectiveMaxTokens(req, model),
-			Temperature:    req.Temperature,
-			TopP:           req.TopP,
-			Stop:           req.stopSequences,
-			Tools:          req.Tools,
-			ToolChoice:     req.ToolChoice,
-			ResponseFormat: req.ResponseFormat,
-			Stream:         true,
-			User:           req.User,
-		}
+		canonical := canonicalChatRequest(req, model)
 		call, err := candidate.Adapter.BuildRequest(canonical, credential, provider.Endpoint{
 			BaseURL:    candidate.Channel.BaseURL,
 			Protocol:   candidate.Channel.Protocol,
