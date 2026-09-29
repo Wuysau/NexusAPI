@@ -126,7 +126,22 @@ func TestBudgetPostgresControlPlaneOutage(t *testing.T) {
 			// Capture exactly what the real store persisted for replay/tamper verification.
 			capture := &capturingBudgetStore{Store: store}
 			h.proxy.store = capture
-			response := h.doChat(chatBody(chatBodyOptions{Stream: streaming, MaxTokens: 20}), map[string]string{"Idempotency-Key": fmt.Sprintf("%s-caller-%s-%v", callerPrefix, mode, streaming)})
+			clientKey := fmt.Sprintf("%s-caller-%s-%v", callerPrefix, mode, streaming)
+			headers := map[string]string{"Idempotency-Key": clientKey}
+			if mode == "byok" {
+				// Keep this deliberate N-1 schema fixture. Explicit v1 BYOK
+				// idempotency now requires canonical claim guards; an obsolete
+				// database must reject before dispatch. The no-key legacy path
+				// still works, while the canonical fixture covers durable claims.
+				before := upstreamCalls.Load()
+				unsupported := h.doChat(chatBody(chatBodyOptions{Stream: streaming, MaxTokens: 20}), headers)
+				_ = readAll(unsupported)
+				if unsupported.StatusCode != http.StatusServiceUnavailable || upstreamCalls.Load() != before {
+					t.Fatal("obsolete schema accepted an explicit BYOK operation without durable claim guards")
+				}
+				headers = nil
+			}
+			response := h.doChat(chatBody(chatBodyOptions{Stream: streaming, MaxTokens: 20}), headers)
 			body, _ := io.ReadAll(response.Body)
 			_ = response.Body.Close()
 			if response.StatusCode != 200 {
@@ -137,7 +152,11 @@ func TestBudgetPostgresControlPlaneOutage(t *testing.T) {
 			}
 			records = append(records, capture.record)
 			var durableKey string
-			if err := db.QueryRow(ctx, "SELECT idempotency_key FROM request_records WHERE id=$1", capture.record.RequestID).Scan(&durableKey); err != nil || durableKey != fmt.Sprintf("%s-caller-%s-%v", callerPrefix, mode, streaming) {
+			wantKey := clientKey
+			if mode == "byok" {
+				wantKey = "req:" + capture.record.RequestID
+			}
+			if err := db.QueryRow(ctx, "SELECT idempotency_key FROM request_records WHERE id=$1", capture.record.RequestID).Scan(&durableKey); err != nil || durableKey != wantKey {
 				t.Fatalf("caller key lost: %s err=%v", durableKey, err)
 			}
 			// Simulate another Gateway instance: local/Redis claim expiry must not
@@ -200,6 +219,7 @@ func TestBudgetPostgresControlPlaneOutage(t *testing.T) {
 	duplicate := *records[2]
 	duplicate.RequestID = "byok-duplicate-fixture"
 	duplicate.Event.RequestID = duplicate.RequestID
+	duplicate.IdempotencyKey = "req:" + records[2].RequestID
 	if err := store.PersistTerminal(ctx, &duplicate); !errors.Is(err, ErrDuplicateRequest) {
 		t.Fatalf("BYOK caller-key duplicate: %v", err)
 	}
@@ -247,6 +267,14 @@ func TestBudgetPostgresControlPlaneOutage(t *testing.T) {
 type capturingBudgetStore struct {
 	Store
 	record *TerminalRecord
+}
+
+func (s *capturingBudgetStore) ClaimLegacyBYOK(ctx context.Context, claim *LegacyBYOKClaim) error {
+	claimer, ok := s.Store.(LegacyBYOKClaimer)
+	if !ok {
+		return ErrStoreUnavailable
+	}
+	return claimer.ClaimLegacyBYOK(ctx, claim)
 }
 
 func (s *capturingBudgetStore) PersistTerminal(ctx context.Context, r *TerminalRecord) error {

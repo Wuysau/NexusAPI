@@ -257,6 +257,9 @@ func TestProjectV2PostgresCaptureTerminal(t *testing.T) {
 	if err = db.QueryRow(ctx, "SELECT count(*) FROM attempts WHERE status='pending'").Scan(&pending); err != nil || pending != 1 {
 		t.Fatalf("failed terminal changed captured attempt: %d %v", pending, err)
 	}
+	t.Run("legacy BYOK durable pre-forward claims", func(t *testing.T) {
+		verifyLegacyBYOKPostgresClaims(t, db, store)
+	})
 }
 
 type capturingProjectStore struct {

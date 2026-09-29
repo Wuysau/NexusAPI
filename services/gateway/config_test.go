@@ -39,3 +39,34 @@ func TestProductionSecretConfigRejectsUnknownProviderAndOldBypass(t *testing.T) 
 		}
 	}
 }
+
+func TestMetricsTokenIsOptionalButNeverHasWeakDevelopmentBypass(t *testing.T) {
+	for _, environment := range []string{"development", "test", "production"} {
+		t.Run(environment, func(t *testing.T) {
+			_, err := LoadEnv(func(key string) string {
+				switch key {
+				case "GATEWAY_ENV":
+					return environment
+				case "GATEWAY_METRICS_TOKEN":
+					return "short-metrics-fixture"
+				default:
+					return ""
+				}
+			})
+			if err == nil || !strings.Contains(err.Error(), "GATEWAY_METRICS_TOKEN") || strings.Contains(err.Error(), "short-metrics-fixture") {
+				t.Fatalf("weak metrics token not rejected safely: %v", err)
+			}
+		})
+	}
+	for _, value := range []string{"", strings.Repeat("m", 24)} {
+		env, err := LoadEnv(func(key string) string {
+			if key == "GATEWAY_METRICS_TOKEN" {
+				return value
+			}
+			return ""
+		})
+		if err != nil || env.MetricsToken != value {
+			t.Fatalf("valid optional token failed: %v", err)
+		}
+	}
+}

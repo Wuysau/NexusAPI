@@ -23,9 +23,17 @@ type RouteOptions struct {
 // NewRouter wires the HTTP surface.
 func NewHTTPRouter(proxy *Proxy, snapshots *SnapshotCache, limiter *Limiter, store Store, options RouteOptions) http.Handler {
 	router := chi.NewRouter()
+	metrics := NewMetrics()
+	gatewayMetrics := NewGatewayMetrics(metrics)
 	router.Use(requestIdentityMiddleware)
+	router.Use(httpMetricsMiddleware(gatewayMetrics))
 	router.Use(middleware.Recoverer)
 	router.Use(headerLimitMiddleware(int64(proxy.limits.MaxHeaderBytes)))
+	metricsToken := ""
+	if proxy.env != nil {
+		metricsToken = proxy.env.MetricsToken
+	}
+	router.Get("/metrics", metricsHandler(metrics, metricsToken))
 
 	router.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("cache-control", "no-store")

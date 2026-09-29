@@ -42,6 +42,7 @@ services:
     environment:
       GATEWAY_ENV: production
       GATEWAY_ADDR: ':8080'
+      GATEWAY_METRICS_TOKEN: ${GATEWAY_METRICS_TOKEN:-}
       DATABASE_URL: ${DATABASE_URL_GATEWAY:?Set the nexus_gateway connection URL}
       REDIS_URL: redis://redis:6379
       CONTROL_PLANE_URL: http://app:3000

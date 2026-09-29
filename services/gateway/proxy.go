@@ -271,6 +271,7 @@ func (p *Proxy) ServeChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// guard is what stops the second spend.
 	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	dispatched := false
+	legacyBYOKClaimed := false
 	if idempotencyKey != "" {
 		if !p.claimIdempotency(ctx, identity.TenantID, idempotencyKey) {
 			writeAPIError(w, requestID, errIdempotencyConflict())
@@ -280,7 +281,7 @@ func (p *Proxy) ServeChatCompletions(w http.ResponseWriter, r *http.Request) {
 		// twice. It is released only when nothing was sent upstream, so a
 		// genuinely rejected request can be retried.
 		defer func() {
-			if !dispatched {
+			if !dispatched && !legacyBYOKClaimed {
 				p.releaseIdempotency(identity.TenantID, idempotencyKey)
 			}
 		}()
@@ -414,6 +415,29 @@ func (p *Proxy) ServeChatCompletions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if !p.enableUsageV2 && credentials.channel.CredentialMode == "byok" && idempotencyKey != "" {
+		claimer, ok := p.store.(LegacyBYOKClaimer)
+		if !ok {
+			writeAPIError(w, requestID, errStorageUnavailable())
+			return
+		}
+		claimCtx, cancelClaim := context.WithTimeout(ctx, legacyBYOKClaimTimeout)
+		err := claimer.ClaimLegacyBYOK(claimCtx, &LegacyBYOKClaim{
+			RequestID: requestID, TenantID: identity.TenantID, OrganizationID: identity.OrganizationID,
+			APIKeyID: identity.KeyID, RequestedModel: req.Model, IdempotencyKey: idempotencyKey,
+			TraceID: traceID, StartedAt: startedAt,
+		})
+		cancelClaim()
+		if err != nil {
+			if errors.Is(err, ErrDuplicateRequest) {
+				writeAPIError(w, requestID, errIdempotencyConflict())
+			} else {
+				writeAPIError(w, requestID, errStorageUnavailable())
+			}
+			return
+		}
+		legacyBYOKClaimed = true
+	}
 	reservation, apiErr := p.reserve(ctx, credentials.channel, credentials.candidates[0].Price, model, req, identity, requestID, idempotencyKey, inputEstimate, outputEstimate, attribution)
 	if apiErr != nil {
 		writeAPIError(w, requestID, apiErr)
@@ -444,6 +468,7 @@ func (p *Proxy) ServeChatCompletions(w http.ResponseWriter, r *http.Request) {
 	persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancelPersist()
 	rec := p.buildTerminalRecord(result, credentials, bundle, model, req, identity, requestID, startedAt, reservation, idempotencyKey)
+	rec.LegacyBYOKClaimed = legacyBYOKClaimed
 	rec.TraceID = traceID
 	persistErr := p.store.PersistTerminal(persistCtx, rec)
 	p.logger.Info("request terminal", "request_id", requestID, "tenant_id", identity.TenantID, "project_id", identity.ProjectID, "trace_id", traceID, "outcome", rec.Status, "persisted", persistErr == nil)
@@ -575,15 +600,13 @@ func (p *Proxy) route(
 	}
 	first := candidates[0]
 	// A request cannot switch between paid managed execution and owned access.
-	if p.enableUsageV2 {
-		sameMode := candidates[:0]
-		for _, candidate := range candidates {
-			if candidate.Channel.CredentialMode == first.Channel.CredentialMode {
-				sameMode = append(sameMode, candidate)
-			}
+	sameMode := candidates[:0]
+	for _, candidate := range candidates {
+		if candidate.Channel.CredentialMode == first.Channel.CredentialMode {
+			sameMode = append(sameMode, candidate)
 		}
-		candidates = sameMode
 	}
+	candidates = sameMode
 	// A managed hold authorizes one immutable price tuple. Retries may change
 	// credentials, but cannot spend under another provider or price pin.
 	if first.Channel.CredentialMode != "byok" {
