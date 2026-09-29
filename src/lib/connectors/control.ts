@@ -215,12 +215,36 @@ export interface ConnectorAuthorization {
   organizationId?: string
   keyId?: string
   model?: string
+  requestedModels?: string[]
   scope?: string
   transport?: boolean
 }
+
+function storedModelIDs(value: unknown, allowEmpty = false): string[] {
+  if (allowEmpty && Array.isArray(value) && value.length === 0) return []
+  try {
+    return modelIDs(value)
+  } catch {
+    throw denied()
+  }
+}
+
 /** Metadata-only live authorization; prompts and provider secrets never enter Control Plane. */
 export async function authorizeConnector(input: ConnectorAuthorization) {
-  if (typeof input.leaseToken !== 'string') throw denied()
+  if (!input || typeof input !== 'object' || typeof input.leaseToken !== 'string') throw denied()
+  const batch = input.requestedModels !== undefined
+  if (
+    batch &&
+    (input.scope !== 'models:read' ||
+      input.model !== undefined ||
+      (input.transport !== undefined && input.transport !== false) ||
+      [input.channelId, input.tenantId, input.connectionId, input.projectId, input.organizationId, input.keyId].some(
+        (value) => typeof value !== 'string' || value.length === 0,
+      ))
+  )
+    throw denied()
+  // The gateway request is untrusted runtime JSON despite its TypeScript type.
+  const requestedModels = batch ? modelIDs(input.requestedModels) : undefined
   const row = (
     await pool.query(
       `SELECT l.id lease_id,l.connector_id,l.connection_id,l.tenant_id,l.expires_at,l.ready_models,c.project_id,p.organization_id
@@ -235,26 +259,31 @@ export async function authorizeConnector(input: ConnectorAuthorization) {
     )
   ).rows[0]
   if (!row) throw denied()
+  const readyModels = storedModelIDs(row.ready_models, true)
+  let grantedModels = readyModels
   if (input.channelId !== undefined) {
     if (
+      typeof input.channelId !== 'string' ||
+      input.channelId.length === 0 ||
+      typeof input.keyId !== 'string' ||
+      input.keyId.length === 0 ||
       input.tenantId !== row.tenant_id ||
       input.connectionId !== row.connection_id ||
       input.projectId !== row.project_id ||
       input.organizationId !== row.organization_id ||
-      typeof input.model !== 'string' ||
-      !row.ready_models.includes(input.model) ||
+      (!batch && (typeof input.model !== 'string' || !readyModels.includes(input.model))) ||
       !['chat:write', 'models:read'].includes(input.scope ?? '')
     )
       throw denied()
     const allowed = await pool.query(
-      `SELECT ch.id FROM channels ch
+      `SELECT ch.id,ch.metadata->'models' approved_models FROM channels ch
       JOIN provider_credentials pc ON pc.id=ch.provider_credential_id AND pc.tenant_id=ch.tenant_id AND pc.provider_id=ch.provider_id
       JOIN providers provider ON provider.id=ch.provider_id AND provider.enabled=true
       JOIN downstream_api_keys k ON k.id=$4 AND k.tenant_id=ch.tenant_id AND k.organization_id=$5 AND k.project_id=$6
       WHERE ch.id=$1 AND ch.tenant_id=$2 AND ch.enabled=true AND ch.metadata->>'connection_id'=$3 AND ch.metadata->>'transport'='local_sidecar'
-      AND ch.metadata->'models' ? $7 AND pc.enabled=true AND pc.organization_id=$5
+      AND pc.enabled=true AND pc.organization_id=$5
       AND k.enabled=true AND k.revoked_at IS NULL AND k.deleted_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>now())
-      AND (k.scopes ? '*' OR k.scopes ? $8)`,
+      AND jsonb_typeof(k.scopes)='array' AND (k.scopes ? '*' OR k.scopes ? $7)`,
       [
         input.channelId,
         row.tenant_id,
@@ -262,11 +291,16 @@ export async function authorizeConnector(input: ConnectorAuthorization) {
         input.keyId,
         row.organization_id,
         row.project_id,
-        input.model,
         input.scope,
       ],
     )
-    if (!allowed.rowCount) throw denied()
+    if (!allowed.rows[0]) throw denied()
+    const approvedModels = storedModelIDs(allowed.rows[0].approved_models)
+    if (requestedModels) {
+      grantedModels = requestedModels.filter((model) => readyModels.includes(model) && approvedModels.includes(model))
+    } else if (!approvedModels.includes(input.model!)) {
+      throw denied()
+    }
   }
   if (input.transport)
     await pool.query(`UPDATE connector_leases SET transport_seen_at=now() WHERE id=$1 AND lease_token_hash=$2`, [
@@ -279,7 +313,7 @@ export async function authorizeConnector(input: ConnectorAuthorization) {
     connectionId: row.connection_id,
     tenantId: row.tenant_id,
     expiresAt: row.expires_at,
-    models: row.ready_models,
+    models: grantedModels,
   }
 }
 

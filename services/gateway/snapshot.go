@@ -410,8 +410,35 @@ func (s *SnapshotState) Fresh(now time.Time) bool {
 }
 
 type snapshotEntry struct {
-	state     atomic.Pointer[SnapshotState]
-	refreshMu sync.Mutex
+	state       atomic.Pointer[SnapshotState]
+	refreshGate chan struct{}
+}
+
+// A waiting request must be able to leave without canceling the refresh owned
+// by another request or the background refresher.
+func (e *snapshotEntry) acquireRefresh(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case e.refreshGate <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			e.releaseRefresh()
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (e *snapshotEntry) releaseRefresh() { <-e.refreshGate }
+
+func snapshotRefreshError(stale *SnapshotState, err error) (*SnapshotState, error) {
+	if stale != nil {
+		return stale, &SnapshotError{Reason: ReasonSnapshotExpired, Err: err}
+	}
+	return nil, &SnapshotError{Reason: ReasonSnapshotUnavailable, Err: err}
 }
 
 // SnapshotCache keeps per-tenant last-known-good bundles with single-flight
@@ -451,7 +478,7 @@ func (c *SnapshotCache) entryFor(tenantID string) *snapshotEntry {
 	defer c.mu.Unlock()
 	e, ok := c.entries[tenantID]
 	if !ok {
-		e = &snapshotEntry{}
+		e = &snapshotEntry{refreshGate: make(chan struct{}, 1)}
 		c.entries[tenantID] = e
 	}
 	return e
@@ -471,8 +498,10 @@ func (c *SnapshotCache) Get(ctx context.Context, tenantID string) (*SnapshotStat
 		return st, nil
 	}
 
-	e.refreshMu.Lock()
-	defer e.refreshMu.Unlock()
+	if err := e.acquireRefresh(ctx); err != nil {
+		return snapshotRefreshError(e.state.Load(), err)
+	}
+	defer e.releaseRefresh()
 
 	now = c.now()
 	stale := e.state.Load()
@@ -487,10 +516,7 @@ func (c *SnapshotCache) Get(ctx context.Context, tenantID string) (*SnapshotStat
 	}
 	c.logger.Warn("snapshot refresh failed", "tenant", tenantID, "reason", err.Error())
 
-	if stale != nil {
-		return stale, &SnapshotError{Reason: ReasonSnapshotExpired, Err: err}
-	}
-	return nil, &SnapshotError{Reason: ReasonSnapshotUnavailable, Err: err}
+	return snapshotRefreshError(stale, err)
 }
 
 func (c *SnapshotCache) fetchAndVerify(ctx context.Context, tenantID string, now time.Time) (*SnapshotState, error) {
@@ -550,7 +576,9 @@ func (c *SnapshotCache) KnownTenants() []string {
 func (c *SnapshotCache) WarmAll(ctx context.Context) {
 	for _, tenant := range c.KnownTenants() {
 		e := c.entryFor(tenant)
-		e.refreshMu.Lock()
+		if err := e.acquireRefresh(ctx); err != nil {
+			return
+		}
 		fresh, err := c.fetchAndVerify(ctx, tenant, c.now())
 		if err == nil {
 			e.state.Store(fresh)
@@ -560,7 +588,7 @@ func (c *SnapshotCache) WarmAll(ctx context.Context) {
 			// within RefreshInterval without adding I/O to authenticated traffic.
 			c.logger.Warn("snapshot refresh failed", "tenant", tenant, "reason", err.Error())
 		}
-		e.refreshMu.Unlock()
+		e.releaseRefresh()
 	}
 }
 

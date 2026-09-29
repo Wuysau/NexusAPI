@@ -175,13 +175,15 @@ const maxStoredErrorDetail = 512
 // ServeModels implements GET /v1/models from the signed snapshot. It performs
 // no upstream call: the catalogue is control-plane data, not a provider fetch.
 func (p *Proxy) ServeModels(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), catalogTimeout)
+	defer cancel()
 	requestID := ensureRequestID(r)
-	identity, err := p.authn.Authenticate(r.Context(), bearerToken(r), ScopeModelsRead)
+	identity, err := p.authn.Authenticate(ctx, bearerToken(r), ScopeModelsRead)
 	if err != nil {
 		writeAPIError(w, requestID, asAPIError(err))
 		return
 	}
-	state, err := p.snapshots.Get(r.Context(), identity.TenantID)
+	state, err := p.snapshots.Get(ctx, identity.TenantID)
 	if err != nil && state == nil {
 		writeAPIError(w, requestID, errSnapshot(reasonOf(err)))
 		return
@@ -196,31 +198,10 @@ func (p *Proxy) ServeModels(w http.ResponseWriter, r *http.Request) {
 		Aliases  []string `json:"aliases,omitempty"`
 	}
 	data := make([]modelEntry, 0, len(bundle.Models))
+	available := p.catalogAvailability(ctx, bundle, identity)
 	for _, model := range bundle.Models {
-		if model.Status != "" && model.Status != "active" {
+		if (model.Status != "" && model.Status != "active") || !available[model.ID] {
 			continue
-		}
-		// Connector models require both existing routing policy and live authorization.
-		hasConnector := false
-		for _, channel := range bundle.Channels {
-			if containsString(channel.Models, model.ID) {
-				if channel.Transport == "local_sidecar" {
-					hasConnector = true
-				}
-			}
-		}
-		if hasConnector {
-			candidates, _ := p.router.Select(bundle, RouteRequest{TenantID: identity.TenantID, ProjectID: identity.ProjectID, ResolvedModel: model.ID, RequiredCapabilities: RequiredCapabilitiesForChat()})
-			available := false
-			for _, candidate := range candidates {
-				if candidate.Channel.Transport != "local_sidecar" || p.connectors.Available(r.Context(), candidate.Channel, identity, model.ID, ScopeModelsRead) {
-					available = true
-					break
-				}
-			}
-			if !available {
-				continue
-			}
 		}
 		data = append(data, modelEntry{
 			ID: model.ID, Object: "model", OwnedBy: model.Provider,
