@@ -10,6 +10,7 @@ Set these variables on the Go gateway process. The signed tenant policy may impo
 | `GATEWAY_MAX_RESPONSE_BYTES` | `16777216` (16 MiB) | Maximum buffered response size, including serialized JSON; range 4096–67108864 bytes (64 MiB). Also bounds the content retained for Responses completion events. |
 | `GATEWAY_STREAM_IDLE_TIMEOUT_SECONDS` | `60` | Upstream chunk idle timeout and downstream write/flush budget, including buffered Chat and Responses output. |
 | `GATEWAY_TOTAL_TIMEOUT_SECONDS` | `300` | Upstream execution time budget; authentication, terminal persistence and downstream delivery have separate limits. |
+| `GATEWAY_UPSTREAM_TIMEOUT_SECONDS` | `120` | Maximum duration of one dispatched attempt, including response headers and the complete stream. The total deadline and client/lease cancellation may end it earlier. |
 | `GATEWAY_ENABLE_RESPONSES` | `false` | Enable the supported Responses subset described below. |
 
 ## Shared admission
@@ -23,6 +24,12 @@ RPM and estimated TPM checks each have a one-second Redis operation budget, shor
 Temporary RPM/TPM exhaustion returns HTTP 429 with `Retry-After` rounded up to whole seconds. The hint reflects that bucket's current refill and is not a reservation; competing requests may consume the replenished capacity. A request whose estimated cost exceeds the full bucket cannot become eligible merely by waiting and receives no hint. Backend failures and budget/concurrency errors do not invent a rate recovery time. Chat and the Responses adapter share this behavior, and neither automatically replays inference.
 
 The configured process concurrency cap is applied before the first admission. Startup does not consume a slot; caps below and above the default 256 are supported.
+
+## Execution timeouts
+
+Each dispatched attempt has its own upstream deadline. The timer remains active while receiving the response body, even when tokens continue arriving. Idle limits separately bound gaps between chunks. Long-running models need appropriate upstream and total limits; a larger idle limit alone does not extend either deadline. Previously, the upstream timeout setting was read but not enforced by execution.
+
+A deadline before the response starts returns HTTP 504 with `upstream_timeout`. After streaming begins, Chat emits a terminal error; Responses emits `response.failed` with its compatible `server_error` code and the static message `Upstream timed out.` Internal records retain the timeout cause and any reliable usage already observed. Unknown counts remain unknown. An assigned upstream connection prevents automatic replay, including a timeout before headers. A failure before connection assignment may use an already eligible fallback under the existing retry rules; that attempt gets a new timer within the original total deadline. The same context reaches local connectors.
 
 ## Signed snapshot freshness
 
