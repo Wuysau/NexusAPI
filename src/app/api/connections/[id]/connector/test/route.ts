@@ -29,7 +29,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const response = await fetch(url, {
         method: 'POST',
         redirect: 'error',
-        signal: AbortSignal.timeout(60_000),
+        signal: AbortSignal.any([req.signal, AbortSignal.timeout(60_000)]),
         headers: {
           authorization: `Bearer ${body.apiKey}`,
           'content-type': 'application/json',

@@ -109,6 +109,8 @@ Gateway 查询模型列表时，先执行现有路由过滤，再按 Channel 批
 
 在详情中选择就绪模型，输入该项目的 Nexus API Key，执行测试。测试经过真实 Gateway 路由并写入归因；如果同名模型实际选中了其他渠道，页面会提示，不能把其他渠道的成功算作本连接器成功。
 
+控制面为测试调用保留 60 秒超时，并将收到的请求取消信号传给 Gateway，包括等待响应正文的阶段。取消不会撤销已经产生的用量；反向代理是否传递断线会影响停止时机。当前关闭页面内的配置面板不保证取消已发出的测试请求。
+
 ## 4. Coding Agent 接入
 
 在“API 密钥”创建绑定此项目的 Key，授权 `models:read` 和 `chat:write`。将 Agent 的 OpenAI 兼容 Base URL 设置为 `https://gateway.example.com/v1`，API Key 设置为该项目的 Nexus Key，模型设置为列表中的准确 ID：
