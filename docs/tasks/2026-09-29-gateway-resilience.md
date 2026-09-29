@@ -299,3 +299,23 @@ Use the separation of timeout responsibilities described in [Envoy's timeout gui
 - The twelve new scenarios plus the existing Responses truncation check passed together (3.638 seconds). Full native `go test ./...` and `go vet ./...` passed (Gateway 29.833 seconds). Six TypeScript contract files passed all 70 tests. The independent-process PostgreSQL/TLS connector suite passed all nine groups (18.68 seconds), including cancellation, timeout and midstream failure.
 - Final Linux `go test -race ./...` passed (Gateway 98.352 seconds), including independent attempt budgets, continuous output, parent cancellation and the existing connector lifecycle tests.
 - Go formatting, secret scan and diff checks passed. Independent review found no remaining blocking issues. No migration, dependency, TypeScript production change or deployment was performed.
+
+Round 13 was committed as `14d8925` and merged/pushed to main (`9fb5133`).
+
+## Round 14 design
+
+Three real upstream truncations or idle failures leave the channel breaker closed with a zero failure rate. The relay cancels the shared execution context while cleaning up a failed stream; its caller then interprets that cancellation as a reason to exclude the upstream failure from health tracking. This prevents later requests from avoiding a repeatedly broken stream.
+
+Extend the existing [LiteLLM error-specific cooldown principle](https://docs.litellm.ai/docs/routing) to stream completion:
+
+- Cancel the active attempt during relay cleanup, preserving the parent cancellation signal for health classification. The parent still represents client cancellation and the overall execution deadline; channel lease loss remains a canceled attempt. Each failure is recorded at most once.
+- Count upstream truncation, malformed stream data, idle expiry and individual-attempt expiry toward the existing channel/model breaker. Keep client cancellation, parent timeouts and downstream delivery failures excluded. Existing thresholds, cooldown and half-open behavior remain unchanged.
+- Verify that reaching the threshold changes only later request routing. Partial or ambiguous executions still produce one terminal record and never replay automatically. Verify exclusions separately. No schema, dependency or protocol change is needed.
+
+## Round 14 validation
+
+- Eight real HTTP cases cover truncation, malformed data, idle expiry and individual-attempt expiry in buffered and streaming Chat. All reproduced a closed breaker with zero failures before the change. Each now records exactly one failure per request, reaches the existing threshold after three failures, and sends only the following request to a healthy eligible fallback. Partial executions retain one attempt/terminal/outbox and their observed input count with unknown output/total counts; health stays isolated by channel/model.
+- Ten separate Chat/Responses scenarios exercise client cancellation, ordinary and timeout downstream-write failures, and an earlier parent total deadline. Each cancels the real mock upstream and retains one unknown terminal while recording zero health samples/failures and leaving no probe slot held. Independent review found no blocking issue in these tests or the cancellation change.
+- Full native `go test ./...` and `go vet ./...` passed (Gateway 31.642 seconds). Six TypeScript contract files passed all 70 tests. The independent-process PostgreSQL/TLS connector suite passed all nine groups (18.60 seconds). Go formatting, secret scan and diff checks passed.
+- Final Linux `go test -race ./...` passed (Gateway 100.958 seconds), including stream-health failures and all ten exclusion scenarios.
+- No migration, dependency, public protocol, TypeScript production change or deployment was performed. The existing breaker thresholds, cooldown rules, authorization filters and no-replay boundary are unchanged.
