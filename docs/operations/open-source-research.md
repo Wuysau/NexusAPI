@@ -28,6 +28,8 @@ Compatible message history follows the same parameter-fidelity principle: preser
 
 The same principle applies to output: [OpenAI structured-output refusals](https://developers.openai.com/api/docs/guides/structured-outputs) are preserved as typed Chat fields and Responses content/events, with assistant history available for continuation. A normal refusal retains completion and reliable usage facts; it is not an empty answer or a transport failure. Existing output bounds, privacy and replay rules still apply.
 
+[LiteLLM's Anthropic image translation](https://github.com/BerriAI/litellm/blob/cede93e826b2c352de62dcc3bbe725f9728d0352/litellm/litellm_core_utils/prompt_templates/factory.py#L828) illustrates the need to translate canonical media parts before provider execution. NexusAPI independently converts a documented subset of `image_url` references/data into native image blocks, preserving tool relationships and validating unsupported semantics before credential/budget access. It performs no media download or local file read; system/developer content that cannot survive the current text conversion is rejected.
+
 ## External contracts
 
 - [Stripe Checkout fulfillment](https://docs.stripe.com/checkout/fulfillment): complete orders via verified server callbacks, not browser redirects.

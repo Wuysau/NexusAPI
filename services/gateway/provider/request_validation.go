@@ -33,6 +33,13 @@ func (a *Anthropic) ValidateRequest(req *CanonicalRequest) error {
 		if message.ReasoningContent != nil || message.Refusal != nil {
 			return &UnsupportedParameterError{Param: "messages"}
 		}
+		if message.Role == "system" || message.Role == "developer" {
+			if !textOnlyContent(message.Content) {
+				return &UnsupportedParameterError{Param: "messages"}
+			}
+		} else if _, err := anthropicImageContent(message.Content); err != nil {
+			return err
+		}
 	}
 	if !textOnlyResponseFormat(req.ResponseFormat) {
 		return &UnsupportedParameterError{Param: "response_format"}
