@@ -4,7 +4,7 @@ import type { ControlPlaneContext } from '@/app/api/_lib/control-plane'
 const mocks = vi.hoisted(() => ({ query: vi.fn() }))
 vi.mock('@/db', () => ({ pool: { query: mocks.query } }))
 
-import { connectorState } from './control'
+import { connectorState, connectorStates } from './control'
 
 const now = Date.UTC(2026, 8, 30)
 const ctx = {
@@ -16,6 +16,7 @@ const ctx = {
 
 function row(overrides: Record<string, unknown> = {}) {
   return {
+    request_index: 1,
     id: 'connection-a',
     revoked_at: null,
     models: ['qwen:7b', 'llama:3b'],
@@ -59,7 +60,7 @@ describe('connector management readiness projection', () => {
       lastHeartbeatAt: new Date(now - 2000),
     })
     expect(mocks.query).toHaveBeenCalledTimes(1)
-    expect(mocks.query.mock.calls[0][1]).toEqual(['tenant-a', 'org-a', 'user-a', true, 'connection-a', null])
+    expect(mocks.query.mock.calls[0][1]).toEqual(['tenant-a', 'org-a', 'user-a', true, ['connection-a'], [null]])
     expect(mocks.query.mock.calls[0][0]).not.toMatch(/\b(?:UPDATE|INSERT|DELETE)\b/)
   })
 
@@ -70,7 +71,7 @@ describe('connector management readiness projection', () => {
       state: 'online',
       readyModels: ['qwen:7b'],
     })
-    expect(mocks.query.mock.calls[0][1].at(-1)).toBe('channel-b')
+    expect(mocks.query.mock.calls[0][1].at(-1)).toEqual(['channel-b'])
   })
 
   it.each([null, [], [['not-installed']], [['invalid model']], [[null]], ['qwen:7b']])(
@@ -120,5 +121,58 @@ describe('connector management readiness projection', () => {
   it('retains the management visibility boundary', async () => {
     mocks.query.mockResolvedValueOnce({ rows: [], rowCount: 0 })
     await expect(connectorState(ctx, 'hidden-connection')).rejects.toMatchObject({ code: 'not_found', status: 404 })
+  })
+
+  it('restores request order while keeping repeated connection and channel scopes separate', async () => {
+    mocks.query.mockResolvedValueOnce({
+      rows: [
+        row({ request_index: 3, approved_model_lists: [['llama:3b']] }),
+        row({ request_index: 1, id: 'connection-b', approved_model_lists: [['qwen:7b']] }),
+        row({ request_index: 4, approved_model_lists: [['qwen:7b']] }),
+        row({ request_index: 2, approved_model_lists: [['qwen:7b']] }),
+      ],
+    })
+    const states = await connectorStates(ctx, [
+      { connectionId: 'connection-b' },
+      { connectionId: 'connection-a', channelId: 'channel-a' },
+      { connectionId: 'connection-a', channelId: 'channel-b' },
+      { connectionId: 'connection-a', channelId: 'channel-a' },
+    ])
+    expect(states.map((state) => [state.connectionId, state.readyModels])).toEqual([
+      ['connection-b', ['qwen:7b']],
+      ['connection-a', ['qwen:7b']],
+      ['connection-a', ['llama:3b']],
+      ['connection-a', ['qwen:7b']],
+    ])
+  })
+
+  it('keeps an explicit empty channel scope instead of expanding it to the connection approval union', async () => {
+    respond({ approved_model_lists: null })
+    expect(await connectorState(ctx, 'connection-a', '')).toMatchObject({ state: 'online', readyModels: [] })
+    expect(mocks.query.mock.calls[0][1].at(-1)).toEqual([''])
+  })
+
+  it('rejects a missing position without returning partial states', async () => {
+    mocks.query.mockResolvedValueOnce({ rows: [row(), row({ request_index: 3, id: 'connection-c' })] })
+    await expect(
+      connectorStates(ctx, [
+        { connectionId: 'connection-a' },
+        { connectionId: 'hidden-connection' },
+        { connectionId: 'connection-c' },
+      ]),
+    ).rejects.toMatchObject({ code: 'not_found', status: 404 })
+  })
+
+  it('observes lease expiry after a delayed database read', async () => {
+    mocks.query.mockImplementationOnce(async () => {
+      vi.mocked(Date.now).mockReturnValue(now + 60_001)
+      return { rows: [row()] }
+    })
+    expect(await connectorState(ctx, 'connection-a')).toMatchObject({ state: 'expired', readyModels: [] })
+  })
+
+  it('reads no state for an empty request', async () => {
+    expect(await connectorStates(ctx, [])).toEqual([])
+    expect(mocks.query).not.toHaveBeenCalled()
   })
 })

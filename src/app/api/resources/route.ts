@@ -3,7 +3,7 @@ import { buildResourceCatalog, type ChannelFact, type ConnectionFact, type Quota
 import { connectionVisibility, workspaceParams } from '@/lib/workspace/management'
 import { jsonOk, requireContext, routeError } from '../_lib/control-plane'
 import { readCollectorObservation } from '@/lib/subscriptions/collector'
-import { connectorState } from '@/lib/connectors/control'
+import { connectorStates } from '@/lib/connectors/control'
 
 export const dynamic = 'force-dynamic'
 
@@ -52,20 +52,28 @@ export async function GET(req: Request) {
       ...resource,
       collectorObservation: resource.connectionId ? (observations.get(resource.connectionId) ?? null) : null,
     }))
-    for (const resource of resources) {
-      if (
-        resource.connectionId &&
-        connections.rows.some((c) => c.id === resource.connectionId && c.mode === 'local_sidecar')
-      ) {
-        const connector = await connectorState(ctx, resource.connectionId, resource.channelId ?? undefined)
-        resource.status =
-          connector.state === 'revoked' || resource.status === 'disabled'
-            ? 'disabled'
-            : connector.readyModels.length
-              ? 'active'
-              : 'pending'
-        resource.health = resource.status === 'active' && connector.readyModels.length ? 'healthy' : 'unknown'
-      }
+    const localConnectionIds = new Set(
+      connections.rows.filter((connection) => connection.mode === 'local_sidecar').map((connection) => connection.id),
+    )
+    const localResources = resources.filter(
+      (resource) => resource.connectionId && localConnectionIds.has(resource.connectionId),
+    )
+    const states = await connectorStates(
+      ctx,
+      localResources.map((resource) => ({
+        connectionId: resource.connectionId!,
+        channelId: resource.channelId ?? undefined,
+      })),
+    )
+    for (const [index, resource] of localResources.entries()) {
+      const connector = states[index]
+      resource.status =
+        connector.state === 'revoked' || resource.status === 'disabled'
+          ? 'disabled'
+          : connector.readyModels.length
+            ? 'active'
+            : 'pending'
+      resource.health = resource.status === 'active' && connector.readyModels.length ? 'healthy' : 'unknown'
     }
     const response = jsonOk({ resources })
     response.headers.set('cache-control', 'no-store')
