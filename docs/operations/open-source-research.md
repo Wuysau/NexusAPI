@@ -72,6 +72,8 @@ That diagnostic-metadata separation also protects terminal persistence from valu
 
 [Cloudflared's HTTP cleanup](https://github.com/cloudflare/cloudflared/blob/f9676c585623c86c0a48dbb6ae80840b4c834718/proxy/proxy.go#L226-L270) cancels origin work before closing its response and requires pending body reads to be interruptible. NexusAPI applies that lifecycle principle to its Gateway upload handler: job cancellation first wakes the response pipe, then expires the request-body read deadline, and the handler joins its watcher before returning. The original server-side implementation uses [Go's response-controller lifetime contract](https://pkg.go.dev/net/http#ResponseController), retaining existing terminal causes, frame bounds and request accounting.
 
+[LiteLLM's effective key policy](https://docs.litellm.ai/docs/proxy/virtual_keys#custom-key-policy-one-hook-for-every-key-operation) validates existing state merged with a mutation immediately before persistence. NexusAPI applies that principle to connector configuration: check and lock the current credential's tenant, organization, provider and enabled state before rotating identity or issuing pairing material. Invalid prerequisites return a fixed conflict and preserve existing facts. The original SQL transaction uses the existing authorization model; no separate policy plugin or credential restoration path is added.
+
 ## External contracts
 
 - [Stripe Checkout fulfillment](https://docs.stripe.com/checkout/fulfillment): complete orders via verified server callbacks, not browser redirects.
