@@ -94,6 +94,8 @@ The same policy consistency applies to irreversible connection revocation. [Next
 
 [Grafana's resource API](https://github.com/grafana/grafana/blob/v11.6.0/pkg/api/api.go#L360-L373) separates read/write actions and requested object scopes. NexusAPI applies the same consistency principle to legacy generic connection heartbeats: the existing `credential:create` write capability replaces the read-only gate, and the shared workspace connection predicate covers both lookup and mutation. An UPDATE observes current project membership even when it changes during request-body reading. Authorized ordinary heartbeat behavior is preserved; this metadata does not authenticate a local connector or grant API routing. No role, permission matrix or recent-auth policy is added.
 
+The same action-and-resource check now covers the legacy project policy-preview API. NexusAPI reuses its managed-project authorization and connection visibility predicate before returning provider/mode/status or appending preview success audit. Ordinary members cannot inspect another private project or another owner's unbound connection through that endpoint. Existing visible-resource decisions, organization management roles and archive refusal remain. This preview is advisory; it creates no Channel binding and grants no model execution authority.
+
 ## External contracts
 
 - [Stripe Checkout fulfillment](https://docs.stripe.com/checkout/fulfillment): complete orders via verified server callbacks, not browser redirects.
