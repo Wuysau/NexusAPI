@@ -12,7 +12,7 @@ Published SQL, timestamps and checksums remain unchanged. Migration 0005 repeats
 
 For a normal ORM schema change, review the generated SQL, journal entry and snapshot together before committing. For manually authored schema DDL, update the ORM declaration and append its current-schema snapshot as part of the same change. Generate and review that snapshot in an isolated copy with a minimal `dialect`/`schema`/`out` config and no database credentials; verify that its differences correspond to the new canonical SQL before adopting it. Do not apply or publish duplicate SQL for changes already present in the journal. Preserve published SQL, journal timestamps/checksums and older snapshots. SQL-only functions, triggers or data migrations do not need fictitious ORM schema changes. In the installed Kit 0.31.10, `generate --custom` retains the previous schema shape, so an empty custom migration alone does not synchronize a stale baseline.
 
-The appended `0026_snapshot.json` records the current ORM schema after the manual connector migration and provider metadata indexes. Its parent is the prior 0022 snapshot; intervening SQL-only migrations remain unchanged. This metadata adds no database migration and does not certify every live constraint name or SQL-only invariant. In particular, 0025's unnamed inline UNIQUE/foreign-key constraints have PostgreSQL names that differ from the ORM's generated names. Before changing or removing a manually authored constraint, inspect its actual `pg_constraint` name and review the generated ALTER/DROP statements against it; an unchanged generation check does not verify those future operations.
+The appended `0026_snapshot.json` records the current ORM schema after the manual connector migration and provider metadata indexes. Its parent is the prior 0022 snapshot; intervening SQL-only migrations remain unchanged. This metadata adds no database migration and does not certify every live constraint name or SQL-only invariant. Databases through 0026 retain six unnamed connector UNIQUE/foreign-key constraints with PostgreSQL names different from the ORM names; 0027 aligns those names as described below. Before changing or removing any manually authored constraint, inspect its actual `pg_constraint` name and review generated ALTER/DROP statements against it; an unchanged generation check does not verify those future operations.
 
 Run the offline generator regression after a migration change:
 
@@ -21,6 +21,20 @@ npx vitest run tests/contract/migration-generation.test.ts
 ```
 
 It runs the installed CLI against temporary copies, requires unchanged generation to emit no SQL or metadata changes, and verifies an intentional isolated schema addition. It reads no `.env` or database credentials. Run `npm run db:migration:verify` separately with an explicitly injected disposable PostgreSQL database to verify the canonical SQL and legacy import.
+
+## Migration 0027: connector constraint names
+
+`0027_connector_constraint_names` renames the three UNIQUE constraints and three foreign keys introduced by 0025 to the existing ORM names. This makes later generated constraint changes target the actual objects. PostgreSQL also renames the three UNIQUE backing indexes; the existing objects, stored rows, uniqueness and foreign-key actions are retained. The snapshot inherits 0026's current ORM shape through Kit's custom-migration path, with a new snapshot identity and journal entry. Earlier SQL and metadata remain immutable. This is a naming alignment for these six constraints, rather than a certificate of every manually authored database object.
+
+Schedule a schema maintenance window for the connector tables: `ALTER TABLE ... RENAME CONSTRAINT` takes an `ACCESS EXCLUSIVE` lock and can wait for existing readers or writers. Inject the deployment `DATABASE_URL` and run the normal `npm run db:migrate`, then verify readiness before resuming connector traffic. Apply this migration before deploying a future generated change to these constraints. Current Control Plane and Gateway queries use column-based conflict handling and retain compatibility with the renamed objects; the coordinated 0026 writer upgrade remains a separate prerequisite.
+
+Fresh deployment, populated-prefix preservation, constraint enforcement and actual future generated DDL are covered by:
+
+```bash
+npx vitest run tests/integration/connector-constraint-migrations.test.ts tests/integration/connector-constraint-generation.test.ts --no-file-parallelism
+```
+
+These tests reset schemas and require an explicitly injected loopback disposable `DATABASE_URL`: the existing CI `convergence_ci15` or the dedicated local `migration_constraint_round44`, both on port 55439. Never use an application database. Generated changes that deliberately remove uniqueness or change a delete action are executed only inside transactions that roll back in this fixture. They are test controls, rather than published migrations.
 
 ## Migration 0026: provider diagnostic metadata
 
