@@ -1,0 +1,41 @@
+# Recover cached Gateway storage health
+
+## Actual defect and sources
+
+The production Gateway never starts `PostgresStore.RunHealthProbe`. Terminal COMMIT failure marks its cached health false, while readiness Ping leaves that cache unchanged. Managed dispatch checks the cache before reservation. An instance with only managed traffic therefore has no later successful terminal write to restore it, even after PostgreSQL and readiness recover.
+
+[LiteLLM's health design](https://docs.litellm.ai/docs/proxy/health) separates lightweight dependency readiness from model checks and supports background cached observations. NexusAPI can reuse its already implemented storage probe, retaining cached admission checks and its own failure policy. The installed [pgxpool v5.7.6 maintenance loop](https://github.com/jackc/pgx/blob/v5.7.6/pgxpool/pool.go#L434-L493) manages its connections; it cannot update NexusAPI's separate atomic health flag.
+
+## Implemented repair
+
+Initialize the existing cache from a bounded startup Ping before accepting traffic. Start the existing one-second background probe with a separately owned cancellation and completion channel. Register cancellation/join after Store.Close is registered, so reverse cleanup stops the probe before closing the pool, including startup failures. Keep `Ping` pure: public readiness requests must not gain authority to change managed admission through their own cancellation.
+
+Replace activated probe/startup raw driver-error logging with fixed diagnostics. Preserve per-request terminal transactions, managed/BYOK distinctions, budget authority, prices, usage and replay rules. A successful Ping proves reachability; it does not guarantee a particular write transaction, permission or schema constraint will commit.
+
+## Characterization and ownership
+
+The ignored actual OLD fixture runs an independently built main Gateway executable, real signed-snapshot and credential HTTP endpoints, a synthetic Budget authorization endpoint, a mock provider socket and real PostgreSQL. Its existing in-process harness Gateway is closed and unused. A fixture-only deferred completed-row trigger makes one terminal COMMIT fail; the trigger is removed before observing recovery.
+
+Use only query/fragment-free loopback port `55439`, database `gateway_test_health_recovery_round57`, with `current_database()` proof before schema reset and all twenty-eight canonical migrations. Do not stop/restart the shared fixture container, read private environment/subscription credentials or log prompts/tokens/URLs. Native processes, sockets and database clients have bounded cleanup; preserve original OLD logs/binary independently of GREEN outputs.
+
+## Actual OLD evidence
+
+- `node .test-artifacts/store-health-recovery-audit/run.mjs old-runtime-red.txt` exits 1 solely on the desired recovery assertion. Test leaf is 2.66 seconds; package 5.764 seconds; runner including build/setup/cleanup 11.78 seconds.
+- Initial managed control returns 200 with one upstream/Budget call and one durable request, attempt and outbox row. The deferred terminal fault returns `500 internal_error` after the second upstream/Budget call; its new terminal transaction rolls back completely.
+- After removing the fault, actual PostgreSQL Ping and the native Gateway's `/readyz` return success. A new independent managed request after 2.2 seconds still returns `503 storage_unavailable`, with zero additional upstream/Budget calls and facts still at one request/attempt/outbox. The original failed operation is never replayed.
+- Usage records and ledger transactions are empty because this fixture runs no Worker. Synthetic Budget authorization establishes no real financial hold or settlement claim. This repair does not recover the missing terminal fact for the failed execution.
+- All processes and connections close; final inspection reports zero other sessions and closes itself. Source/output privacy checks, Go formatting and runner syntax pass. These original characterization artifacts remain ignored and preserved independently.
+
+## Formal verification
+
+- Promoted `TestStoreHealthRecoveryPostgres` needs no Go overlay. It skips unless the caller explicitly supplies the dedicated database and an absolute Gateway executable. Its corrected OLD run has one desired RED, with all setup, fault, identity and positive-fact controls passing: leaf 4.47s, runner 13.39s. Bounded recovery observation uses independent server request IDs and checks unchanged Budget/upstream/fact counts for each rejected request. Readiness is queried only after those observations, so changing public Ping to mutate admission cannot falsely pass.
+- After the production patch, the same actual native process scenario passes: initial 200, COMMIT fault 500/internal_error, recovered independent request 200; three upstream calls, three synthetic Budget authorizations, and two request/attempt/outbox rows. Each completed projection retains observed input/output 11/4 and pinned attribution. The failed transaction remains absent, and the first event ID remains unchanged. Leaf 3.64s, runner 8.21s; all processes close and final other-session count is zero.
+- `node scripts/verify-store-health-recovery.mjs` is the checked-in reproducible invocation, with an explicit dedicated DSN. It builds production main before resetting the identity-verified isolated fixture, applies all 28 migrations, seeds synthetic records and runs the formal leaf. The checked-in runner also passes (leaf 1.37s) with zero remaining other sessions. Five invalid fixture inputs reject before build/DB access and emit no URL/password.
+- `go test . -run '^TestStoreHealthProbe' -count=1 -v`: corrected OLD has one intended driver-diagnostic privacy RED and four passing controls. The initial synthetic peer missed normal pgx Terminate in two fixture barriers; those assertions were corrected before capturing the stable OLD evidence. Production was untouched during characterization. GREEN passes all five leaves, native package 3.995s and minimum Go 1.24.13 package 0.869s. Tests use bounded synthetic PostgreSQL sockets and actual pgxpool to cover pure Ping, success/cache recovery, pre-canceled no-I/O, interval deadlines, parent cancellation and joined cleanup.
+- `go test ./... -count=1`: all packages pass, main package 87.664s. The explicit real-PG leaf skips in this ordinary invocation and is proven separately above. `go vet ./...`, Gateway formatting, scoped ESLint/Prettier, runner syntax, secret scan and diff checks pass.
+- Full Linux Go 1.27 race checks pass, main package 196.330s. `node .test-artifacts/resilience/verify-connector.mjs` passes all nineteen actual private-TLS connector lifecycle/forwarding cases in 29.58s against the canonical-migration fixture; its processes and clients close.
+- Independent review identified that the runner's basic OS environment omitted HOME, preventing ordinary Unix Go cache/module discovery. Added HOME without changing GOENV=off, GOTOOLCHAIN=local or GOWORK=off. A separate network-disabled Go 1.24.13 Linux build verifies the actual minimal environment: OLD without HOME fails module-cache discovery; the corrected HOME/default-cache environment builds production main successfully. The first outer assertion expected a later build-cache diagnostic and is excluded; the corrected proof checks the earlier observed module-cache failure. This is a Linux build check, not another real-PG Linux runtime test.
+
+TypeScript and console behavior are unchanged. Round56's 141 related TypeScript unit/contract checks and fresh compiler pass remain applicable; this round separately reruns actual connector forwarding because main Gateway startup changed. No migration history, financial authority, BYOK policy, subscription credential isolation or connector deployment restriction changed.
+
+The independent eight-file read-only review is clear after correcting the runner's Unix HOME environment. It checked startup/Server ownership, cancellation, authorization/replay boundaries, native assertion coverage, fixture guards and documented limits. All required commands and native processes are closed. Validation is complete; Git integration uses the repository's commit and automatic main-sync workflow.

@@ -242,7 +242,7 @@ func (s *PostgresStore) RunHealthProbe(ctx context.Context, interval time.Durati
 			err := s.Ping(probeCtx)
 			cancel()
 			if err != nil && s.healthy.Load() {
-				s.logger.Error("outbox unreachable: managed traffic will fail closed", "err", err.Error())
+				s.logger.Error("outbox unreachable: managed traffic will fail closed")
 			}
 			s.healthy.Store(err == nil)
 		}
