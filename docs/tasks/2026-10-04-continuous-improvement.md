@@ -9,7 +9,7 @@ User authorization: continue inspect → characterize → minimal design → imp
 - Prior local equivalent acceptance: unit754, contract391, integration582, security49, migration32, E2E15, Vault73, Linux race2359/0skip, four images, standalone startup/PG health, SBOM602 and production audit0. Native Windows race remains unverified because cgo is unavailable. These are prior facts, not a claim that hosted baseline is healthy.
 - Active checkout: `codex/continuous-maintenance`, based on the starting main; existing hook merges each complete commit to main and pushes normally. Parallel characterization files are excluded from commits until verified.
 - C01 submitted as topic `84b5984`, merged/pushed main `fe0661f`; hosted CI `37154185749` **SUCCESS**: complete format/lint/typecheck/unit/contract/migration/integration/security/build/services/Compose/Go/four images/Vault/E2E/SBOM chain. Repository-level baseline is now accepted on that exact main revision.
-- Latest completed submission: C02 topic `0848dad`, merged/pushed main `75a40f2`. Further revisions require their own CI acceptance; the full green checkpoint above is explicitly revision-bound. Its downloaded receipts all match `fe0661f` with unchanged source, unit754/contract391/migration32/integration581/security49/Go2359/Vault73/E2E15, all zero fail/skip. Linux integration has one fewer declared platform case than the prior Windows run.
+- Latest completed submission: C03 topic `51f45ae`, merged/pushed main `5c15ac0`, hosted CI `37155356533` passed Integration/builds and is running later gates. C02 was topic `0848dad`, main `75a40f2`; its pending CI was superseded normally by C03. Further revisions require their own CI acceptance; the full green checkpoint above is explicitly revision-bound. Its downloaded receipts all match `fe0661f` with unchanged source, unit754/contract391/migration32/integration581/security49/Go2359/Vault73/E2E15, all zero fail/skip. Linux integration has one fewer declared platform case than the prior Windows run (Windows prior-PID workspace-alias case in task-supervisor).
 - Existing test PG/Redis are loopback disposable containers; verify exact URL and `current_database()` before resetting any named fixture. Ordinary databases/containers remain untouched.
 
 ## Current work and next candidates
@@ -19,7 +19,8 @@ User authorization: continue inspect → characterize → minimal design → imp
 | P0 resolved | Linux CI health fixture build cannot inspect VCS | C01 local proof and exact-revision complete hosted CI passed. |
 | P1 resolved | Inactive user retains existing session authority | C02 fixed/verified/reviewed below; submitting independently after full baseline acceptance. |
 | P1 resolved | Project Key issuance lifecycle | C03 fixed/verified/reviewed below; independent submission. No execution or billing exploit claimed. |
-| P1 | Connection authority changes while request body is read | Native valid OLD2 failures/7 controls: delayed unbind still succeeds after admin demotion/removal and records success audit; non-null binding correctly rechecks. Root proceeding with transaction-scoped live authorization. Initial setup failures are excluded from OLD evidence. Task actions remain a separate candidate. |
+| P1 resolved | Connection authority changes while request body is read | C04 fixed/reviewed, native12 GREEN plus full periodic checkpoint below; submitting independently. |
+| P1 candidate | Task action authority changes during body read | HTTP resume/switch perform stale-scope command UPDATE; independent native characterization underway. Keep local CLI continuation/store API separate. |
 | P2 | Gateway semantic loss | Pure HTTP OLD: nested assistant audio silently dispatches, Anthropic unknown finish becomes completed, Gemini filtered/malformed finish becomes stop. Implement independent protocol fixes after higher-priority security. |
 
 ## Completed rounds
@@ -37,6 +38,10 @@ Native OLD:5 failures/7 compatibility controls passed. Suspended/invited/deleted
 ### C03 — Atomic project Key issuance
 
 Native OLD3 failures/1 control prove publication before mandatory audit, orphan Key on binding/audit failure and false success audit on binding failure. Fix performs project binding and expiry plus mandatory redacted audit on the existing Key transaction client before COMMIT; route no longer binds afterward. Existing no-project/null/empty-string behavior and exact audit metadata remain intact. Unchanged native GREEN4/0fail/0skip; related Key scope/snapshot/auth/security82/5files pass with stable input hashes and closed clients. Compiler, scoped lint/format, independent review pass. Operations guide documents atomic issuance. No migration, repository expansion or Gateway hot-path change. Details: `2026-10-04-atomic-project-key.md`.
+
+### C04 — Current membership authority for project connection writes
+
+Native valid OLD2 failures/7 controls prove delayed unbind succeeds after admin demotion/removal. Fix preserves connection-first locking, reuses current workspace role plus source visibility, checks ownership/admin against that live role and holds membership/organization locks until COMMIT. Target still uses active quota eligibility; archived source recovery and immutable usage remain intact. Original9 GREEN, plus developer/archived source/archived target controls:12 pass/0fail/0skip. The existing unit query fixture now supplies live role without relaxing assertions. Compiler, scoped lint/format and independent review pass; manual updated. Periodic checkpoint:unit754/contract391/security49/Integration610 (56files,255s), all zero fail/skip. Evidence: ignored delta-verification plus cp-scope-audit. Details: `2026-10-04-connection-project-authority.md`.
 
 ## Verification and decisions
 
