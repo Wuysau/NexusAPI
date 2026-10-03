@@ -3,7 +3,7 @@ import type { PoolClient } from 'pg'
 import { pool } from '@/db'
 import { AuthzError } from '@/lib/auth/capabilities'
 import type { ControlPlaneContext } from '@/app/api/_lib/control-plane'
-import { connectionVisibility, workspaceParams } from '@/lib/workspace/management'
+import { connectionVisibility, resolveWorkspaceRole, workspaceParams } from '@/lib/workspace/management'
 
 export const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex')
 const secret = (prefix: string) => `${prefix}${randomBytes(32).toString('base64url')}`
@@ -55,6 +55,8 @@ export async function configureConnector(ctx: ControlPlaneContext, id: string, m
       )
     ).rows[0]
     if (!connection) throw new AuthzError('not_found', 'Ollama 本地连接不存在', 404)
+    const currentRole = await resolveWorkspaceRole(db, ctx, true)
+    if (!['owner', 'admin'].includes(currentRole)) throw new AuthzError('forbidden', '需要管理员权限', 403)
     const project = (
       await db.query(
         `SELECT id FROM projects WHERE id=$1 AND tenant_id=$2 AND organization_id=$3
