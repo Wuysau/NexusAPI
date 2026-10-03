@@ -33,6 +33,8 @@ type SSEReader struct {
 	// A blank-line CR reserves its possible LF before dispatch. That LF must
 	// not consume the next event's wire-byte budget.
 	skipLFOutsideEvent bool
+	// Only the start of the byte stream may carry a removable UTF-8 BOM.
+	started bool
 }
 
 func NewSSEReader(r io.Reader) *SSEReader {
@@ -70,6 +72,11 @@ func (s *SSEReader) Next() (SSEEvent, error) {
 				return SSEEvent{}, io.EOF
 			}
 			return SSEEvent{}, err
+		}
+		if !s.started {
+			s.started = true
+			// The raw bytes, including this prefix, already consumed budget.
+			line = bytes.TrimPrefix(line, []byte{0xef, 0xbb, 0xbf})
 		}
 		if len(line) == 0 {
 			if s.skipLF {
