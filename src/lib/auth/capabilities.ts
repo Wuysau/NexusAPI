@@ -156,6 +156,8 @@ export type AuthzErrorCode =
   | 'not_found'
   | 'invalid_project'
   | 'invalid_provider'
+  | 'credential_reference_conflict'
+  | 'credential_disabled'
 
 export class AuthzError extends Error {
   readonly status: number

@@ -67,7 +67,7 @@ export async function configureConnector(ctx: ControlPlaneContext, id: string, m
     if (!provider) throw new AuthzError('invalid_provider', 'Ollama 供应商未启用', 409)
     let channel = (
       await db.query(
-        `SELECT id,provider_credential_id FROM channels WHERE tenant_id=$1 AND metadata->>'connection_id'=$2 AND metadata->>'transport'='local_sidecar' FOR UPDATE`,
+        `SELECT id,provider_id,provider_credential_id FROM channels WHERE tenant_id=$1 AND metadata->>'connection_id'=$2 AND metadata->>'transport'='local_sidecar' FOR UPDATE`,
         [ctx.tenantId, id],
       )
     ).rows[0]
@@ -91,6 +91,17 @@ export async function configureConnector(ctx: ControlPlaneContext, id: string, m
           ],
         )
       ).rows[0]
+    } else {
+      if (channel.provider_id !== provider.id || !channel.provider_credential_id)
+        throw new AuthzError('credential_reference_conflict', '连接器渠道的凭据绑定无效', 409)
+      const credential = (
+        await db.query(
+          `SELECT enabled FROM provider_credentials WHERE id=$1 AND tenant_id=$2 AND provider_id=$3 AND organization_id=$4 FOR SHARE`,
+          [channel.provider_credential_id, ctx.tenantId, provider.id, ctx.organizationId],
+        )
+      ).rows[0]
+      if (!credential) throw new AuthzError('credential_reference_conflict', '连接器渠道的凭据绑定无效', 409)
+      if (credential.enabled !== true) throw new AuthzError('credential_disabled', '连接器渠道的关联凭据已停用', 409)
     }
     await db.query(
       `UPDATE channels SET enabled=true,metadata=metadata || $3::jsonb,updated_at=now() WHERE id=$1 AND tenant_id=$2`,

@@ -193,6 +193,10 @@ Chat 的 `max_tokens` 和 `max_completion_tokens` 都会作为有效输出上限
 
 重新生成配对令牌会立即撤销原身份与租约；用新的私有身份文件重新配对。撤销连接会同时撤销租约、身份、未使用配对令牌并停用关联 Channel，历史记录保留。取消项目绑定、归档项目、禁用项目 Key 或 Channel 后，下一次连接器调用会被实时授权检查拒绝，不等快照刷新。
 
+保存配置或轮换前，控制面会锁定并校验现有渠道的凭据绑定。单独暂停 Channel、关联凭据仍有效时，可以重新保存配置并配对。删除渠道会同时停用关联凭据；此后配置返回 `409 credential_disabled`，原身份、租约、模型配置和配对状态保持不变。空引用或租户、组织、Provider 绑定不一致时返回 `409 credential_reference_conflict`，响应不包含其他资源的详情。
+
+配置不会重新启用凭据或替换共享引用。若本地连接器的记账凭据已被停用，创建新的本地连接并使用新的私有身份文件配对，确认实际调用成功后撤销旧连接，保留其历史记录。该记账凭据不是 Ollama 密钥；Ollama 的密钥仍只在本机配置。
+
 CLI 在主动中断时正常退出；租约到期或 Control Plane 明确拒绝连接器身份时返回非零退出码，并输出不含凭据的原因。使用操作系统进程管理器运行时，可配置失败后延迟重启。重新启动会重新授权并领取新任务，不会恢复或重放上一进程的模型调用。身份已撤销时，应修复授权或重新配对后再启动，不能靠反复重启恢复权限。
 
 Gateway 传输端点的 401 也可能来自暂时无法完成实时授权；连接器在当前租约内退避重试。直接来自 Control Plane 续租接口的 401/403 才会作为身份或授权失效终止。连接器不会根据错误正文打印远端返回的内部信息。
@@ -200,6 +204,7 @@ Gateway 传输端点的 401 也可能来自暂时无法完成实时授权；连�
 | 现象 | 检查 |
 |---|---|
 | 配对被拒绝 | 令牌是否过期、已兑换、被新令牌替代，连接是否撤销；重新生成后配对 |
+| 保存配置返回 409 | `credential_disabled` 表示关联凭据已停用；`credential_reference_conflict` 表示绑定无效。失败不会轮换原身份；按上文建立新的本地连接，不要修改其他连接的共享凭据 |
 | TLS 验证失败 | 检查访问地址对应的 DNS/IP SAN、证书有效期及证书链；远端和本地 HTTPS 的私有 CA 都放入 `caFile`，不要关闭验证 |
 | 页面显示离线 | CLI 是否运行、出站 HTTPS 是否可达、Gateway 是否为指定的单实例、代理是否允许长轮询 |
 | CLI 因租约到期退出 | 检查 Control Plane 的出站连通性和本机时钟；网络恢复后重新运行 `run`。检查原调用状态，再决定是否发起新调用 |
@@ -225,7 +230,15 @@ npm run gateway:vet
 node --env-file=/path/to/disposable-test.env node_modules/vitest/vitest.mjs run tests/integration/canonical-migrations.test.ts
 ```
 
-该测试调用真实控制面路由与数据库，以不同进程运行编译出的 Gateway 和 CLI，经不同监听端口访问由专用私有 CA 保护的 HTTPS mock Ollama，检查配对前诊断、配对后的健康检查、模型发现、普通及流式响应、请求归因及 Worker 未定价处理。检查命令前后核对连接、令牌、身份、租约和计量事实不变，且检查成功的未启动连接器仍不出现在项目模型列表。Go 单元测试检查 TLS 信任、私有地址、重定向和协议边界。
+配置前置条件另由 `tests/integration/connector-configuration.test.ts` 验证。该测试会清空整个指定库，只接受回环地址、端口 `55439` 和数据库名 `connector_test_configure_round47` 或现有 CI 专用库 `convergence_ci15`，不接受 URL 查询参数，避免参数覆盖实际连接目标。使用独立测试环境文件运行：
+
+```sh
+node --env-file=/path/to/disposable-configuration-test.env node_modules/vitest/vitest.mjs run tests/integration/connector-configuration.test.ts
+```
+
+它覆盖真实删除/重配、共享凭据停用、无效绑定、正常轮换、暂停恢复，以及等待并发凭据停用后拒绝配置；失败前后比较连接、身份、租约、审计和记账事实。
+
+本地连接器端到端测试 `local-connector.test.ts` 调用真实控制面路由与数据库，以不同进程运行编译出的 Gateway 和 CLI，经不同监听端口访问由专用私有 CA 保护的 HTTPS mock Ollama，检查配对前诊断、配对后的健康检查、模型发现、普通及流式响应、请求归因及 Worker 未定价处理。检查命令前后核对连接、令牌、身份、租约和计量事实不变，且检查成功的未启动连接器仍不出现在项目模型列表。Go 单元测试检查 TLS 信任、私有地址、重定向和协议边界。
 
 浏览器取消测试复用刚生成的专用数据库，并自行启动临时 Next.js 和回环 mock Gateway；请先停止当前工作区的 Next 开发服务器。它验证真实控制台请求的取消传播和界面状态，不运行 Go 模型推理，也不写入假用量。正常结束后会停止自建进程、撤销测试租约并停用测试 Key；截图保存在 `output/playwright/local-connector-cancel.png`。已安装 Chromium 时可跳过安装命令。
 
