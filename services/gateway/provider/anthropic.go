@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	anthropicAdapterVersion = "1.0.6"
+	anthropicAdapterVersion = "1.0.7"
 	anthropicAPIVersion     = "2023-06-01"
 	// defaultAnthropicMaxTokens is applied when the client omits max_tokens,
 	// which the Messages API rejects. Chosen to match the legacy gateway's
@@ -225,15 +225,22 @@ func (s *anthropicStream) Close() error {
 	return s.resp.Body.Close()
 }
 
+// Validate every consumed usage counter before changing stream observations.
+type anthropicWireUsage struct {
+	InputTokens              int    `json:"input_tokens"`
+	OutputTokens             int    `json:"output_tokens"`
+	CacheReadInputTokens     int    `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens *int64 `json:"cache_creation_input_tokens"`
+	OutputTokensDetails      struct {
+		ThinkingTokens *int64 `json:"thinking_tokens"`
+	} `json:"output_tokens_details"`
+}
+
 type anthropicWireEvent struct {
 	Type    string `json:"type"`
 	Message *struct {
-		ID    string `json:"id"`
-		Usage struct {
-			InputTokens          int `json:"input_tokens"`
-			OutputTokens         int `json:"output_tokens"`
-			CacheReadInputTokens int `json:"cache_read_input_tokens"`
-		} `json:"usage"`
+		ID    string             `json:"id"`
+		Usage anthropicWireUsage `json:"usage"`
 	} `json:"message"`
 	Index int `json:"index"`
 	Delta *struct {
@@ -248,9 +255,7 @@ type anthropicWireEvent struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
 	} `json:"content_block"`
-	Usage *struct {
-		OutputTokens int `json:"output_tokens"`
-	} `json:"usage"`
+	Usage *anthropicWireUsage `json:"usage"`
 	Error *struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
