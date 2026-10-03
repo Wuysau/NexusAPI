@@ -142,7 +142,10 @@ export async function pairConnector(token: string) {
       await db.query(
         `SELECT p.connection_id,p.tenant_id FROM connector_pairings p
       JOIN owned_connections c ON c.id=p.connection_id AND c.tenant_id=p.tenant_id
+      JOIN projects project ON project.id=c.project_id AND project.tenant_id=c.tenant_id
+      JOIN organizations o ON o.id=project.organization_id AND o.tenant_id=project.tenant_id
       WHERE p.token_hash=$1 AND p.consumed_at IS NULL AND p.expires_at>now() AND c.mode='local_sidecar' AND c.revoked_at IS NULL
+      AND project.status='active' AND project.archived_at IS NULL AND o.status='active' AND o.deleted_at IS NULL
       FOR UPDATE OF c,p`,
         [tokenHash(token)],
       )
