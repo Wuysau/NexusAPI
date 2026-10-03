@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	geminiAdapterVersion = "1.0.4"
+	geminiAdapterVersion = "1.0.5"
 	geminiAPIVersion     = "v1beta"
 )
 
@@ -183,10 +183,11 @@ type geminiWireChunk struct {
 		FinishReason string `json:"finishReason"`
 	} `json:"candidates"`
 	UsageMetadata *struct {
-		PromptTokenCount        int `json:"promptTokenCount"`
-		CandidatesTokenCount    int `json:"candidatesTokenCount"`
-		CachedContentTokenCount int `json:"cachedContentTokenCount"`
-		ThoughtsTokenCount      int `json:"thoughtsTokenCount"`
+		PromptTokenCount        int    `json:"promptTokenCount"`
+		CandidatesTokenCount    int    `json:"candidatesTokenCount"`
+		CachedContentTokenCount int    `json:"cachedContentTokenCount"`
+		ThoughtsTokenCount      int    `json:"thoughtsTokenCount"`
+		TotalTokenCount         *int64 `json:"totalTokenCount"`
 	} `json:"usageMetadata"`
 	Error *struct {
 		Code    int    `json:"code"`
