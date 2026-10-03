@@ -181,6 +181,8 @@ curl -N https://gateway.example.com/v1/chat/completions \
 
 页面上的“连接器在线”表示租约有效且近期有经过认证的传输活动。“模型就绪”还要求本机探测到该模型、渠道批准该模型，并且渠道、Provider、关联凭据、项目和组织仍有效。一个连接关联多个渠道时，连接页合并各有效渠道的就绪模型，资源页按各自渠道单独判断。停用 Provider 或收紧模型范围后，连接器可能仍在线，但模型会显示未就绪。该状态不代替项目 API Key 的逐次授权，也不等于模型已成功完成一次推理。
 
+本地 Channel 还须具备 Chat 资格：已保存能力数组包含公开值 `chat` 或历史值 `text`。新建渠道保存 `chat`；历史配置保持原样。仅有 `embeddings`、仅有 `streaming`、空数组或非数组值都不授予 Chat。移除资格后，签名快照省略该渠道，其资源显示待就绪，模型列表和新调用实时排除该渠道；旧快照不能继续授权它。连接器仍可在线和续租，其他合格渠道仍可提供模型。通过现有渠道配置 API 显式设置 `capabilities: ["chat"]` 可恢复，无需轮换身份或租约；重新配对不会自动恢复已移除的资格。此规则保持原有流式传输行为，不新增工具或多模态权限。
+
 首版只提供 Chat Completions 文本和流式传输，不代表支持任意 Agent 所需的全部工具调用、多模态、Embeddings 或 Responses 功能。内部沿用已有 OpenAI 适配器的流式上游调用，再聚合非流式客户端响应。上游未提供可靠字段时保留 `null/unknown`；没有价格时进入现有未定价/核对流程，不生成免费结算。通过项目分析查看 Gateway 用量与连接归因。
 
 Chat 的 `max_tokens` 和 `max_completion_tokens` 都会作为有效输出上限发给 Ollama 的 `max_tokens`；两者同时非空时采用 `max_completion_tokens`。远端启用 `GATEWAY_ENABLE_RESPONSES=true` 后，[现有 Responses 子集](./gateway-limits.md#responses-compatibility)也可经同一路径调用，其 `max_output_tokens` 使用同样的上限映射。Ollama 的本地接口仍为 `/v1/chat/completions`，无需更新连接器配置或 CLI。其他提供方的字段选择遵循各自已配置的协议。
