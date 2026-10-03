@@ -21,13 +21,12 @@ export const connectionVisibility = `(c.tenant_id=$1 AND (
 export const observedVisibility = `(e.tenant_id=$1 AND e.organization_id=$2 AND ($4::boolean OR EXISTS
   (SELECT 1 FROM project_memberships access WHERE access.tenant_id=$1 AND access.project_id=e.project_id AND access.user_id=$3)))`
 
-/** Management can inspect/recover archived projects; quota access remains active-only. */
-export async function resolveManagedProject(
+/** Current workspace authority; locking callers must keep one transaction through the mutation. */
+export async function resolveWorkspaceRole(
   db: QuotaAccessDatabase,
   ctx: ControlPlaneContext,
-  id: string,
   write = false,
-) {
+): Promise<Role> {
   const actor = await db.query<{ role: Role }>(
     `SELECT m.role FROM organization_memberships m JOIN organizations o ON o.id=m.organization_id AND o.tenant_id=m.tenant_id
      WHERE m.tenant_id=$1 AND m.organization_id=$2 AND m.user_id=$3 AND o.status='active' AND o.deleted_at IS NULL${write ? ' FOR SHARE OF m,o' : ''}`,
@@ -36,6 +35,17 @@ export async function resolveManagedProject(
   const role = actor.rows[0]?.role
   if (!role || !hasCapability(role, write ? 'project:update' : 'project:read'))
     throw new AuthzError('tenant_isolation', '项目不存在')
+  return role
+}
+
+/** Management can inspect/recover archived projects; quota access remains active-only. */
+export async function resolveManagedProject(
+  db: QuotaAccessDatabase,
+  ctx: ControlPlaneContext,
+  id: string,
+  write = false,
+): Promise<Role> {
+  const role = await resolveWorkspaceRole(db, ctx, write)
   const project = await db.query(`SELECT p.id FROM projects p WHERE ${projectVisibility} AND p.id=$5`, [
     ctx.tenantId,
     ctx.organizationId,
@@ -44,6 +54,7 @@ export async function resolveManagedProject(
     id,
   ])
   if (!project.rows.length) throw new AuthzError('tenant_isolation', '项目不存在')
+  return role
 }
 
 export function parseRoots(value: unknown): string[] | undefined {

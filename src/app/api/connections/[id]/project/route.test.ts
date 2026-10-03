@@ -33,13 +33,17 @@ const request = (projectId: unknown) =>
     body: JSON.stringify({ projectId }),
   })
 const params = { params: Promise.resolve({ id: 'connection-a' }) }
+let liveRole = 'owner'
 
 beforeEach(() => {
   context.membership.role = 'owner'
+  liveRole = 'owner'
   query.mockReset().mockImplementation(async (sql: string) => ({
     rows: sql.includes('SELECT c.id,c.owner_user_id,c.project_id')
       ? [{ id: 'connection-a', owner_user_id: 'user-a', project_id: null }]
-      : [],
+      : sql.startsWith('SELECT m.role')
+        ? [{ role: liveRole }]
+        : [],
   }))
   release.mockReset()
   resolveQuotaProject.mockReset().mockResolvedValue({ id: 'project-b' })
@@ -71,10 +75,13 @@ it('rejects a project that is unavailable without changing the connection', asyn
 
 it('rejects a different developer who does not own the connection', async () => {
   context.membership.role = 'developer'
+  liveRole = 'developer'
   query.mockImplementation(async (sql: string) => ({
     rows: sql.includes('SELECT c.id,c.owner_user_id,c.project_id')
       ? [{ id: 'connection-a', owner_user_id: 'another-user', project_id: null }]
-      : [],
+      : sql.startsWith('SELECT m.role')
+        ? [{ role: liveRole }]
+        : [],
   }))
   expect((await PATCH(request('project-b'), params)).status).toBe(404)
   expect(resolveQuotaProject).not.toHaveBeenCalled()

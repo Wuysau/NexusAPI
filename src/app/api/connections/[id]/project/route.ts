@@ -1,7 +1,7 @@
 import { pool } from '@/db'
 import { AuthzError } from '@/lib/auth/capabilities'
 import { resolveQuotaProject } from '@/lib/quota/access'
-import { connectionVisibility, privilegedWorkspace, workspaceParams } from '@/lib/workspace/management'
+import { privilegedWorkspace, resolveManagedProject, resolveWorkspaceRole } from '@/lib/workspace/management'
 import {
   apiError,
   auditControlPlane,
@@ -35,11 +35,16 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       const current = (
         await client.query<{ id: string; owner_user_id: string | null; project_id: string | null }>(
           `SELECT c.id,c.owner_user_id,c.project_id FROM owned_connections c
-           WHERE ${connectionVisibility} AND c.id=$5 AND c.revoked_at IS NULL FOR UPDATE OF c`,
-          [...workspaceParams(ctx), id],
+           WHERE c.tenant_id=$1 AND c.id=$2 AND c.revoked_at IS NULL FOR UPDATE OF c`,
+          [ctx.tenantId, id],
         )
       ).rows[0]
-      if (!current || (current.owner_user_id !== ctx.session.userId && !privilegedWorkspace(ctx)))
+      if (!current) throw new AuthzError('tenant_isolation', '连接不存在或已撤销', 404)
+      const role = current.project_id
+        ? await resolveManagedProject(client, ctx, current.project_id, true)
+        : await resolveWorkspaceRole(client, ctx, true)
+      const currentScope = { ...ctx, membership: { ...ctx.membership, role } }
+      if (current.owner_user_id !== ctx.session.userId && !privilegedWorkspace(currentScope))
         throw new AuthzError('tenant_isolation', '连接不存在或已撤销', 404)
       previousProjectId = current.project_id
       if (projectId) await resolveQuotaProject(client, ctx, projectId, { write: true, lock: true })
