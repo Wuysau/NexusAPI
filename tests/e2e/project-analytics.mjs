@@ -64,7 +64,9 @@ export async function projectAnalyticsE2E(page, db, origin) {
         (r) => r.url().includes('/api/billing?') && test(new URL(r.url()).searchParams),
       )
       await action()
-      assert.equal((await response).status(), 200)
+      const result = await response
+      assert.equal(result.status(), 200)
+      return (await result.json()).analytics
     }
     await change(
       () => project.selectOption(`${prefix}-a`),
@@ -90,11 +92,18 @@ export async function projectAnalyticsE2E(page, db, origin) {
       () => panel.locator('input[type=date]').first().fill('2020-01-01'),
       (p) => p.get('from').startsWith('2019-12-31') || p.get('from').startsWith('2020-01-01'),
     )
-    await change(
+    const empty = await change(
       () => panel.locator('input[type=date]').last().fill('2020-01-02'),
       (p) => p.get('to').startsWith('2020-01-02') || p.get('to').startsWith('2020-01-03'),
     )
-    await panel.getByText('所选范围暂无项目用量', { exact: true }).waitFor()
+    assert.deepEqual(empty.groups, [])
+    assert.equal(empty.totalGroups, '0')
+    assert.equal(empty.totals.requests, '0')
+    assert.equal(empty.totals.sessions, '0')
+    assert.equal(empty.totals.observedEvents, '0')
+    assert.deepEqual(empty.totals.provenance, [])
+    assert.deepEqual(empty.totals.money, [])
+    await panel.getByText('所选范围暂无用量', { exact: true }).waitFor()
     await page.screenshot({ path: '.test-artifacts/analytics-empty.png', fullPage: true })
     await page.route('**/api/billing?**', (route) =>
       route.fulfill({

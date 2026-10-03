@@ -10,6 +10,7 @@ import { runMigrations } from './db-migrate.mjs'
 const databaseName = 'gateway_test_health_recovery_round57'
 const repository = fileURLToPath(new URL('../', import.meta.url))
 const source = process.env.GATEWAY_HEALTH_RECOVERY_DATABASE_URL || ''
+const prepareOnly = process.argv[2] === '--prepare-only'
 let phase = 'explicit fixture validation'
 let directory
 let binary
@@ -110,16 +111,18 @@ try {
   await pool.end()
   pool = undefined
 
-  phase = 'actual Gateway storage recovery test'
-  execute(
-    ['test', '.', '-run', '^TestStoreHealthRecoveryPostgres$', '-count=1', '-v', '-timeout', '45s'],
-    {
-      ...environment,
-      GATEWAY_HEALTH_RECOVERY_DATABASE_URL: source,
-      GATEWAY_HEALTH_RECOVERY_BINARY: binary,
-    },
-    90000,
-  )
+  if (!prepareOnly) {
+    phase = 'actual Gateway storage recovery test'
+    execute(
+      ['test', '.', '-run', '^TestStoreHealthRecoveryPostgres$', '-count=1', '-v', '-timeout', '45s'],
+      {
+        ...environment,
+        GATEWAY_HEALTH_RECOVERY_DATABASE_URL: source,
+        GATEWAY_HEALTH_RECOVERY_BINARY: binary,
+      },
+      90000,
+    )
+  }
 
   phase = 'dedicated database handoff'
   pool = new pg.Pool({ connectionString: source, max: 1, connectionTimeoutMillis: 3000, query_timeout: 3000 })
@@ -131,7 +134,11 @@ try {
     ).rows[0].count,
   )
   if (active !== 0) throw new Error('Native process left database sessions open')
-  console.log('Storage recovery verified with 28 canonical migrations; no other fixture sessions remain.')
+  console.log(
+    prepareOnly
+      ? 'Storage recovery fixture prepared with 28 canonical migrations for the full Go race suite; no other sessions remain.'
+      : 'Storage recovery verified with 28 canonical migrations; no other fixture sessions remain.',
+  )
 } catch {
   // Driver errors may contain connection strings. Tests print only safe observations.
   console.error(`Storage recovery verification failed during ${phase}.`)

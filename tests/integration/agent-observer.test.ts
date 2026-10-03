@@ -15,11 +15,12 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL })
 const runner = '../../scripts/db-migrate.mjs'
 const { runMigrations } = await import(runner)
 const dir = await mkdtemp(path.join(tmpdir(), 'nexus-agent-import-'))
+const workspace = path.join(dir, 'AgentProject')
 const scope = { tenantId: 'agent-tenant', organizationId: 'agent-org' }
 const config = {
   ...scope,
   sources: [],
-  roots: [{ root: 'D:/AgentProject', projectId: 'agent-project' }],
+  roots: [{ root: workspace, projectId: 'agent-project' }],
   providers: [],
   autoDiscover: false,
   agentSources: AGENT_TOOLS.map((t) => ({
@@ -40,7 +41,7 @@ const event = (tool: string, tokens: Record<string, string> | undefined = undefi
   sessionId: 'shared-session',
   eventId: 'event-1',
   timestamp,
-  cwd: 'D:/AgentProject',
+  cwd: workspace,
   model: 'custom-model',
   tokens,
   content: 'PRIVATE_PROMPT_CANARY',
@@ -87,7 +88,7 @@ it('accepts canonical metadata for any catalog identity without implying native 
 
 it('imports Pi, Qoder, Factory SDK and legacy OpenClaw artifacts with workspace attribution and idempotent replay', async () => {
   const pi = [
-    { type: 'session', version: 3, id: 'native-session', timestamp, cwd: 'D:/AgentProject' },
+    { type: 'session', version: 3, id: 'native-session', timestamp, cwd: workspace },
     {
       type: 'message',
       id: 'native-message',
@@ -106,7 +107,7 @@ it('imports Pi, Qoder, Factory SDK and legacy OpenClaw artifacts with workspace 
       sessionId: 'native-session',
       uuid: 'native-message',
       timestamp,
-      cwd: 'D:/AgentProject',
+      cwd: workspace,
       message: { content: 'PRIVATE_NATIVE_CONTENT' },
     },
   ]
@@ -136,7 +137,7 @@ it('imports Pi, Qoder, Factory SDK and legacy OpenClaw artifacts with workspace 
   ] as const) {
     const file = path.join(dir, tool + '-native.jsonl')
     await writeFile(file, rows.map((row) => JSON.stringify(row)).join('\n') + '\n')
-    agentSources.push({ tool, path: file, format: 'native' as const, workspace: 'D:/AgentProject' })
+    agentSources.push({ tool, path: file, format: 'native' as const, workspace })
   }
   const scoped = { ...config, agentSources }
   const result = await scanCodex(pool, scoped)
@@ -225,7 +226,7 @@ it('isolates malformed sources while importing an independently valid native Gem
   const result = await scanCodex(pool, {
     ...config,
     agentSources: [
-      { tool: 'gemini_cli', path: file, format: 'native', workspace: 'D:/AgentProject' },
+      { tool: 'gemini_cli', path: file, format: 'native', workspace },
       { tool: 'cline', path: path.join(dir, 'missing'), format: 'native' },
     ],
   })

@@ -35,7 +35,7 @@ func reservePairingDestination(path string) (*pairingDestination, error) {
 	}
 	info, err := f.Stat()
 	if err != nil {
-		f.Close()
+		_ = f.Close()
 		// Without the open handle's identity we cannot safely remove a path.
 		return nil, errIdentityDestination
 	}
@@ -78,7 +78,7 @@ func (d *pairingDestination) cleanup() {
 	}
 	d.cleaned = true
 	if !d.closed {
-		d.file.Close()
+		_ = d.file.Close()
 		d.closed = true
 	}
 	// Preserve nonempty files, including partial saves: their current bytes may

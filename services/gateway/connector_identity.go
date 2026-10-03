@@ -19,7 +19,7 @@ func controlPlaneTransport(caFile string) (*http.Transport, error) {
 	if caFile != "" {
 		pem, err := os.ReadFile(caFile)
 		if err != nil {
-			return nil, errors.New("Control Plane CA file unavailable")
+			return nil, errors.New("control plane CA file unavailable")
 		}
 		roots, err := x509.SystemCertPool()
 		if err != nil {

@@ -4,11 +4,12 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import DocsPage from '@/app/(dashboard)/docs/page'
 import PlaygroundPage from '@/app/(dashboard)/playground/page'
 import { ToastProvider } from '@/components/Toast'
+import { SessionProvider } from '@/components/SessionProvider'
 
-// The old playground loads an authenticated catalog; the migration must remove
-// credential submission independently of whether that catalog has any models.
+// The external-client examples remain bound to explicit Gateway configuration.
+// The project Playground separately requires authenticated session capability.
 vi.mock('@/components/lib/useApiData', () => ({
-  useApiData: () => ({ data: { models: [{ upstreamModelId: 'test-model', displayName: 'Test' }] } }),
+  useApiData: () => ({ data: { projects: [{ id: 'test-project', name: 'Test', status: 'active' }] } }),
 }))
 
 afterEach(() => vi.unstubAllEnvs())
@@ -41,12 +42,11 @@ describe('Gateway caller migration', () => {
     },
   )
 
-  it('does not collect credentials or offer broken browser submission', () => {
-    const html = renderToStaticMarkup(createElement(PlaygroundPage))
+  it('does not collect credentials before session capability is available', () => {
+    const html = renderToStaticMarkup(createElement(SessionProvider, null, createElement(PlaygroundPage)))
     expect(html).not.toContain('<form')
     expect(html).not.toContain('type="password"')
-    expect(html).toContain('href="/docs"')
-    expect(html).toContain('客户端')
+    expect(html).toContain('apikey:create')
   })
 
   it('quotes a configured URL in the copied shell example', () => {

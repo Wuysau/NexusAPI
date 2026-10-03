@@ -93,7 +93,7 @@ func (h *ConnectorHub) authorize(ctx context.Context, input connectorAuth) (*con
 	if err != nil {
 		return nil, errConnectorUnavailable
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != 200 {
 		return nil, errConnectorUnavailable
 	}
@@ -132,12 +132,12 @@ func (h *ConnectorHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("cache-control", "no-store")
 	token := bearerToken(r)
 	if len(token) > 160 || !strings.HasPrefix(token, "nxlease_") {
-		http.Error(w, "connector unauthorized", 401)
+		http.Error(w, "connector unauthorized", http.StatusUnauthorized)
 		return
 	}
 	grant, err := h.authorize(r.Context(), connectorAuth{LeaseToken: token, Transport: r.URL.Path == "/connector/poll"})
 	if err != nil {
-		http.Error(w, "connector unauthorized", 401)
+		http.Error(w, "connector unauthorized", http.StatusUnauthorized)
 		return
 	}
 	if r.Method == "POST" && r.URL.Path == "/connector/poll" {
@@ -164,7 +164,7 @@ func (h *ConnectorHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Full local capacity can pause job polls. The authenticated cancellation
 		// watch is also live transport evidence while long generations are running.
 		if _, err := h.authorize(r.Context(), connectorAuth{LeaseToken: token, Transport: true}); err != nil {
-			http.Error(w, "connector unauthorized", 401)
+			http.Error(w, "connector unauthorized", http.StatusUnauthorized)
 			return
 		}
 		select {
@@ -222,7 +222,7 @@ func (h *ConnectorHub) result(w http.ResponseWriter, r *http.Request, job *conne
 	controller := http.NewResponseController(w)
 	if err := controller.SetReadDeadline(job.Deadline); err != nil {
 		job.cancel()
-		http.Error(w, "streaming transport unavailable", 503)
+		http.Error(w, "streaming transport unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	// Bound each frame and the total upload. Pipe writes carry backpressure to the local upstream.
@@ -315,7 +315,7 @@ func (h *ConnectorHub) result(w http.ResponseWriter, r *http.Request, job *conne
 			return
 		}
 	}
-	http.Error(w, "incomplete response", 502)
+	http.Error(w, "incomplete response", http.StatusBadGateway)
 }
 
 type connectorTransport struct {

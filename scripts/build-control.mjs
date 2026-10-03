@@ -1,6 +1,8 @@
 import { spawnSync } from 'node:child_process'
 import { copyFile, cp } from 'node:fs/promises'
 import { build } from 'esbuild'
+import { checkControlArtifact } from './check-control-artifact.mjs'
+import { materializeControlRuntime } from './materialize-control-runtime.mjs'
 
 // Build workers import database modules, but never need a live database or its
 // credentials. This value is child-process-only, not a runtime image ENV.
@@ -20,3 +22,5 @@ await build({
 })
 await copyFile('scripts/start-control.cjs', '.next/standalone/start-control.cjs')
 await cp('.next/static', '.next/standalone/.next/static', { recursive: true })
+await materializeControlRuntime()
+await checkControlArtifact('.next/standalone')

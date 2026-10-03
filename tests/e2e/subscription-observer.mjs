@@ -29,7 +29,8 @@ export async function subscriptionObserverE2E(page, db, origin) {
   assert.equal(observed.totals.requests, '0')
   assert.equal(observed.totals.tokens.reasoning.total, null)
   assert.deepEqual(observed.totals.money, [])
-  await panel.getByText(/Codex 本地 · 客户端观测/).waitFor()
+  assert.deepEqual(observed.totals.provenance, [{ source: 'codex_local', authority: 'client_observed', events: '1' }])
+  await panel.getByText('Codex · 客户端观测 · 1 条事件', { exact: true }).waitFor()
   assert.match(await panel.innerText(), /观测事件/)
   for (const group of ['model', 'provider', 'subscription', 'day', 'usageSource']) {
     const response = page.waitForResponse(
@@ -41,7 +42,13 @@ export async function subscriptionObserverE2E(page, db, origin) {
   }
   const gateway = await selectSource('gateway')
   assert.equal(gateway.totals.observedEvents, '0')
-  await panel.getByText('所选范围暂无项目用量', { exact: true }).waitFor()
+  assert.equal(gateway.totals.requests, '0')
+  assert.equal(gateway.totals.sessions, '0')
+  assert.equal(gateway.totalGroups, '0')
+  assert.deepEqual(gateway.groups, [])
+  assert.deepEqual(gateway.totals.provenance, [])
+  assert.deepEqual(gateway.totals.money, [])
+  await panel.getByText('所选范围暂无用量', { exact: true }).waitFor()
   await selectSource('all')
   await page.screenshot({ path: '.test-artifacts/subscription-observer-e2e.png', fullPage: true })
 }

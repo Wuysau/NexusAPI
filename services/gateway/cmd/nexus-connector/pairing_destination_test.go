@@ -68,7 +68,7 @@ func TestPairingDestinationFailurePreservesNonemptyData(t *testing.T) {
 				f.sync = func() error { return privateFailure }
 			case "close":
 				f.close = func() error {
-					f.File.Close()
+					_ = f.File.Close()
 					return privateFailure
 				}
 			}
@@ -105,7 +105,7 @@ func TestPairingDestinationReplacementBeforeSaveIsPreserved(t *testing.T) {
 		}
 		// Windows may deny renaming an open file. Preserve the original inode
 		// by moving it after close, then test the same replacement guard.
-		d.file.Close()
+		_ = d.file.Close()
 		if err := os.Rename(d.path, moved); err != nil {
 			t.Fatal(err)
 		}

@@ -123,7 +123,7 @@ func TestConnectorCLIEndpointConfigurationRejectsBeforePairInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { input.Close(); writer.Close() })
+	t.Cleanup(func() { _ = input.Close(); _ = writer.Close() })
 	p := startConnectorCLIAction(t, f.config, connectorclient.Identity{}, "pair", input, path)
 	select {
 	case <-p.done:

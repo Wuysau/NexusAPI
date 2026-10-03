@@ -125,7 +125,7 @@ func readPairingToken(ctx context.Context, input io.ReadCloser) (string, error) 
 	}()
 	select {
 	case <-ctx.Done():
-		go input.Close()
+		go func() { _ = input.Close() }()
 		return "", ctx.Err()
 	case value := <-read:
 		<-done

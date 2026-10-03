@@ -62,8 +62,8 @@ func TestConnectorTerminalCauseSurvivesCleanupBeforeRead(t *testing.T) {
 				t.Fatal("authorized request did not enter the connector queue")
 			}
 			pr, pw := io.Pipe()
-			defer pr.Close()
-			defer pw.Close()
+			defer func() { _ = pr.Close() }()
+			defer func() { _ = pw.Close() }()
 			upload, err := http.NewRequestWithContext(guard, http.MethodPost, server.URL+"/connector/result/"+job.ID, pr)
 			if err != nil {
 				t.Fatal(err)
@@ -92,7 +92,7 @@ func TestConnectorTerminalCauseSurvivesCleanupBeforeRead(t *testing.T) {
 			case <-guard.Done():
 				t.Fatal("RoundTrip did not publish the response body")
 			}
-			defer response.Body.Close()
+			defer func() { _ = response.Body.Close() }()
 			if tc.frame == "" {
 				cancelRequest()
 			} else if _, err := io.WriteString(pw, tc.frame+"\n"); err != nil {

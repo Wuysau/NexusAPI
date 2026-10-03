@@ -78,7 +78,7 @@ func (c *Config) Validate() error {
 			return errors.New("remote URL must be an HTTPS origin")
 		}
 		ip, _ := netip.ParseAddr(u.Hostname())
-		if u.Scheme != "https" && !(c.AllowHTTPDevelopment && u.Scheme == "http" && (ip.IsLoopback() || u.Hostname() == "localhost")) {
+		if u.Scheme != "https" && (!c.AllowHTTPDevelopment || u.Scheme != "http" || !ip.IsLoopback() && u.Hostname() != "localhost") {
 			return errors.New("verified TLS is required; development HTTP is loopback-only")
 		}
 	}
@@ -163,7 +163,7 @@ func (c *Client) remoteJSON(ctx context.Context, path, token string, body any, o
 	if e != nil {
 		return errRemote
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if path == "/api/connector/lease" && (res.StatusCode == http.StatusUnauthorized || res.StatusCode == http.StatusForbidden) {
 		return ErrAuthorizationRejected
 	}
@@ -265,7 +265,7 @@ func (c *Client) execute(parent context.Context, token string, j job) {
 				cancel()
 				return
 			}
-			res.Body.Close()
+			_ = res.Body.Close()
 			if res.StatusCode != 202 {
 				cancel()
 				return
@@ -283,7 +283,7 @@ func (c *Client) execute(parent context.Context, token string, j job) {
 	upstream, err := c.local.Do(r)
 	status := http.StatusGatewayTimeout
 	if err == nil {
-		defer upstream.Body.Close()
+		defer func() { _ = upstream.Body.Close() }()
 		status = upstream.StatusCode
 	}
 	var retryAfterMS int64
@@ -294,11 +294,11 @@ func (c *Client) execute(parent context.Context, token string, j job) {
 	uploadCtx, uploadCancel := context.WithTimeout(parent, 10*time.Minute)
 	defer uploadCancel()
 	pr, pw := io.Pipe()
-	defer pr.Close()
+	defer func() { _ = pr.Close() }()
 	produced := make(chan struct{})
 	go func() {
 		defer close(produced)
-		defer pw.Close()
+		defer func() { _ = pw.Close() }()
 		encoder := json.NewEncoder(pw)
 		if err != nil {
 			code := "unavailable"
@@ -342,10 +342,10 @@ func (c *Client) execute(parent context.Context, token string, j job) {
 	result, e := c.request(uploadCtx, "POST", "/connector/result/"+j.ID, token, pr)
 	if e == nil {
 		// The acknowledgment body is unused; draining it can retain a completed worker.
-		result.Body.Close()
+		_ = result.Body.Close()
 	}
 	cancel()
-	pr.Close()
+	_ = pr.Close()
 	<-produced
 }
 

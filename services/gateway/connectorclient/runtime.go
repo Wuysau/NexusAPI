@@ -124,7 +124,7 @@ func (c *Client) poll(parent context.Context, token string) (job, bool, error) {
 	if err != nil {
 		return job{}, false, errRemote
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode == http.StatusNoContent {
 		return job{}, true, nil
 	}

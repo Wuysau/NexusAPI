@@ -57,7 +57,7 @@ func TestBufferedInferenceDisconnectsClientThatStopsReading(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer conn.Close()
+			defer func() { _ = conn.Close() }()
 			_ = conn.(*net.TCPConn).SetReadBuffer(4096)
 			body := string(chatBody(chatBodyOptions{}))
 			if endpoint == "/v1/responses" {
@@ -114,7 +114,7 @@ func TestBufferedInferenceDeliversCompleteLargeJSON(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer res.Body.Close()
+			defer func() { _ = res.Body.Close() }()
 			var output struct {
 				Choices []struct{ Message struct{ Content string } }
 				Output  []struct{ Content []struct{ Text string } }

@@ -50,7 +50,7 @@ func getCatalog(t *testing.T, h *testHarness) []string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	var payload struct {
 		Data []struct {
 			ID string `json:"id"`
@@ -250,7 +250,10 @@ func TestCatalogDirectProviderFallbackNeedsNoConnectorAuthorization(t *testing.T
 	channels := []SnapshotChannel{channel, direct}
 	h := newHarness(t, harnessOptions{Channels: channels, Models: models})
 	var calls atomic.Int32
-	attachCatalogHub(t, h, channels[:1], func(w http.ResponseWriter, r *http.Request) { calls.Add(1); http.Error(w, "unavailable", 503) })
+	attachCatalogHub(t, h, channels[:1], func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	})
 	if got := getCatalog(t, h); !slices.Equal(got, channel.Models) || calls.Load() != 0 {
 		t.Fatalf("direct-provider availability changed: ids=%v calls=%d", got, calls.Load())
 	}
@@ -306,9 +309,10 @@ func TestCatalogRejectsInvalidGrantsAndLegacyAuthorization(t *testing.T) {
 					return
 				}
 				_ = json.NewEncoder(w).Encode(grant)
-				if tc.raw == "trailing" {
+				switch tc.raw {
+				case "trailing":
 					_, _ = io.WriteString(w, `{}`)
-				} else if tc.raw == "oversized" {
+				case "oversized":
 					_, _ = io.WriteString(w, strings.Repeat(" ", 16385))
 				}
 			})

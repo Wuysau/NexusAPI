@@ -56,7 +56,7 @@ func checkJSON(ctx context.Context, client *http.Client, request *http.Request, 
 	if err != nil {
 		return checkFailure(ctx, err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode == http.StatusUnauthorized || res.StatusCode == http.StatusForbidden {
 		return CheckUnauthorized
 	}

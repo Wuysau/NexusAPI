@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="NexusAPI 使用手册：了解项目、API 渠道、Codex 订阅观测、资源视图和编程任务监督。"
+      content="NexusAPI 使用手册：了解项目、API 渠道、在线调试、请求详情、订阅观测与编程任务监督。"
     />
     <title>NexusAPI 使用手册</title>
     <link rel="stylesheet" href="./manual.css" />
@@ -65,6 +65,8 @@
           <a href="#start">01 · 开始使用</a>
           <a href="#paths">选择使用方式</a>
           <a href="#api">02 · API 渠道</a>
+          <a href="#playground">在线调试 Playground</a>
+          <a href="#request-trace">请求详情与用量依据</a>
           <a href="#codex">03 · Codex 订阅</a>
           <a href="#subscriptions">多服务订阅与账号池</a>
           <a href="#agent-observer">Agent 工具用量采集</a>
@@ -207,9 +209,147 @@
                 </div>
               </div>
               <p>
-                “请求日志”用于查看调用结果与错误；“用量与计费”按请求、项目等维度展示可归属的用量。价格来源不明确时，费用显示为未知，不会被当作免费。
+                可以先在<a href="#playground">在线调试</a>中使用项目 Key 测试文本调用，再到<a href="#request-trace"
+                  >请求详情</a
+                >查看已记录的执行尝试与用量依据。“用量与计费”按请求、项目等维度展示可归属的用量；缺少价格依据时，费用显示为未知，不会被当作免费。
               </p>
             </article>
+          </section>
+
+          <section id="playground" class="chapter">
+            <div class="chapter-head">
+              <span>PLAYGROUND</span>
+              <h2>使用项目 Key 在线调试</h2>
+              <p>
+                在控制台的“在线调试”页面测试模型和普通文本对话。每次发送都通过 Nexus
+                网关执行真实调用，并产生相应的用量。
+              </p>
+            </div>
+            <div class="callout">
+              <strong>开始前：确认项目和授权</strong>
+              <p>
+                你的控制台账号需要创建 API 密钥的权限（<code>apikey:create</code>）。请管理员准备已绑定所选活跃项目的
+                Nexus API Key；它必须属于当前工作空间及该项目，且未禁用、撤销、删除或过期。获取模型需要
+                <code>models:read</code>，发送对话需要 <code>chat:write</code>。供应商上游 Key 不能用于这里。
+              </p>
+              <p>
+                当前密钥创建表单没有项目选择；管理员请按<a
+                  href="https://github.com/Wuysau/NexusAPI/blob/main/docs/operations/project-diagnostics.md"
+                  >项目 Key 准备说明</a
+                >使用已有创建接口，普通未绑定项目的 Key 无法用于在线调试。
+              </p>
+            </div>
+            <ol class="steps">
+              <li>
+                <strong>选择项目并输入 Key</strong>
+                <p>
+                  打开“在线调试”（<code>/playground</code>），在“调试项目”中选择有权限的活跃项目，再输入该项目的完整
+                  Nexus API Key。
+                </p>
+              </li>
+              <li>
+                <strong>获取并选择模型</strong>
+                <p>
+                  点击“获取可用模型”，从列表中选择模型。列表是发现结果；实际发送时仍会检查
+                  Key、模型、渠道、项目策略和额度，列出模型不保证此刻一定能调用。
+                </p>
+              </li>
+              <li>
+                <strong>发送文本并查看结果</strong>
+                <p>
+                  设置“最大输出
+                  Token”，输入文本，再点击“发送（产生真实用量）”。回复完成后一次显示文本、结束原因和已报告的
+                  Token；各项未报告的 Token 独立显示为未知。返回请求 ID 时，可点击它打开<a href="#request-trace"
+                    >请求执行详情</a
+                  >。
+                </p>
+              </li>
+            </ol>
+            <article class="workflow">
+              <div class="workflow-title">
+                <span class="number">LIMITS</span>
+                <div>
+                  <h3>文本对话与调用限制</h3>
+                  <p>按次发送，完成后显示回复</p>
+                </div>
+              </div>
+              <ul>
+                <li>仅支持用户与助手交替的普通文本；用户和助手合计最多 64 条消息。</li>
+                <li>整次调试请求最多 65536 字节；“最大输出 Token”可设置为 1–8192。</li>
+                <li>响应读取最多 1 MiB，单次调用超时为 60 秒。</li>
+                <li>当前不提供流式显示、工具执行或多模态输入。</li>
+              </ul>
+              <p>
+                如果回复包含推理扩展、工具调用、拒绝信息或其他无法完整保留的助手内容，或结束原因未知、文本未完成，页面会停止继续该对话。请点击“清空对话”后重新开始。
+              </p>
+            </article>
+            <div class="callout amber">
+              <strong>清空和取消的区别</strong>
+              <p>
+                Key、对话和输出只保留在当前页面内存。更换项目会清空 Key、模型和对话；更换 Key
+                会清空模型和对话。离开或刷新页面会丢失临时内容；更换项目、Key、离开页面或清空对话都会中止进行中的调用。
+                “取消调用”保留已完成的对话，未完成消息不会加入对话。请求可能已在上游执行，取消不能撤销已产生的用量；取消、超时或结果不明都不会自动重发。
+              </p>
+            </div>
+            <p class="note">
+              管理员需为控制台服务设置 <code>NEXUS_GATEWAY_URL</code>。开发环境可使用
+              <code>http://127.0.0.1:8080</code>，生产环境必须使用
+              HTTPS；地址不能带用户名、密码、查询串或片段。未设置时沿用已有的
+              <code>NEXT_PUBLIC_GATEWAY_BASE_URL</code>。网关地址由管理员配置，调试页面不接受自选目标地址。详见
+              <a href="https://github.com/Wuysau/NexusAPI/blob/main/docs/operations/project-diagnostics.md"
+                >在线调试与请求详情操作说明 ↗</a
+              >。
+            </p>
+          </section>
+
+          <section id="request-trace" class="chapter">
+            <div class="chapter-head">
+              <span>RECORDED REQUESTS</span>
+              <h2>查看请求详情与用量依据</h2>
+              <p>沿着同一个请求 ID，查看网关已记录的请求、执行尝试和结算依据。</p>
+            </div>
+            <ol class="steps">
+              <li>
+                <strong>打开请求执行详情</strong>
+                <p>
+                  进入“请求日志”（<code>/logs</code>），点击列表中的请求 ID；也可从在线调试的结果跳转，或使用
+                  <code>/logs?requestId=请求ID</code>。需要
+                  <code>request:read</code> 权限，并只能查看授权范围内的历史请求。
+                </p>
+              </li>
+              <li>
+                <strong>按执行顺序检查尝试</strong>
+                <p>
+                  “请求执行详情”展示已记录的 Request 及其
+                  Attempt，包括状态、时间、请求模型、实际供应商和模型、渠道或连接 ID、供应商请求 ID
+                  与可展示的错误代码。“已记录尝试”按执行顺序排列；最多展示前 128 条，超出时会显示真实总数和截断提示。
+                </p>
+              </li>
+              <li>
+                <strong>核对当时的归属、版本和计量</strong>
+                <p>
+                  历史项目归属及请求时保存的策略、模型目录和价格版本是排查依据；后来更改
+                  Key、连接或当前价格，不会改写这些历史事实。 用量优先使用“Worker
+                  验证计量”，其次使用与该请求及尝试匹配的受信用量事件。结算金额来自已有的 Worker
+                  记录，不按当前价格重新估算。
+                </p>
+              </li>
+            </ol>
+            <div class="callout amber">
+              <strong>未知不等于零，记录也有范围</strong>
+              <p>
+                缺少可信用量或价格依据时，各项保持未知；旧记录中的默认零不能当作已报告的零或免费调用。任务、会话关联、首
+                Token
+                延迟（TTFT）和流式时长目前显示未知，不能从请求总耗时推算。详情只展示网关已保存的请求和尝试，尚未记录的入口拒绝不在此视图中。
+              </p>
+            </div>
+            <p class="note">
+              请求详情不展示提示词、回复正文、供应商原始错误或凭据。找不到详情时，请核对请求 ID
+              和当前访问范围；不存在、不可见或缺少网关记录的请求都可能无法打开。更多说明见
+              <a href="https://github.com/Wuysau/NexusAPI/blob/main/docs/operations/project-diagnostics.md"
+                >请求详情操作说明 ↗</a
+              >。
+            </p>
           </section>
 
           <section id="codex" class="chapter">
@@ -364,18 +504,30 @@ npm run nexus -- continue --project PROJECT_ID --task TASK_ID --instruction "继
               <span>05</span>
               <div>
                 <strong>请求日志 / 用量与计费</strong>
-                <p>查看网关请求及其用量，也可在项目分析中查看单独的 Codex 本地观测；两种来源不混算费用。</p>
+                <p>
+                  查看网关请求及其用量，点击请求 ID 打开<a href="#request-trace">已记录的执行详情</a
+                  >；也可在项目分析中查看单独的 Codex 本地观测，两种来源不混算费用。
+                </p>
               </div>
             </div>
             <div class="check-row">
               <span>06</span>
+              <div>
+                <strong>在线调试 Playground</strong>
+                <p>
+                  使用有权限的项目及其 Nexus API Key 测试普通文本调用。<a href="#playground">查看使用步骤与限制 →</a>
+                </p>
+              </div>
+            </div>
+            <div class="check-row">
+              <span>07</span>
               <div>
                 <strong>模型广场 / 价格审批</strong>
                 <p>查看模型目录与价格治理信息。目录存在不代表当前项目已有可调用渠道；未知价格保持未知。</p>
               </div>
             </div>
             <div class="check-row">
-              <span>07</span>
+              <span>08</span>
               <div>
                 <strong>成员与角色 / 审计日志 / 对账工单</strong>
                 <p>管理员在这些页面管理访问权限、检查操作记录，并处理出现的对账事项。</p>
@@ -679,6 +831,11 @@ npm run dev</code></pre>
                   <code>GATEWAY_INTERNAL_TOKEN</code> 分别设置随机值。保存本地渠道密钥后，在另一个终端运行
                   <code>npm run gateway:local</code>。
                 </p>
+                <p>
+                  使用<a href="#playground">在线调试</a>时，为控制台服务设置
+                  <code>NEXUS_GATEWAY_URL=http://127.0.0.1:8080</code>；未设置时沿用
+                  <code>NEXT_PUBLIC_GATEWAY_BASE_URL</code>。生产环境的在线调试要求 HTTPS 网关地址。
+                </p>
               </li>
             </ol>
             <p class="note">
@@ -699,6 +856,21 @@ npm run dev</code></pre>
               <p>
                 “我的连接”保存资源登记。请到“渠道管理”配置并启用上游模型渠道，再创建 Nexus API
                 密钥，通过独立网关发起调用。本地 Ollama 请使用“本地连接器”的模型配置、配对和启动流程；只登记尚不能调用。
+              </p>
+            </details>
+            <details>
+              <summary>为什么在线调试列出了模型，发送时仍被拒绝？</summary>
+              <p>
+                模型列表不是实时调用保证。确认 Key 属于所选活跃项目，且有 <code>models:read</code> 与
+                <code>chat:write</code>
+                权限；实际发送还要通过网关的模型、渠道、策略和额度检查。调用结果不明时不会自动重发，请先核对请求日志和用量。
+              </p>
+            </details>
+            <details>
+              <summary>为什么请求详情的 Token 或首 Token 延迟显示未知？</summary>
+              <p>
+                只有受信计量或匹配的用量事件才能确认 Token，旧记录的默认零不是计量依据。当前没有可靠的首 Token
+                延迟、流式时长及任务或会话关联事实，因此这些项保持未知；请求总耗时不能替代它们。
               </p>
             </details>
             <details>

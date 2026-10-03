@@ -46,7 +46,11 @@ func TestLocalTargetAndTLSBoundary(t *testing.T) {
 	}
 }
 func TestServerIdentityVerificationAndRedirectRejection(t *testing.T) {
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{}`)) }))
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := w.Write([]byte(`{}`)); err != nil {
+			t.Errorf("write identity fixture: %v", err)
+		}
+	}))
 	defer server.Close()
 	c := configFixture()
 	c.ControlURL = server.URL

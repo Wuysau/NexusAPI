@@ -58,7 +58,7 @@ func TestRequestExceedingTokenBucketCapacityHasNoRetryPromise(t *testing.T) {
 	limits.TokensPerMinute = 10
 	h := newHarness(t, harnessOptions{Limits: limits})
 	response := h.doChat(chatBody(chatBodyOptions{MaxTokens: 10}), nil)
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusTooManyRequests || response.Header.Get("Retry-After") != "" || h.managed.reserveCount() != 0 || len(h.store.Requests()) != 0 {
 		t.Fatal("a request exceeding capacity was admitted or promised recovery by waiting")
 	}

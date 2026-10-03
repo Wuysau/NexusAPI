@@ -1,0 +1,41 @@
+# 项目在线调试和请求详情
+
+Playground 用于确认当前项目的模型调用及其归属。日志详情用于排查同一次请求已记录的尝试、用量来源和结算依据。两者复用现有 Gateway 和 Worker 的事实，不建立另一套执行、价格或账务服务。
+
+## Playground
+
+管理员为控制台服务配置 `NEXUS_GATEWAY_URL`，例如开发环境的 `http://127.0.0.1:8080`。未设置时使用已有的 `NEXT_PUBLIC_GATEWAY_BASE_URL`。地址必须为明确的 HTTP(S) 地址，不能包含用户名、密码、查询串、片段或反斜杠；生产环境要求 HTTPS。控制台只调用固定的 `/v1/models` 和 `/v1/chat/completions`，不会跟随重定向。调用方不能选择目标地址或请求头。
+
+进入 `/playground`，选择有权限的活跃项目，输入该项目的 Nexus API Key，点击“获取可用模型”，再发送文本。此操作需要控制台 `apikey:create` 权限和正确的会话/CSRF 校验；Key 必须属于当前租户、组织和所选项目，且未禁用、删除、撤销或过期。获取模型需要 `models:read`，发送需要 `chat:write`；Go Gateway 仍执行最终的 Key、模型、策略、额度和渠道授权。模型列表不保证调用能通过实时资源和额度检查。
+
+当前“API 密钥”的创建表单没有项目选择，不能用该表单声称创建了项目绑定 Key。请管理员通过已有的 `POST /api/keys` 接口准备项目 Key：使用管理员正常登录会话及 CSRF 校验，提交下列请求体，将 `YOUR_PROJECT_ID` 替换为管理员有权管理的活跃项目 ID。
+
+```json
+{
+  "name": "Project Playground",
+  "projectId": "YOUR_PROJECT_ID",
+  "scopes": ["models:read", "chat:write"]
+}
+```
+
+成功响应为 201，`token` 仅返回一次，`key.projectId` 应为所选项目。安全保存该完整 Key 后在 Playground 输入；未绑定项目的 Key 或供应商上游 Key 不能用于此页面。此接口沿用控制台会话权限，不能用 Gateway Key 替代管理员登录。
+
+支持普通用户/助手交替文本对话，每次显式发送一次缓冲调用，最多 64 条消息、65536 字节请求、8192 输出 Token；响应读取最多 1 MiB，调用超时为 60 秒。首版不提供流式显示、工具执行或多模态输入。返回的拒绝、工具调用、推理扩展、未知或未完成结束原因会阻止继续拼接对话，需显式清空后重新开始，避免丢失语义。未报告的各项 Token 独立显示为未知，不通过其他计数补算。
+
+Key、对话和输出保留在当前页面内存。更换项目或 Key、卸载页面会中止当前请求并清空；清空对话也会中止进行中的调用。取消不能撤销已经产生的用量，超时和结果不明不会自动重发。正常完成后可点击返回的请求 ID 查看日志详情。浏览器刷新会丢失调试内容。Control Plane 只写入含操作类型和 Key ID 的派发意图审计，执行、Attempt、用量和结算仍归 Gateway/Worker 所有。
+
+控制台接口：`POST /api/playground/models` 接收 `{projectId, apiKey}`；`POST /api/playground/chat` 接收 `{projectId, apiKey, model, messages, maxTokens}`。请求不允许附加参数，返回严格白名单的版本化结果，所有响应使用 `Cache-Control: no-store`。错误响应不展示供应商响应体或密钥。真实调用会消耗配置供应商的额度。
+
+## 请求详情
+
+在 `/logs` 打开请求详情，或访问 `/logs?requestId=<Gateway返回的请求ID>`。`GET /api/logs/:id/trace` 使用现有 `request:read` 和历史 AnalyticsAccess 权限，按租户及有权限的组织/项目查询；不可见、跨租户、无 Gateway 证据或不存在的请求统一返回 404。历史可见性沿用冻结项目归属，不重新以当前 Key/连接状态改写历史。
+
+详情读取 Request、冻结项目事实和按序排列的 Attempt，每次最多展示 128 条，提供真实总数及截断说明。读取在只读、可重复读事务中完成。已记录的时间、模型、渠道/连接 ID、供应商请求 ID、冻结策略/目录/价格版本、白名单错误码和用量依据可以显示；提示词、输出、原始错误、任意 metadata 和凭据不进入响应。
+
+Worker 的权威计量优先于受信的已观测 UsageEvent；事件必须与该租户、请求及 Attempt 匹配，v2 还要求冻结项目事实。没有这些依据时，旧 Request/Attempt Token 列的默认零不表示报告了零。结算仅展示已有 Worker 用量记录的金额锚点，不从当前价格推算，也不修改历史账务。
+
+此页面展示已记录的 Gateway 尝试。当前没有可靠的 TTFT、流持续时间、Agent Task/Session 关联事实，因此这些项显示未知。它不能重建完整 Agent 工具调用图或从请求总时长推断首 Token 时间。组织表当前唯一约束使同租户多组织的数据库验收不可构造；访问解析保留现有租户范围语义，未在此变更数据库约束。
+
+## 验证边界
+
+本轮测试覆盖真实 PostgreSQL、会话/CSRF/RBAC、项目 Key、真实 Go Gateway 签名快照和持久请求/Attempt/outbox、实际 Worker 幂等处理及浏览器交互。上游使用本地模拟供应商，浏览器用受控接口 fixture 验证交互和取消；未进行新的真实付费供应商、多账号或生产部署验收。详见[本轮任务证据](../tasks/2026-10-04-delta-control-plane.md)和[研究记录](open-source-delta-2026-10-04.md)。

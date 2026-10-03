@@ -91,7 +91,7 @@ func TestStoreHealthRecoveryPostgres(t *testing.T) {
 		case "/api/internal/gateway/snapshot":
 			body, e := h.source.Fetch(r.Context(), r.URL.Query().Get("tenant_id"))
 			if e != nil {
-				http.Error(w, "unavailable", 503)
+				http.Error(w, "unavailable", http.StatusServiceUnavailable)
 				return
 			}
 			w.Header().Set("content-type", "application/json")
@@ -107,7 +107,7 @@ func TestStoreHealthRecoveryPostgres(t *testing.T) {
 	t.Cleanup(cp.Close)
 	budget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/reservations" || r.Header.Get("authorization") != "Bearer round57-budget-token" {
-			http.Error(w, "unauthorized", 401)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 		var in ReserveRequest
@@ -195,7 +195,7 @@ func TestStoreHealthRecoveryPostgres(t *testing.T) {
 		if e != nil {
 			return false
 		}
-		defer response.Body.Close()
+		defer func() { _ = response.Body.Close() }()
 		var value struct {
 			Status string          `json:"status"`
 			Checks map[string]bool `json:"checks"`
@@ -223,7 +223,7 @@ func TestStoreHealthRecoveryPostgres(t *testing.T) {
 		if e != nil {
 			t.Fatal("native Chat transport failed")
 		}
-		defer response.Body.Close()
+		defer func() { _ = response.Body.Close() }()
 		var value struct {
 			Error struct {
 				Code string `json:"code"`

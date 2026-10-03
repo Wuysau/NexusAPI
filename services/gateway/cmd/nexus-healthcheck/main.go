@@ -100,11 +100,11 @@ func run(ctx context.Context, getenv func(string) string) error {
 	}
 	response, err := client.Do(req)
 	if err != nil {
-		return errors.New("Gateway readiness request failed")
+		return errors.New("gateway readiness request failed")
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
-		return errors.New("Gateway is not ready")
+		return errors.New("gateway is not ready")
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxBodyBytes+1))
 	if err != nil || len(body) > maxBodyBytes {
@@ -122,7 +122,7 @@ func run(ctx context.Context, getenv func(string) string) error {
 		return errors.New("invalid Gateway readiness response")
 	}
 	if state.Status != "ready" || !state.Checks.Snapshot || !state.Checks.Database || !state.Checks.Redis {
-		return errors.New("Gateway dependencies are not ready")
+		return errors.New("gateway dependencies are not ready")
 	}
 	return nil
 }

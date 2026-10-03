@@ -5,7 +5,9 @@ import { ArrowDownToLine, ChevronLeft, ChevronRight, FileText, Search } from 'lu
 import { providers as PROVIDER_DISPLAY } from '@/lib/catalog/display'
 import { useApiData } from './lib/useApiData'
 import { ProviderMark, RequestStatusBadge, money, num, shortDate } from './ui'
-import { EmptyState, ErrorState, PermissionDenied, SkeletonRows } from './States'
+import { EmptyState, ErrorState, LoadingState, PermissionDenied, SkeletonRows } from './States'
+import { RequestTrace } from './RequestTrace'
+import { useSession } from './SessionProvider'
 
 interface LogEntry {
   id: string
@@ -35,7 +37,14 @@ interface LogsResponse {
 
 const PAGE_SIZE = 20
 
-export function LogTable({ compact = false }: { compact?: boolean }) {
+export function LogTable({ compact = false, requestId = null }: { compact?: boolean; requestId?: string | null }) {
+  const { session } = useSession()
+  if (!session) return <LoadingState label="读取请求日志…" />
+  const owner = `${session.user.id}/${session.organization.tenantId}/${session.organization.id}`
+  return <OwnedLogTable key={owner} compact={compact} requestId={requestId} />
+}
+
+function OwnedLogTable({ compact, requestId }: { compact: boolean; requestId: string | null }) {
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState('all')
   const [provider, setProvider] = useState('all')
@@ -51,6 +60,16 @@ export function LogTable({ compact = false }: { compact?: boolean }) {
   }, [compact, page, query, status, provider])
 
   const state = useApiData<LogsResponse>(path)
+  const [selection, setSelection] = useState({ path, linkedId: requestId, id: requestId })
+  // URL replacements select their explicit request. Query/filter replacements
+  // clear the old detail before commit; the old response cannot cross owners.
+  const selected =
+    selection.linkedId !== requestId
+      ? { path, linkedId: requestId, id: requestId }
+      : selection.path !== path
+        ? { path, linkedId: requestId, id: null }
+        : selection
+  if (selected !== selection) setSelection(selected)
 
   if (state.forbidden) return <PermissionDenied capability="request:read" />
 
@@ -95,146 +114,155 @@ export function LogTable({ compact = false }: { compact?: boolean }) {
   }
 
   return (
-    <section className="panel">
-      {!compact && (
-        <div className="panel-heading">
-          <h3>请求日志</h3>
-          <button className="button" onClick={exportCsv} disabled={!entries.length}>
-            <ArrowDownToLine size={15} /> 导出本页
-          </button>
-        </div>
-      )}
-      {!compact && (
-        <div className="toolbar">
-          <div className="search-input wide">
-            <Search size={15} />
-            <input
-              placeholder="搜索模型、密钥或请求 ID..."
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value)
-                setPage(1)
-              }}
-            />
+    <>
+      <section className="panel">
+        {!compact && (
+          <div className="panel-heading">
+            <h3>请求日志</h3>
+            <button className="button" onClick={exportCsv} disabled={!entries.length}>
+              <ArrowDownToLine size={15} /> 导出本页
+            </button>
           </div>
-          <div className="toolbar-filters">
-            <select
-              value={provider}
-              onChange={(e) => {
-                setProvider(e.target.value)
-                setPage(1)
-              }}
-              aria-label="按供应商筛选"
-            >
-              <option value="all">全部供应商</option>
-              {PROVIDER_DISPLAY.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-            <select
-              value={status}
-              onChange={(e) => {
-                setStatus(e.target.value)
-                setPage(1)
-              }}
-              aria-label="按状态筛选"
-            >
-              <option value="all">全部状态</option>
-              <option value="success">请求成功</option>
-              <option value="error">请求失败</option>
-            </select>
-          </div>
-        </div>
-      )}
-
-      {state.loading ? (
-        <SkeletonRows rows={5} />
-      ) : state.error && !state.data ? (
-        <ErrorState message={state.error} onRetry={state.reload} />
-      ) : entries.length === 0 ? (
-        <EmptyState
-          icon={<FileText size={30} />}
-          title="暂无请求记录"
-          description="接入渠道并使用 API 密钥发送请求后，调用记录会显示在这里。"
-        />
-      ) : (
-        <>
-          <div className="table-scroll">
-            <table className="logs-table">
-              <thead>
-                <tr>
-                  <th>请求时间</th>
-                  <th>模型 / 供应商</th>
-                  <th>密钥</th>
-                  <th>
-                    Tokens <span className="muted">↑↓</span>
-                  </th>
-                  <th>费用</th>
-                  <th>响应时间</th>
-                  <th>状态</th>
-                  {!compact && <th>请求 ID</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {entries.map((entry) => (
-                  <tr key={entry.id}>
-                    <td className="tabular muted">{shortDate(entry.startedAt)}</td>
-                    <td>
-                      <span className="model-label">
-                        <ProviderMark code={entry.providerCode} small />
-                        {entry.model}
-                      </span>
-                    </td>
-                    <td className="muted">{entry.keyName ?? '—'}</td>
-                    <td className="tabular">
-                      {entry.inputTokens == null || entry.outputTokens == null
-                        ? '未知'
-                        : num((BigInt(entry.inputTokens) + BigInt(entry.outputTokens)).toString())}
-                    </td>
-                    <td className="tabular">{money(entry.charge, 4, entry.currency)}</td>
-                    <td className="tabular muted">
-                      {entry.latencyMs === null ? '—' : (entry.latencyMs / 1000).toFixed(2) + ' s'}
-                    </td>
-                    <td>
-                      <RequestStatusBadge status={entry.status} />
-                    </td>
-                    {!compact && (
-                      <td className="tabular muted">
-                        <details>
-                          <summary>{entry.id.slice(0, 12)}</summary>
-                          <code>{entry.id}</code>
-                          <p>来源：网关请求记录 · {entry.startedAt}</p>
-                          <p>
-                            实际模型：{entry.upstreamModelId ?? '未知'} · 凭据记录：{entry.keyName ?? '未知'}
-                          </p>
-                        </details>
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {!compact && (
-            <div className="pagination">
-              <span>共 {num(total)} 条记录</span>
-              <div>
-                <button disabled={page === 1} aria-label="上一页" onClick={() => setPage(page - 1)}>
-                  <ChevronLeft size={16} />
-                </button>
-                <span>
-                  {page} / {Math.max(1, Math.ceil(total / PAGE_SIZE))}
-                </span>
-                <button disabled={page * PAGE_SIZE >= total} aria-label="下一页" onClick={() => setPage(page + 1)}>
-                  <ChevronRight size={16} />
-                </button>
-              </div>
+        )}
+        {!compact && (
+          <div className="toolbar">
+            <div className="search-input wide">
+              <Search size={15} />
+              <input
+                placeholder="搜索模型、密钥或请求 ID..."
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value)
+                  setPage(1)
+                }}
+              />
             </div>
-          )}
-        </>
+            <div className="toolbar-filters">
+              <select
+                value={provider}
+                onChange={(e) => {
+                  setProvider(e.target.value)
+                  setPage(1)
+                }}
+                aria-label="按供应商筛选"
+              >
+                <option value="all">全部供应商</option>
+                {PROVIDER_DISPLAY.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={status}
+                onChange={(e) => {
+                  setStatus(e.target.value)
+                  setPage(1)
+                }}
+                aria-label="按状态筛选"
+              >
+                <option value="all">全部状态</option>
+                <option value="success">请求成功</option>
+                <option value="error">请求失败</option>
+              </select>
+            </div>
+          </div>
+        )}
+
+        {state.loading ? (
+          <SkeletonRows rows={5} />
+        ) : state.error && !state.data ? (
+          <ErrorState message={state.error} onRetry={state.reload} />
+        ) : entries.length === 0 ? (
+          <EmptyState
+            icon={<FileText size={30} />}
+            title="暂无请求记录"
+            description="接入渠道并使用 API 密钥发送请求后，调用记录会显示在这里。"
+          />
+        ) : (
+          <>
+            <div className="table-scroll">
+              <table className="logs-table">
+                <thead>
+                  <tr>
+                    <th>请求时间</th>
+                    <th>模型 / 供应商</th>
+                    <th>密钥</th>
+                    <th>
+                      Tokens <span className="muted">↑↓</span>
+                    </th>
+                    <th>费用</th>
+                    <th>响应时间</th>
+                    <th>状态</th>
+                    {!compact && <th>请求 ID</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {entries.map((entry) => (
+                    <tr key={entry.id}>
+                      <td className="tabular muted">{shortDate(entry.startedAt)}</td>
+                      <td>
+                        <span className="model-label">
+                          <ProviderMark code={entry.providerCode} small />
+                          {entry.model}
+                        </span>
+                      </td>
+                      <td className="muted">{entry.keyName ?? '—'}</td>
+                      <td className="tabular">
+                        {entry.inputTokens == null || entry.outputTokens == null
+                          ? '未知'
+                          : num((BigInt(entry.inputTokens) + BigInt(entry.outputTokens)).toString())}
+                      </td>
+                      <td className="tabular">{money(entry.charge, 4, entry.currency)}</td>
+                      <td className="tabular muted">
+                        {entry.latencyMs === null ? '—' : (entry.latencyMs / 1000).toFixed(2) + ' s'}
+                      </td>
+                      <td>
+                        <RequestStatusBadge status={entry.status} />
+                      </td>
+                      {!compact && (
+                        <td className="tabular muted">
+                          <button
+                            className="muted-link"
+                            title={entry.id}
+                            aria-label={`查看请求 ${entry.id}`}
+                            onClick={() => setSelection({ path, linkedId: requestId, id: entry.id })}
+                          >
+                            {entry.id.slice(0, 12)}
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {!compact && (
+              <div className="pagination">
+                <span>共 {num(total)} 条记录</span>
+                <div>
+                  <button disabled={page === 1} aria-label="上一页" onClick={() => setPage(page - 1)}>
+                    <ChevronLeft size={16} />
+                  </button>
+                  <span>
+                    {page} / {Math.max(1, Math.ceil(total / PAGE_SIZE))}
+                  </span>
+                  <button disabled={page * PAGE_SIZE >= total} aria-label="下一页" onClick={() => setPage(page + 1)}>
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </section>
+      {!compact && selected.id && (
+        <RequestTrace
+          key={`${path}|${selected.id}`}
+          requestId={selected.id}
+          onClose={() => setSelection({ path, linkedId: requestId, id: null })}
+        />
       )}
-    </section>
+    </>
   )
 }

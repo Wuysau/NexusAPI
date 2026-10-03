@@ -41,7 +41,7 @@ func TestConnectorUploadExtendsOrdinaryBodyDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	pr, pw := io.Pipe()
-	defer pr.Close()
+	defer func() { _ = pr.Close() }()
 	job := &connectorJob{Deadline: time.Now().Add(time.Second), ctx: ctx, cancel: cancel, reader: pr, writer: pw, response: make(chan *http.Response, 1)}
 	hub := NewConnectorHub("", "")
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hub.result(w, r, job) }))
@@ -49,9 +49,9 @@ func TestConnectorUploadExtendsOrdinaryBodyDeadline(t *testing.T) {
 	server.Start()
 	defer server.Close()
 	uploadR, uploadW := io.Pipe()
-	defer uploadR.Close()
+	defer func() { _ = uploadR.Close() }()
 	go func() {
-		defer uploadW.Close()
+		defer func() { _ = uploadW.Close() }()
 		encoder := json.NewEncoder(uploadW)
 		_ = encoder.Encode(connectorFrame{Type: "meta", Status: 200})
 		time.Sleep(90 * time.Millisecond)
@@ -73,7 +73,7 @@ func TestConnectorUploadExtendsOrdinaryBodyDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res.Body.Close()
+	_ = res.Body.Close()
 	if res.StatusCode != 204 {
 		t.Fatalf("upload truncated: %d", res.StatusCode)
 	}
@@ -86,7 +86,7 @@ func TestConnectorUploadFailureBeforeMetadataCancelsImmediately(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	pr, pw := io.Pipe()
-	defer pr.Close()
+	defer func() { _ = pr.Close() }()
 	job := &connectorJob{Deadline: time.Now().Add(time.Second), ctx: ctx, cancel: cancel, reader: pr, writer: pw, response: make(chan *http.Response, 1)}
 	hub := NewConnectorHub("", "")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hub.result(w, r, job) }))
@@ -95,7 +95,7 @@ func TestConnectorUploadFailureBeforeMetadataCancelsImmediately(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res.Body.Close()
+	_ = res.Body.Close()
 	select {
 	case <-ctx.Done():
 	case <-time.After(200 * time.Millisecond):

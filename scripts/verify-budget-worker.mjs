@@ -8,9 +8,13 @@ const url = new URL(process.env.DATABASE_URL ?? '')
 assert.equal(url.hostname, '127.0.0.1')
 assert.equal(url.port, '55439')
 assert.equal(url.pathname, '/convergence_gateway27')
+assert.equal(url.protocol, 'postgresql:')
+assert.equal((process.env.DATABASE_URL || '').includes('?'), false)
+assert.equal((process.env.DATABASE_URL || '').includes('#'), false)
 const client = new pg.Client({ connectionString: url.href })
 await client.connect()
 try {
+  assert.equal((await client.query('SELECT current_database() AS name')).rows[0].name, 'convergence_gateway27')
   async function waitPublished() {
     const deadline = Date.now() + 30_000
     let published = 0

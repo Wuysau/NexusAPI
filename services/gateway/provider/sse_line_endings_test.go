@@ -59,8 +59,8 @@ func TestSSECRLFContinuationDoesNotCreateBlankLine(t *testing.T) {
 
 func TestSSEDispatchesCRWithoutLookahead(t *testing.T) {
 	pipeReader, pipeWriter := io.Pipe()
-	defer pipeReader.Close()
-	defer pipeWriter.Close()
+	defer func() { _ = pipeReader.Close() }()
+	defer func() { _ = pipeWriter.Close() }()
 	r := NewSSEReader(pipeReader)
 	type result struct {
 		event SSEEvent

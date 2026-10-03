@@ -21,8 +21,10 @@ jobs:
     env:
       CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
       DATABASE_URL: postgresql://postgres:convergence-fixture@127.0.0.1:55439/convergence_ci15
+      CONNECTOR_TEST_DATABASE_URL: postgresql://postgres:convergence-fixture@127.0.0.1:55439/connector_test_ci15
       CI_E2E_DATABASE_URL: postgresql://postgres:convergence-fixture@127.0.0.1:55439/convergence_e2e15
       GATEWAY_BUDGET_INTEGRATION_DATABASE_URL: postgresql://postgres:convergence-fixture@127.0.0.1:55439/convergence_gateway27
+      GATEWAY_HEALTH_RECOVERY_DATABASE_URL: postgresql://postgres:convergence-fixture@127.0.0.1:55439/gateway_test_health_recovery_round57
       GATEWAY_CHECK_DOCKER: '1'
       REDIS_URL: redis://127.0.0.1:56381/0
       UPSTREAM_ENCRYPTION_KEY: ci-development-only-wrapping-fixture

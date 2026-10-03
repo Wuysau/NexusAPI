@@ -73,7 +73,7 @@ func legacyClaimHTTP(h *testHarness, key string) legacyClaimHTTPResult {
 	if err != nil {
 		return legacyClaimHTTPResult{err: err}
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	body, err := io.ReadAll(response.Body)
 	return legacyClaimHTTPResult{status: response.StatusCode, id: response.Header.Get("x-request-id"), body: string(body), err: err}
 }

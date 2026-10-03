@@ -266,7 +266,8 @@ func TestResponsesMapperBoundsFinalObjectAcrossSmallWrites(t *testing.T) {
 		}
 	}
 	_, _ = w.Write([]byte("data: [DONE]\n\n"))
-	w.finish()
+	// The terminal error is asserted through the emitted response.failed event.
+	_ = w.finish()
 	events := responseEvents(t, recorder.Body.String())
 	last := events[len(events)-1]
 	if last["type"] != "response.failed" {

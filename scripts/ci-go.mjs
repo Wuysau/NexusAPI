@@ -1,9 +1,19 @@
 import { spawn } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { prepareProjectGatewayFixture } from './prepare-project-gateway-fixture.mjs'
-const database = new URL(process.env.GATEWAY_BUDGET_INTEGRATION_DATABASE_URL || '')
-if (database.hostname !== '127.0.0.1' || database.port !== '55439' || database.pathname !== '/convergence_gateway27')
+import { healthRecoveryDatabaseURL } from './fixture-database.mjs'
+const databaseSource = process.env.GATEWAY_BUDGET_INTEGRATION_DATABASE_URL || ''
+const database = new URL(databaseSource)
+if (
+  database.protocol !== 'postgresql:' ||
+  database.hostname !== '127.0.0.1' ||
+  database.port !== '55439' ||
+  database.pathname !== '/convergence_gateway27' ||
+  databaseSource.includes('?') ||
+  databaseSource.includes('#')
+)
   throw new Error('Explicit Gateway service fixture required')
+healthRecoveryDatabaseURL(process.env.GATEWAY_HEALTH_RECOVERY_DATABASE_URL)
 const env = {
   ...process.env,
   DATABASE_URL: database.href,
@@ -14,13 +24,13 @@ const env = {
   NODE_ENV: 'development',
 }
 const children = []
-function start(file) {
-  const child = spawn(process.execPath, [file], { env, stdio: 'inherit' })
+function start(file, args = []) {
+  const child = spawn(process.execPath, [file, ...args], { env, stdio: 'inherit', windowsHide: true })
   children.push(child)
   return child
 }
-async function execute(file) {
-  const child = start(file)
+async function execute(file, args = []) {
+  const child = start(file, args)
   const code = await new Promise((resolve, reject) => {
     child.once('error', reject)
     child.once('exit', resolve)
@@ -47,6 +57,8 @@ async function executeGatewayGate() {
 }
 try {
   await prepareProjectGatewayFixture()
+  // Seed a separate empty fixture; the full race suite runs the actual process scenario.
+  await execute('scripts/verify-store-health-recovery.mjs', ['--prepare-only'])
   start('dist/budget.cjs')
   let ready = false
   for (let i = 0; i < 50; i++) {

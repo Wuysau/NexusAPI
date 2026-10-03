@@ -1838,6 +1838,33 @@ tbody tr:hover {
   gap: 20px;
   min-height: 620px;
 }
+.playground-panel {
+  gap: 20px;
+  min-width: 0;
+}
+.playground-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 16px;
+  align-items: end;
+}
+.playground-conversation,
+.playground-compose {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.playground-turn {
+  padding: 18px;
+  display: grid;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+.playground-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
 .playground-config .panel-heading,
 .chat-panel .panel-heading {
   border-bottom: 1px solid var(--line);

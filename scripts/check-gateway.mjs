@@ -1,10 +1,15 @@
 import { spawnSync } from 'node:child_process'
 import { resolve } from 'node:path'
+import { mkdtempSync, existsSync, unlinkSync, rmdirSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { healthRecoveryDatabaseURL } from './fixture-database.mjs'
 
 // Windows CI/development uses real Linux race detection, not a CGO-disabled substitute.
 const directory = resolve('services/gateway')
 const docker = process.platform === 'win32' || process.env.GATEWAY_CHECK_DOCKER === '1'
 const fixture = process.env.GATEWAY_BUDGET_INTEGRATION_DATABASE_URL
+const healthFixture = process.env.GATEWAY_HEALTH_RECOVERY_DATABASE_URL
+if (healthFixture) healthRecoveryDatabaseURL(healthFixture)
 const goEnv = {
   ...process.env,
   GOPROXY: 'https://goproxy.cn,direct',
@@ -18,6 +23,22 @@ const formatted = spawnSync(process.execPath, [resolve('scripts/check-go-format.
 if (formatted.status !== 0) process.exit(formatted.status ?? 1)
 const vetted = spawnSync('go', ['vet', './...'], { cwd: directory, stdio: 'inherit', env: goEnv })
 if (vetted.status !== 0) process.exit(vetted.status ?? 1)
+const raceArgs = ['test', '-race', ...(fixture ? ['-tags', 'redisintegration', '-count=1', '-v'] : []), './...']
+let healthDirectory
+if (healthFixture && !docker) {
+  healthDirectory = mkdtempSync(resolve(tmpdir(), 'nexus-health-race-'))
+  goEnv.GATEWAY_HEALTH_RECOVERY_BINARY = resolve(healthDirectory, 'gateway')
+  const built = spawnSync('go', ['build', '-o', goEnv.GATEWAY_HEALTH_RECOVERY_BINARY, '.'], {
+    cwd: directory,
+    stdio: 'inherit',
+    env: goEnv,
+  })
+  if (built.status !== 0) {
+    if (existsSync(goEnv.GATEWAY_HEALTH_RECOVERY_BINARY)) unlinkSync(goEnv.GATEWAY_HEALTH_RECOVERY_BINARY)
+    rmdirSync(healthDirectory)
+    process.exit(built.status ?? 1)
+  }
+}
 const checks = docker
   ? [
       [
@@ -25,8 +46,22 @@ const checks = docker
         [
           'run',
           '--rm',
-          ...(fixture
-            ? ['--network', 'host', '-e', 'GATEWAY_BUDGET_INTEGRATION_DATABASE_URL', '-e', 'GATEWAY_BUDGET_FIXTURE_URL']
+          ...(fixture || healthFixture
+            ? [
+                '--network',
+                'host',
+                ...(fixture
+                  ? ['-e', 'GATEWAY_BUDGET_INTEGRATION_DATABASE_URL', '-e', 'GATEWAY_BUDGET_FIXTURE_URL']
+                  : []),
+                ...(healthFixture
+                  ? [
+                      '-e',
+                      'GATEWAY_HEALTH_RECOVERY_DATABASE_URL',
+                      '-e',
+                      'GATEWAY_HEALTH_RECOVERY_BINARY=/tmp/nexus-health-recovery-gateway',
+                    ]
+                  : []),
+              ]
             : []),
           '-e',
           'GOPROXY=https://goproxy.cn,direct',
@@ -37,11 +72,9 @@ const checks = docker
           '-e',
           'GOPROXY=https://goproxy.cn,direct',
           'golang@sha256:f44f6e88636cfb311f9ebace870ded69d943f227bb3cb27d32ffd84ea18c43ea',
-          'go',
-          'test',
-          '-race',
-          ...(fixture ? ['-tags', 'redisintegration', '-count=1', '-v'] : []),
-          './...',
+          ...(healthFixture
+            ? ['sh', '-c', 'go build -o "$GATEWAY_HEALTH_RECOVERY_BINARY" . && go ' + raceArgs.join(' ')]
+            : ['go', ...raceArgs]),
         ],
       ],
       [
@@ -64,14 +97,21 @@ const checks = docker
       ],
     ]
   : [
-      ['go', ['test', '-race', ...(fixture ? ['-tags', 'redisintegration', '-count=1'] : []), './...']],
+      ['go', raceArgs],
       ['golangci-lint', ['run', '--max-issues-per-linter=0', '--max-same-issues=0']],
     ]
-for (const [command, args] of checks) {
-  const result = spawnSync(command, args, { cwd: directory, stdio: 'inherit', env: goEnv })
-  if (result.error) {
-    console.error(result.error.message)
-    process.exit(1)
+try {
+  for (const [command, args] of checks) {
+    const result = spawnSync(command, args, { cwd: directory, stdio: 'inherit', env: goEnv })
+    if (result.error) console.error(result.error.message)
+    if (result.error || result.status !== 0) {
+      process.exitCode = result.error ? 1 : (result.status ?? 1)
+      break
+    }
   }
-  if (result.status !== 0) process.exit(result.status ?? 1)
+} finally {
+  if (healthDirectory) {
+    unlinkSync(goEnv.GATEWAY_HEALTH_RECOVERY_BINARY)
+    rmdirSync(healthDirectory)
+  }
 }

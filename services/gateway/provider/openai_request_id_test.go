@@ -39,7 +39,7 @@ func TestOpenAIHTTPReportedUsageCarriesRequestID(t *testing.T) {
 					headers["x-request-id"], wantID = openAIRequestIDHeader, openAIRequestIDHeader
 				}
 				stream := newOpenAIRequestIDHTTPStream(t, wire, headers)
-				final, err, text, finish := openAIRequestIDReadTerminal(t, stream)
+				final, text, finish, err := openAIRequestIDReadTerminal(t, stream)
 				if text != openAIRequestIDContent {
 					t.Fatal("header metadata changed streamed content")
 				}
@@ -74,7 +74,7 @@ func TestOpenAIHTTPHeaderRequestIDPrecedence(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stream := newOpenAIRequestIDHTTPStream(t, openAIRequestIDContentFrame(openAIRequestIDFullUsage)+openAIRequestIDFinishFrame()+"data: [DONE]\n\n", tc.headers)
-			final, err, text, finish := openAIRequestIDReadTerminal(t, stream)
+			final, text, finish, err := openAIRequestIDReadTerminal(t, stream)
 			if err != nil || !final.Done || text != openAIRequestIDContent || finish != "stop" {
 				t.Fatal("header precedence changed completion")
 			}
@@ -93,7 +93,7 @@ func TestOpenAIHTTPMalformedUsageRetainsReportedRequestID(t *testing.T) {
 	}
 	checkObserved(t, first.Usage, openAIRequestIDObserved(5, 2, 7, 0))
 	assertOpenAIRequestIDUsage(t, first.Usage, openAIRequestIDHeader, 5, 2, 0)
-	final, err, text, finish := openAIRequestIDReadTerminal(t, stream)
+	final, text, finish, err := openAIRequestIDReadTerminal(t, stream)
 	if err == nil || err.Error() != "openai: malformed or failed stream chunk" || final.Done || text != "" || finish != "" {
 		t.Fatal("malformed usage bypassed the static protocol guard")
 	}
@@ -125,7 +125,7 @@ func TestOpenAIHTTPUsageRequestIDSurvivesPartialUpdates(t *testing.T) {
 			}
 			checkObserved(t, first.Usage, openAIRequestIDObserved(5, 2, 7, 0))
 			assertOpenAIRequestIDUsage(t, first.Usage, openAIRequestIDHeader, 5, 2, 0)
-			final, err, text, finish := openAIRequestIDReadTerminal(t, stream)
+			final, text, finish, err := openAIRequestIDReadTerminal(t, stream)
 			if err != nil || !final.Done || text != "" || finish != "stop" {
 				t.Fatal("partial usage changed accepted terminal EOF")
 			}
@@ -158,7 +158,7 @@ func TestOpenAIHTTPHeaderDoesNotInventUsage(t *testing.T) {
 				wire += openAIRequestIDFinishFrame() + "data: [DONE]\n\n"
 			}
 			stream := newOpenAIRequestIDHTTPStream(t, wire, map[string]string{"x-request-id": openAIRequestIDHeader})
-			final, err, text, finish := openAIRequestIDReadTerminal(t, stream)
+			final, text, finish, err := openAIRequestIDReadTerminal(t, stream)
 			if tc.malformed {
 				if err == nil || err.Error() != "openai: malformed or failed stream chunk" || final.Done || text != "" {
 					t.Fatal("initial invalid usage escaped the static protocol guard")
@@ -219,7 +219,7 @@ func newOpenAIRequestIDHTTPStream(t *testing.T, wire string, headers map[string]
 	return stream
 }
 
-func openAIRequestIDReadTerminal(t *testing.T, stream Stream) (CanonicalChunk, error, string, string) {
+func openAIRequestIDReadTerminal(t *testing.T, stream Stream) (CanonicalChunk, string, string, error) {
 	t.Helper()
 	var text, finish strings.Builder
 	for i := 0; i < 8; i++ {
@@ -227,11 +227,11 @@ func openAIRequestIDReadTerminal(t *testing.T, stream Stream) (CanonicalChunk, e
 		text.WriteString(chunk.Text)
 		finish.WriteString(chunk.FinishReason)
 		if err != nil || chunk.Done {
-			return chunk, err, text.String(), finish.String()
+			return chunk, text.String(), finish.String(), err
 		}
 	}
 	t.Fatal("synthetic stream did not reach a bounded terminal")
-	return CanonicalChunk{}, nil, "", ""
+	return CanonicalChunk{}, "", "", nil
 }
 
 func assertOpenAIRequestIDUsage(t *testing.T, usage *CanonicalUsage, wantID string, input, output, cache int) {

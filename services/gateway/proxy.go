@@ -1493,7 +1493,7 @@ func parseChatRequest(body []byte, maxTokensEstimate int) (*chatRequest, *APIErr
 		default:
 			return nil, errInvalidParam(fmt.Sprintf("messages[%d].role", i), "Unsupported message role.")
 		}
-		if len(message.Content) == 0 && len(message.ToolCalls) == 0 && !(message.Role == "assistant" && message.Refusal != nil) {
+		if len(message.Content) == 0 && len(message.ToolCalls) == 0 && (message.Role != "assistant" || message.Refusal == nil) {
 			return nil, errInvalidParam(fmt.Sprintf("messages[%d].content", i), "Message content is required.")
 		}
 	}

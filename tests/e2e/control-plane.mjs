@@ -27,6 +27,8 @@ import { chromium } from 'playwright'
 import { projectAnalyticsE2E } from './project-analytics.mjs'
 import { subscriptionObserverE2E } from './subscription-observer.mjs'
 import { workspaceManagementE2E } from './workspace-management.mjs'
+import { playgroundE2E } from './playground.mjs'
+import { requestTraceE2E } from './request-trace.mjs'
 
 const ORIGIN = process.env.TEST_ORIGIN || 'http://localhost:3000'
 const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://postgres:postgres@127.0.0.1:5432/app_db'
@@ -379,6 +381,14 @@ export async function runControlPlaneE2E() {
 
     await check('Workspace project and connection lifecycle, persistence, setup and responsive layout', async () => {
       await workspaceManagementE2E(ownerPage, db, ORIGIN)
+    })()
+
+    await check('Project Playground transient multi-turn, cancel, ownership, unknown usage and no replay', async () => {
+      await playgroundE2E(ownerPage, ORIGIN)
+    })()
+
+    await check('Recorded request trace detail, visibility and selection ownership', async () => {
+      await requestTraceE2E(ownerPage, db, ORIGIN)
     })()
 
     // ── Flow 7b: viewer is read-only (server-enforced, UI hidden) ──────

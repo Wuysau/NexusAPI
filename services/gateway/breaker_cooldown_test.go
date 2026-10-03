@@ -18,8 +18,10 @@ func TestBreakerCooldownIsolationExpiryAndCancelledProbe(t *testing.T) {
 		t.Fatal("cooldown leaked to a different channel/model")
 	}
 	now = now.Add(5 * time.Second)
-	if !b.Available(key) || !b.Available(key) {
-		t.Fatal("inspection should see eligibility without consuming a probe")
+	for i := range 2 {
+		if !b.Available(key) {
+			t.Fatalf("inspection %d should see eligibility without consuming a probe", i)
+		}
 	}
 	if !b.Allow(key) || b.Allow(key) {
 		t.Fatal("expired cooldown must allow only one half-open probe")

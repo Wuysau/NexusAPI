@@ -66,6 +66,9 @@ func TestProviderIDCollisionPostgres(t *testing.T) {
 				requestIDs = append(requestIDs, r.RequestID)
 				records = append(records, r)
 			}
+			if len(requestIDs) != 2 || requestIDs[0] == requestIDs[1] {
+				t.Fatal("fixture reused a Gateway request identity")
+			}
 			if records[0].RequestID == records[1].RequestID || records[0].Attempts[0].AttemptID == records[1].Attempts[0].AttemptID || records[0].Event.EventID == records[1].Event.EventID {
 				t.Fatal("fixture reused a Gateway request, attempt or event identity")
 			}

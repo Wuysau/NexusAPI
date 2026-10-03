@@ -123,7 +123,7 @@ func newResultMethodFixture(t *testing.T, protocol int) *resultMethodFixture {
 			pollErrors <- err
 			return
 		}
-		defer res.Body.Close()
+		defer func() { _ = res.Body.Close() }()
 		var j connectorJob
 		if res.StatusCode != http.StatusOK || json.NewDecoder(res.Body).Decode(&j) != nil {
 			pollErrors <- errors.New("authenticated job poll failed")
@@ -174,7 +174,7 @@ func (f *resultMethodFixture) request(ctx context.Context, method, path, token s
 	if err != nil {
 		return resultMethodHTTP{err: err}
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	raw, err := io.ReadAll(res.Body)
 	return resultMethodHTTP{res.StatusCode, string(raw), err}
 }
@@ -201,7 +201,7 @@ func (f *resultMethodFixture) expectComplete(t *testing.T) {
 	if got.err != nil || got.response == nil {
 		t.Fatalf("valid result did not publish metadata: error=%v", got.err)
 	}
-	defer got.response.Body.Close()
+	defer func() { _ = got.response.Body.Close() }()
 	body, err := io.ReadAll(got.response.Body)
 	if got.response.StatusCode != http.StatusOK || len(body) != 0 || err != nil {
 		t.Fatal("valid result did not preserve metadata and normal EOF")

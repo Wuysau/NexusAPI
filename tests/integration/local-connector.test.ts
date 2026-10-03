@@ -21,8 +21,9 @@ import { createSession, SESSION_COOKIE } from '@/lib/auth/sessions'
 import { tokenHash } from '@/lib/connectors/control'
 import { processOutboxEvent } from '../../services/worker/processor'
 
-if (!process.env.DATABASE_URL || !new URL(process.env.DATABASE_URL).pathname.includes('connector_test'))
-  throw new Error('Dedicated connector_test DATABASE_URL is required; this suite resets its schema')
+const fixtureModule = '../../scripts/fixture-database.mjs'
+const { connectorTestDatabaseURL, assertFixtureDatabase } = await import(fixtureModule)
+const database = connectorTestDatabaseURL(process.env.DATABASE_URL)
 const db = new Pool({ connectionString: process.env.DATABASE_URL })
 const folder = path.resolve('.test-artifacts/local-connector')
 const gatewayExe = path.join(folder, process.platform === 'win32' ? 'gateway.exe' : 'gateway')
@@ -212,6 +213,7 @@ async function relayRoute(req: IncomingMessage, res: ServerResponse) {
 }
 beforeAll(async () => {
   process.env.NEXUS_CONNECTORS_ENABLED = 'true'
+  await assertFixtureDatabase(db, database)
   await db.query('DROP SCHEMA IF EXISTS drizzle CASCADE; DROP SCHEMA public CASCADE; CREATE SCHEMA public')
   const runner = '../../scripts/db-migrate.mjs'
   const { runMigrations } = await import(runner)

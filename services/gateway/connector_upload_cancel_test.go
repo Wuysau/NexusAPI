@@ -302,8 +302,8 @@ func TestConnectorUploadCancellationReleasesStalledHTTP(t *testing.T) {
 					defer cancel()
 					job, responses := f.claim(t, ctx)
 					pr, pw := io.Pipe()
-					defer pr.Close()
-					defer pw.Close()
+					defer func() { _ = pr.Close() }()
+					defer func() { _ = pw.Close() }()
 					uploaded := f.upload(t, guard, job, pr)
 					observed := awaitUploadCancel(t, f.entered, "authenticated upload entry")
 					awaitUploadCancel(t, observed.reading, "real socket body read")
@@ -325,7 +325,7 @@ func TestConnectorUploadCancellationReleasesStalledHTTP(t *testing.T) {
 							t.Fatal("valid metadata did not reconstruct an HTTP response")
 						}
 						response = got.response
-						defer response.Body.Close()
+						defer func() { _ = response.Body.Close() }()
 						if phase == "backpressure" {
 							var one [1]byte
 							if n, err := response.Body.Read(one[:]); n != 1 || err != nil || one[0] != 'x' {
@@ -389,7 +389,7 @@ func TestConnectorUploadTerminalCauseSurvivesCleanup(t *testing.T) {
 				if got.err != nil || got.response == nil {
 					t.Fatal("terminal fixture did not publish valid metadata")
 				}
-				defer got.response.Body.Close()
+				defer func() { _ = got.response.Body.Close() }()
 				awaitUploadCancel(t, f.handled, "terminal handler exit")
 				// Read only after the handler has finished. EOF and the original
 				// timeout/unavailable errors must survive its deferred cleanup.

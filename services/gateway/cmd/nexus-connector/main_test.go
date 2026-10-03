@@ -288,8 +288,8 @@ func TestConnectorCLIPairInputSignalExitsSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		input.Close()
-		writer.Close()
+		_ = input.Close()
+		_ = writer.Close()
 	})
 	p := startConnectorCLIAction(t, f.config, f.identity, "pair", input)
 	select {
@@ -330,8 +330,8 @@ func TestReadPairingTokenCancellationClosesRedirectedInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer input.Close()
-	defer writer.Close()
+	defer func() { _ = input.Close() }()
+	defer func() { _ = writer.Close() }()
 	observed := &observedPairingInput{File: input, reading: make(chan struct{}), closed: make(chan struct{})}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -69,7 +69,7 @@ func TestHTTP2SuccessfulStreamWriteDoesNotExpireDuringPersistence(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer res.Body.Close()
+			defer func() { _ = res.Body.Close() }()
 			if res.ProtoMajor != 2 || res.StatusCode != http.StatusOK {
 				t.Fatalf("fixture must exercise an established HTTP/2 stream: protocol=%s status=%d", res.Proto, res.StatusCode)
 			}
@@ -157,7 +157,7 @@ func TestTerminalWriteDeadlineDoesNotPoisonConnectionReuse(t *testing.T) {
 							t.Fatalf("request %d failed on reusable connection: %v", requestNumber, err)
 						}
 						body, readErr := io.ReadAll(res.Body)
-						res.Body.Close()
+						_ = res.Body.Close()
 						if res.ProtoMajor != protocol || res.StatusCode != 200 || readErr != nil || !strings.Contains(string(body), completion) {
 							t.Fatalf("request %d did not complete: proto=%s status=%d read_error=%v", requestNumber, res.Proto, res.StatusCode, readErr)
 						}

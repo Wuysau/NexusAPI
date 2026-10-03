@@ -14,6 +14,7 @@ NexusAPI 是以项目为核心的 AI Resource Control Plane。统一查看 API �
 - **统一网关**：Go 数据面提供 /v1/models、/v1/chat/completions 和 SSE 流式响应，支持 OpenAI 与 Anthropic 协议适配；可显式开启 /v1/responses 的文本和函数调用子集。
 - **渠道与密钥**：配置上游地址、模型和 API Key，使用 Nexus API Key 调用已配置渠道。桌面本地模式支持界面录入上游密钥并加密保存。
 - **项目与用量**：按组织、项目、连接查看实际请求、Token、价格来源和对账状态；未知价格保持未知，不自动记为免费。
+- **请求详情与在线调试**：日志可按序查看已记录的 Attempt、冻结版本与用量依据，最多展示 128 次尝试并提示截断；Playground 使用有权限项目的 Nexus API Key，通过现有 Go Gateway 执行有限的文本对话，并关联请求详情。未知用量保持未知，取消或结果不明不会自动重发。配置与限制见[项目在线调试和请求详情](docs/operations/project-diagnostics.md)，设计及验收见[本轮增量整合报告](docs/operations/delta-implementation-2026-10-04.md)。
 - **多工具用量采集**：独立 Observer 持续发现 Codex、Claude Code、Gemini CLI、Qwen Code、Cline、Roo Code、兼容 Kilo 扩展、Copilot CLI、Kimi CLI、Pi 和 Qoder IDE 的本地记录；另支持 OpenCode 导出、Factory SDK 单轮导出、OpenClaw 旧版导出与官方 Hook。目录列出 42 种工具身份，包含通用桥接和未适配项，**不表示 42 种原生支持**。Qoder IDE 与活动 Hook 未报告的 Token 保持未知，本地记录不产生 Nexus 扣费。详见[采集手册](docs/operations/agent-observer.md)与[覆盖矩阵](docs/operations/agent-tool-coverage.md)。
 - **多服务订阅与账号池**：连接目录覆盖 Claude Code、Gemini、Copilot、Cursor、Kimi、GLM、MiniMax 等常见服务，逐项说明原生使用、独立 API 和监控能力。Codex 保留原生观测；其他受支持产品通过 CodexBar dashboard-v1 快照导入或已配置的服务同步额度。账号池显示多个额度窗口、数据新鲜度、耗尽及异常状态，第三方监控与官方调度依据分别展示。
 - **兼容代理与付费入口**：渠道配置提供官方 API 与 CLIProxyAPI / New API / Sub2API 兼容入口模板；用量与计费页面提供已发布套餐、Stripe Checkout 与订单状态。价格在服务端读取，只有验签回调可入账。第三方订阅购买仍在相应服务商完成，不会把平台套餐当作上游订阅出售。
@@ -88,7 +89,7 @@ curl http://127.0.0.1:8080/v1/chat/completions \
   -d '{"model":"YOUR_CONFIGURED_MODEL","messages":[{"role":"user","content":"Hello"}],"max_tokens":32}'
 ```
 
-网关验证 Nexus Key，选取允许的渠道，以对应上游密钥发送请求，再记录返回用量。真实请求会消耗上游额度。默认网关端口为 8080；控制台端口 3000 不转发模型请求。若修改端口，请同步更新配置中的地址。
+网关验证 Nexus Key，选取允许的渠道，以对应上游密钥发送请求，再记录返回用量。真实请求会消耗上游额度。默认网关端口为 8080。控制台 Playground 的授权接口将有界的调试请求发送到 Go Gateway；外部客户端直接使用网关地址。若修改端口，请同步更新配置中的地址。
 
 本地密钥保存在用户目录下的加密存储中。生产部署使用独立密钥服务和受限工作负载身份，不能启用本地桌面模式作为生产替代。
 

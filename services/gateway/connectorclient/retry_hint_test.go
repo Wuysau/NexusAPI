@@ -51,18 +51,18 @@ func retryHintExecuteHTTP(t *testing.T, status int, headers map[string]string, r
 	}))
 	t.Cleanup(upstream.Close)
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/api/connector/lease":
+		switch r.URL.Path {
+		case "/api/connector/lease":
 			_ = json.NewEncoder(w).Encode(lease{Token: "nxlease_retry_fixture", ExpiresAt: time.Now().Add(time.Minute)})
-		case r.URL.Path == "/connector/poll":
+		case "/connector/poll":
 			if polls.Add(1) == 1 {
 				_ = json.NewEncoder(w).Encode(j)
 				return
 			}
 			<-r.Context().Done()
-		case r.URL.Path == "/connector/cancel/"+j.ID:
+		case "/connector/cancel/" + j.ID:
 			<-r.Context().Done()
-		case r.URL.Path == "/connector/result/"+j.ID:
+		case "/connector/result/" + j.ID:
 			raw, err := io.ReadAll(r.Body)
 			if err != nil {
 				t.Errorf("read uploaded frames: %v", err)

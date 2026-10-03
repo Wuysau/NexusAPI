@@ -59,9 +59,10 @@ func TestExpiredSignedHTTPResponseCannotAuthorizeRequests(t *testing.T) {
 				// Repeated successful fetches must never turn it into fresh authority.
 				for i := range 2 {
 					method, payload := http.MethodPost, string(chatBody(chatBodyOptions{}))
-					if endpoint == "/v1/models" {
+					switch endpoint {
+					case "/v1/models":
 						method, payload = http.MethodGet, ""
-					} else if endpoint == "/v1/responses" {
+					case "/v1/responses":
 						payload = `{"model":"gpt-4o","input":"hi"}`
 					}
 					req, err := http.NewRequest(method, gateway.URL+endpoint, strings.NewReader(payload))
