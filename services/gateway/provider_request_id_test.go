@@ -120,6 +120,14 @@ func TestApplyUsageBoundsProviderIDWithoutMutatingSource(t *testing.T) {
 		{"Unicode exact boundary", strings.Repeat("界", 512), strings.Repeat("界", 512)},
 		{"Unicode oversized", strings.Repeat("界", 513), ""},
 		{"opaque format", " opaque/vendor:id? zone=global ", " opaque/vendor:id? zone=global "},
+		{"NUL only", "\x00", ""},
+		{"NUL prefix", "\x00opaque", ""},
+		{"NUL inside", "opaque\x00id", ""},
+		{"NUL suffix", "opaque\x00", ""},
+		{"invalid UTF-8", "opaque\xffid", ""},
+		{"truncated UTF-8", "opaque\xc3", ""},
+		{"literal replacement character", "opaque\ufffdid", "opaque\ufffdid"},
+		{"representable controls", "opaque\tvalue\nnext\x1f", "opaque\tvalue\nnext\x1f"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			observed := &provider.ObservedUsage{InputTokens: anthropicGatewayInt(5), OutputTokens: anthropicGatewayInt(2), TotalTokens: anthropicGatewayInt(7)}
