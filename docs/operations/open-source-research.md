@@ -76,6 +76,8 @@ That diagnostic-metadata separation also protects terminal persistence from valu
 
 [Caddy's method/path request matching](https://caddyserver.com/docs/caddyfile/matchers#method) selects the supported handler before that handler changes request state. NexusAPI applies this principle to its connector result claim: only an authenticated, correctly bound POST enters the existing one-claim transition. Rejected methods preserve their 404 response without consuming the first upload. The original Go change preserves the accepted POST's failure/no-replay behavior; no matcher framework, new method or path normalization is introduced.
 
+[LiteLLM's per-attempt deployment hooks](https://docs.litellm.ai/docs/observability/custom_callback#per-attempt-deployment-hooks) separate failed and successful attempts from a logical request's eventual success. NexusAPI uses its own persisted attempt outcome to verify console connector tests: the selected connection must have a completed attempt for that exact tenant/request. A pre-dispatch capacity failure followed by another connection's success returns the existing selection conflict. Real attribution and unpriced usage remain attached to the actual completion; no inference replay or callback system is added.
+
 ## External contracts
 
 - [Stripe Checkout fulfillment](https://docs.stripe.com/checkout/fulfillment): complete orders via verified server callbacks, not browser redirects.

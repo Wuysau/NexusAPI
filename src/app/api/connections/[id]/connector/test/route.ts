@@ -45,7 +45,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       if (!response.ok)
         return apiError(response.status, 'connector_test_failed', '网关测试调用失败；请检查连接、模型和项目授权')
       const actual = await pool.query(
-        'SELECT id FROM attempts WHERE request_id=$1 AND tenant_id=$2 AND connection_id=$3',
+        "SELECT id FROM attempts WHERE request_id=$1 AND tenant_id=$2 AND connection_id=$3 AND status='completed'",
         [response.headers.get('x-request-id'), ctx.tenantId, id],
       )
       if (!actual.rowCount)
