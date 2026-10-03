@@ -138,16 +138,17 @@ export async function createSession(input: CreateSessionInput): Promise<{
 
 /**
  * Verify a presented token. Returns null for unknown, revoked or expired
- * sessions — the caller must not distinguish these to the client.
+ * sessions, or an inactive/deleted user — callers must not distinguish these.
  */
 export async function verifySession(token: string | null | undefined): Promise<VerifiedSession | null> {
   if (!token || token.length < 32) return null
   const tokenHash = sha256hex(token)
 
   const result = await pool.query(
-    `SELECT id, user_id, token_hash, expires_at, revoked_at, created_at
-     FROM sessions
-     WHERE token_hash = $1
+    `SELECT s.id, s.user_id, s.token_hash, s.expires_at, s.revoked_at, s.created_at
+     FROM sessions s
+     JOIN users u ON u.id = s.user_id
+     WHERE s.token_hash = $1 AND u.status = 'active' AND u.deleted_at IS NULL
      LIMIT 1`,
     [tokenHash],
   )
