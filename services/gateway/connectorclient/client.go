@@ -339,7 +339,7 @@ func (c *Client) execute(parent context.Context, token string, j job) {
 	}()
 	result, e := c.request(uploadCtx, "POST", "/connector/result/"+j.ID, token, pr)
 	if e == nil {
-		_, _ = io.Copy(io.Discard, io.LimitReader(result.Body, 1024))
+		// The acknowledgment body is unused; draining it can retain a completed worker.
 		result.Body.Close()
 	}
 	cancel()
