@@ -98,6 +98,8 @@ The same action-and-resource check now covers the legacy project policy-preview 
 
 The existing bounded-dependency design also applies to connector singleton acquisition. [Installed pgx v5.7.6](https://github.com/jackc/pgx/blob/v5.7.6/pgconn/pgconn.go#L244-L260) uses the caller context when connect_timeout is omitted; a TCP peer that stops during PostgreSQL startup otherwise waits for process cancellation. NexusAPI gives Connect and the first advisory-lock query one two-second acquisition budget, while retaining the original process context for lifetime heartbeats. Synthetic real-protocol tests cover both stalled phases, caller cancellation, occupied-lock rejection and heartbeats beyond that deadline. The single-Gateway deployment restriction and fixed errors remain.
 
+[DataLoader v2.2.3's batch contract](https://github.com/graphql/dataloader/blob/v2.2.3/README.md#batch-function) requires results to match requested keys by position and keeps authorization-dependent caches scoped to one request. NexusAPI applies the batching and ordering principles directly in its existing PostgreSQL connector-state helper: sequential 32-scope reads, ordinal row mapping and no lasting cache or new dependency. Different Channels linked to one connection keep separate model approvals; scalar reads use the same projector. Native real-database checks preserve visible facts and reduce round trips for both management lists. The evidence is query-count reduction, not a measured deployment latency claim.
+
 ## External contracts
 
 - [Stripe Checkout fulfillment](https://docs.stripe.com/checkout/fulfillment): complete orders via verified server callbacks, not browser redirects.

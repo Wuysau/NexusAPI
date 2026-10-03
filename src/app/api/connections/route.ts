@@ -1,6 +1,6 @@
 import { pool } from '@/db'
 import { getSubscriptionProduct } from '@/lib/subscriptions/catalog'
-import { connectorState } from '@/lib/connectors/control'
+import { connectorStates } from '@/lib/connectors/control'
 import { resolveQuotaProject } from '@/lib/quota/access'
 import { connectionVisibility, observedVisibility, workspaceParams } from '@/lib/workspace/management'
 import { apiError, auditControlPlane, jsonOk, readJsonBody, requireContext, routeError } from '../_lib/control-plane'
@@ -32,10 +32,13 @@ export async function GET(req: Request) {
        ) observed ON true WHERE ${connectionVisibility} ORDER BY c.created_at DESC`,
       workspaceParams(ctx),
     )
-    const connections = await Promise.all(
-      result.rows.map(async (row) =>
-        row.mode === 'local_sidecar' ? { ...row, connector: await connectorState(ctx, row.id) } : row,
-      ),
+    const states = await connectorStates(
+      ctx,
+      result.rows.filter((row) => row.mode === 'local_sidecar').map((row) => ({ connectionId: row.id })),
+    )
+    let stateIndex = 0
+    const connections = result.rows.map((row) =>
+      row.mode === 'local_sidecar' ? { ...row, connector: states[stateIndex++] } : row,
     )
     return jsonOk({ connections })
   } catch (error) {

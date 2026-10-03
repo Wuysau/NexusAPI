@@ -352,36 +352,30 @@ function projectedReadyModels(reported: unknown, approvedLists: unknown): string
   return ready.filter((model) => approved.has(model))
 }
 
-export async function connectorState(ctx: ControlPlaneContext, id: string, channelId?: string) {
-  const row = (
-    await pool.query(
-      `SELECT c.id,c.revoked_at,c.project_id,c.capabilities->'models' models,
-    l.expires_at,l.last_heartbeat_at,l.transport_seen_at,l.ready_models,l.revoked_at lease_revoked_at,i.revoked_at identity_revoked_at,
-    p.status project_status,p.archived_at project_archived_at,o.status organization_status,o.deleted_at organization_deleted_at,
-    (SELECT jsonb_agg(ch.metadata->'models') FROM channels ch
-      JOIN provider_credentials pc ON pc.id=ch.provider_credential_id AND pc.tenant_id=ch.tenant_id AND pc.provider_id=ch.provider_id
-      JOIN providers provider ON provider.id=ch.provider_id AND provider.enabled=true
-      WHERE ch.tenant_id=c.tenant_id AND ch.metadata->>'connection_id'=c.id AND ch.enabled=true
-      AND ${connectorChatCapabilitySQL}
-      AND ch.metadata->>'transport'='local_sidecar' AND pc.enabled=true AND pc.organization_id=p.organization_id
-      AND ($6::text IS NULL OR ch.id=$6)) approved_model_lists
-    FROM owned_connections c LEFT JOIN connector_leases l ON l.connection_id=c.id AND l.tenant_id=c.tenant_id
-    LEFT JOIN connector_identities i ON i.id=l.connector_id
-    LEFT JOIN projects p ON p.id=c.project_id AND p.tenant_id=c.tenant_id
-    LEFT JOIN organizations o ON o.id=p.organization_id AND o.tenant_id=p.tenant_id
-    WHERE ${connectionVisibility} AND c.id=$5 AND c.mode='local_sidecar'`,
-      [...workspaceParams(ctx), id, channelId ?? null],
-    )
-  ).rows[0]
-  if (!row) throw new AuthzError('not_found', '本地连接不存在', 404)
+interface ConnectorStateRow {
+  request_index: number
+  id: string
+  revoked_at: Date | null
+  models: string[] | null
+  expires_at: Date | null
+  last_heartbeat_at: Date | null
+  transport_seen_at: Date | null
+  ready_models: unknown
+  lease_revoked_at: Date | null
+  identity_revoked_at: Date | null
+  project_status: string | null
+  project_archived_at: Date | null
+  organization_status: string | null
+  organization_deleted_at: Date | null
+  approved_model_lists: unknown
+}
+
+function projectConnectorState(row: ConnectorStateRow, now: number) {
   const active =
-    row.expires_at &&
-    new Date(row.expires_at).getTime() > Date.now() &&
-    !row.lease_revoked_at &&
-    !row.identity_revoked_at
-  const online = active && row.transport_seen_at && new Date(row.transport_seen_at).getTime() > Date.now() - 35_000
+    row.expires_at && new Date(row.expires_at).getTime() > now && !row.lease_revoked_at && !row.identity_revoked_at
+  const online = active && row.transport_seen_at && new Date(row.transport_seen_at).getTime() > now - 35_000
   return {
-    connectionId: id,
+    connectionId: row.id,
     models: row.models ?? [],
     readyModels:
       online &&
@@ -405,4 +399,53 @@ export async function connectorState(ctx: ControlPlaneContext, id: string, chann
     lastHeartbeatAt: row.last_heartbeat_at,
     transportSeenAt: row.transport_seen_at,
   }
+}
+
+export async function connectorStates(
+  ctx: ControlPlaneContext,
+  requests: readonly { connectionId: string; channelId?: string }[],
+) {
+  const states: ReturnType<typeof projectConnectorState>[] = []
+  // Bound each read and preserve separate approval scopes for repeated connection IDs.
+  for (let offset = 0; offset < requests.length; offset += 32) {
+    const batch = requests.slice(offset, offset + 32)
+    const result = await pool.query<ConnectorStateRow>(
+      `WITH requested AS (
+        SELECT * FROM unnest($5::text[],$6::text[]) WITH ORDINALITY AS input(connection_id,channel_id,request_index)
+      )
+      SELECT requested.request_index::int,c.id,c.revoked_at,c.capabilities->'models' models,
+    l.expires_at,l.last_heartbeat_at,l.transport_seen_at,l.ready_models,l.revoked_at lease_revoked_at,i.revoked_at identity_revoked_at,
+    p.status project_status,p.archived_at project_archived_at,o.status organization_status,o.deleted_at organization_deleted_at,
+    (SELECT jsonb_agg(ch.metadata->'models') FROM channels ch
+      JOIN provider_credentials pc ON pc.id=ch.provider_credential_id AND pc.tenant_id=ch.tenant_id AND pc.provider_id=ch.provider_id
+      JOIN providers provider ON provider.id=ch.provider_id AND provider.enabled=true
+      WHERE ch.tenant_id=c.tenant_id AND ch.metadata->>'connection_id'=c.id AND ch.enabled=true
+      AND ${connectorChatCapabilitySQL}
+      AND ch.metadata->>'transport'='local_sidecar' AND pc.enabled=true AND pc.organization_id=p.organization_id
+      AND (requested.channel_id IS NULL OR ch.id=requested.channel_id)) approved_model_lists
+    FROM requested JOIN owned_connections c ON c.id=requested.connection_id
+    LEFT JOIN connector_leases l ON l.connection_id=c.id AND l.tenant_id=c.tenant_id
+    LEFT JOIN connector_identities i ON i.id=l.connector_id
+    LEFT JOIN projects p ON p.id=c.project_id AND p.tenant_id=c.tenant_id
+    LEFT JOIN organizations o ON o.id=p.organization_id AND o.tenant_id=p.tenant_id
+    WHERE ${connectionVisibility} AND c.mode='local_sidecar'`,
+      [
+        ...workspaceParams(ctx),
+        batch.map((request) => request.connectionId),
+        batch.map((request) => request.channelId ?? null),
+      ],
+    )
+    const rows = new Map(result.rows.map((row) => [row.request_index, row]))
+    const now = Date.now()
+    for (let index = 0; index < batch.length; index++) {
+      const row = rows.get(index + 1)
+      if (!row) throw new AuthzError('not_found', '本地连接不存在', 404)
+      states.push(projectConnectorState(row, now))
+    }
+  }
+  return states
+}
+
+export async function connectorState(ctx: ControlPlaneContext, id: string, channelId?: string) {
+  return (await connectorStates(ctx, [{ connectionId: id, channelId }]))[0]
 }
