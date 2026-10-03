@@ -1,11 +1,11 @@
 import { pool } from '@/db'
 import { AuthzError } from '@/lib/auth/capabilities'
 import { connectionVisibility, workspaceParams } from '@/lib/workspace/management'
-import { auditControlPlane, jsonOk, requireContext, routeError } from '../../_lib/control-plane'
+import { auditControlPlane, jsonOk, requireHighRiskContext, routeError } from '../../_lib/control-plane'
 export const dynamic = 'force-dynamic'
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const ctx = await requireContext(req, 'credential:disable')
+    const ctx = await requireHighRiskContext(req, 'credential:disable')
     const { id } = await params
     const client = await pool.connect()
     let connection: { id: string; status: string; revoked_at: Date }

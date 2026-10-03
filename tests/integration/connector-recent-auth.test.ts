@@ -5,7 +5,8 @@ import { hashPassword } from '@/lib/crypto'
 import { createSession, SESSION_COOKIE } from '@/lib/auth/sessions'
 import { authorizeConnector } from '@/lib/connectors/control'
 import { POST as createConnection } from '@/app/api/connections/route'
-import { POST as configure } from '@/app/api/connections/[id]/connector/route'
+import { PATCH as revokePatch, DELETE as revokeDelete } from '@/app/api/connections/[id]/route'
+import { POST as configure, GET as connectorStateRoute } from '@/app/api/connections/[id]/connector/route'
 import { POST as pair } from '@/app/api/connector/pair/route'
 import { POST as lease } from '@/app/api/connector/lease/route'
 import { GET as sessionRoute } from '@/app/api/auth/session/route'
@@ -167,7 +168,7 @@ async function healthy(id: string) {
   expect(leased.status).toBe(200)
   const result = await leased.json()
   await authorizeConnector({ leaseToken: result.leaseToken, transport: true })
-  return configured
+  return { ...configured, identityCredential: identity.credential as string, leaseToken: result.leaseToken as string }
 }
 async function stale() {
   await pool.query(`UPDATE sessions SET created_at=now()-interval '16 minutes' WHERE id=$1`, [caller.sessionId])
@@ -189,7 +190,9 @@ async function observe(name: string, before: Facts, response: Response, extra: R
   const observation = {
     name,
     status: response.status,
-    code: ['forbidden', 'csrf_failed', 'unauthenticated'].includes(body?.error?.code) ? body.error.code : null,
+    code: ['forbidden', 'csrf_failed', 'unauthenticated', 'tenant_isolation'].includes(body?.error?.code)
+      ? body.error.code
+      : null,
     before: counts(before),
     after: counts(after),
     unchanged: isDeepStrictEqual(after, before),
@@ -325,4 +328,212 @@ it('actual reauthentication replaces the stale session and permits one new pairi
   expect(response.status).toBe(200)
   expect(observation.successfulPairingAuditDelta).toBe(1)
   expect(after.connector_pairings.length).toBe(1)
+})
+
+const revocationMethods = ['PATCH', 'DELETE'] as const
+type RevocationMethod = (typeof revocationMethods)[number]
+const revocationAudits = (value: Facts) =>
+  value.audit_events.filter((row) => row.action === 'connection.revoked').length
+const revokeRequest = (method: RevocationMethod, id: string, as = caller, csrf = true) =>
+  (method === 'PATCH' ? revokePatch : revokeDelete)(
+    request(`/api/connections/${id}`, method, undefined, as, csrf),
+    params(id),
+  )
+
+async function waitForCsrfAudit(expected: number) {
+  const deadline = Date.now() + 2000
+  while (true) {
+    const count = Number(
+      (await pool.query(`SELECT count(*) AS count FROM audit_events WHERE action='csrf.rejected'`)).rows[0].count,
+    )
+    if (count === expected) return
+    expect(Date.now() < deadline, 'Rejected CSRF must append its existing security audit').toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+}
+
+async function revokedLifecycle(id: string, active: Awaited<ReturnType<typeof healthy>>, before: Facts, after: Facts) {
+  const connection = after.owned_connections.find((row) => row.id === id)
+  expect(connection?.status).toBe('revoked')
+  expect(connection?.revoked_at !== null).toBe(true)
+  expect(after.channels.find((row) => row.id === active.channelId)?.enabled).toBe(false)
+  const identities = after.connector_identities.filter((row) => row.connection_id === id)
+  const leases = after.connector_leases.filter((row) => row.connection_id === id)
+  expect(identities.length).toBe(1)
+  expect(leases.length).toBe(1)
+  expect(identities.every((row) => row.revoked_at !== null)).toBe(true)
+  expect(leases.every((row) => row.revoked_at !== null)).toBe(true)
+  expect(after.connector_pairings.some((row) => row.connection_id === id)).toBe(false)
+  expect(after.connector_identities.length).toBe(before.connector_identities.length)
+  expect(after.connector_leases.length).toBe(before.connector_leases.length)
+  expect(after.connector_pairings.length).toBe(before.connector_pairings.length - 1)
+  unchanged(
+    after.provider_credentials,
+    before.provider_credentials,
+    'Revocation preserves historical accounting credentials',
+  )
+  const mutable = [
+    'owned_connections',
+    'channels',
+    'connector_identities',
+    'connector_leases',
+    'connector_pairings',
+    'audit_events',
+  ]
+  for (const table of tables.filter((table) => !mutable.includes(table)))
+    unchanged(after[table], before[table], 'Revocation preserves unrelated complete facts')
+  const state = await connectorStateRoute(request(`/api/connections/${id}/connector`), params(id))
+  expect(state.status).toBe(200)
+  const projection = await state.json()
+  expect(projection.state).toBe('revoked')
+  expect(projection.readyModels).toEqual([])
+  const deniedIdentity = await lease(
+    runtime('/api/connector/lease', active.identityCredential, { leaseToken: active.leaseToken, readyModels: models }),
+  )
+  expect(deniedIdentity.status).toBe(401)
+  expect((await deniedIdentity.json()).error?.code).toBe('connector_unauthorized')
+  let deniedLease = false
+  try {
+    await authorizeConnector({ leaseToken: active.leaseToken, transport: true })
+  } catch (error) {
+    deniedLease = typeof error === 'object' && error !== null && 'status' in error && error.status === 401
+  }
+  expect(deniedLease, 'Revoked lease must not authorize transport').toBe(true)
+}
+
+it.each(revocationMethods)(
+  'rejects stale-session %s revocation before connector facts and successful audits change',
+  async (method) => {
+    const id = await create()
+    await healthy(id)
+    const session = await stale()
+    const before = await facts()
+    expect(before.connector_identities.some((row) => row.connection_id === id && row.revoked_at === null)).toBe(true)
+    expect(
+      before.connector_leases.some(
+        (row) => row.connection_id === id && row.revoked_at === null && row.transport_seen_at !== null,
+      ),
+    ).toBe(true)
+    const response = await revokeRequest(method, id)
+    const after = await facts()
+    const { observation } = await observe(`stale_revoke_${method}`, before, response, {
+      session,
+      successfulRevocationAuditDelta: revocationAudits(after) - revocationAudits(before),
+      connectionRevoked: after.owned_connections.find((row) => row.id === id)?.status === 'revoked',
+      identitiesRevoked: after.connector_identities
+        .filter((row) => row.connection_id === id)
+        .every((row) => row.revoked_at !== null),
+      leasesRevoked: after.connector_leases
+        .filter((row) => row.connection_id === id)
+        .every((row) => row.revoked_at !== null),
+      pairingsRemoved: !after.connector_pairings.some((row) => row.connection_id === id),
+      channelsDisabled: after.channels.every((row) => row.enabled === false),
+    })
+    expect(response.status).toBe(401)
+    expect(observation.code).toBe('forbidden')
+    expect(revocationAudits(after) - revocationAudits(before)).toBe(0)
+    unchanged(after, before, 'Stale revocation preserves complete facts and successful audit')
+  },
+)
+
+it.each(revocationMethods)(
+  'allows fresh %s revocation once and invalidates the actual paired identity and lease',
+  async (method) => {
+    const id = await create()
+    const active = await healthy(id)
+    const before = await facts()
+    const response = await revokeRequest(method, id)
+    const { after } = await observe(`fresh_revoke_${method}`, before, response)
+    expect(response.status).toBe(200)
+    expect(revocationAudits(after) - revocationAudits(before)).toBe(1)
+    await revokedLifecycle(id, active, before, after)
+    const repeatedBefore = await facts()
+    const repeated = await revokeRequest(method, id)
+    expect(repeated.status).toBe(404)
+    expect((await repeated.json()).error?.code).toBe('tenant_isolation')
+    const repeatedAfter = await facts()
+    expect(revocationAudits(repeatedAfter) - revocationAudits(repeatedBefore)).toBe(0)
+    unchanged(repeatedAfter, repeatedBefore, 'Repeated revocation preserves terminal history')
+  },
+)
+
+it('actual reauthentication permits both revocation methods with a new fresh session', async () => {
+  for (const method of revocationMethods) {
+    const session = await createSession({ userId: user })
+    caller = { cookie: `${SESSION_COOKIE}=${session.token}`, csrf: 'reauth-csrf', sessionId: session.session.id }
+    const id = await create()
+    const active = await healthy(id)
+    await stale()
+    const previous = caller
+    const reauthenticated = await reauthRoute(request('/api/auth/reauth', 'POST', { password }))
+    expect(reauthenticated.status).toBe(200)
+    const body = await reauthenticated.json()
+    expect(body.freshAuth).toBe(true)
+    const issuedCookie = reauthenticated.headers.getSetCookie().find((value) => value.startsWith(`${SESSION_COOKIE}=`))
+    expect(typeof issuedCookie === 'string').toBe(true)
+    caller = { cookie: issuedCookie!.split(';')[0], csrf: body.csrfToken, sessionId: '' }
+    expect(
+      (await (await sessionRoute(request('/api/auth/session', 'GET', undefined, previous))).json()).authenticated,
+    ).toBe(false)
+    const before = await facts()
+    const response = await revokeRequest(method, id)
+    const { after } = await observe(`reauth_revoke_${method}`, before, response, {
+      oldSessionRejected: true,
+      newSessionFresh: true,
+    })
+    expect(response.status).toBe(200)
+    expect(revocationAudits(after) - revocationAudits(before)).toBe(1)
+    await revokedLifecycle(id, active, before, after)
+  }
+})
+
+it('preserves revocation capability, CSRF and unrelated tenant or organization visibility guards', async () => {
+  const id = await create()
+  await healthy(id)
+  // Canonical organizations have one tenant each; the foreign org is a valid distinct tenant.
+  await pool.query(`INSERT INTO organizations(id,tenant_id,name,slug) VALUES
+    ('revocation-other-tenant-org','revocation-other-tenant','Other synthetic tenant','revocation-other-tenant-org')`)
+  await pool.query(
+    `INSERT INTO users(id,email,password_hash) VALUES('revocation-other-user','revocation-other@example.invalid',$1)`,
+    [hashPassword(password)],
+  )
+  await pool.query(`INSERT INTO organization_memberships(organization_id,tenant_id,user_id,role) VALUES
+    ('revocation-other-tenant-org','revocation-other-tenant','revocation-other-user','admin')`)
+  await pool.query(`INSERT INTO projects(id,tenant_id,organization_id,name) VALUES
+    ('revocation-other-tenant-project','revocation-other-tenant','revocation-other-tenant-org','Other tenant project')`)
+  await pool.query(`INSERT INTO owned_connections(id,tenant_id,owner_user_id,project_id,provider,mode) VALUES
+    ('revocation-other-tenant-connection','revocation-other-tenant','revocation-other-user','revocation-other-tenant-project','ollama','local_sidecar')`)
+  for (const method of revocationMethods) {
+    const before = await facts()
+    const csrfCount = before.audit_events.filter((row) => row.action === 'csrf.rejected').length
+    const csrf = await revokeRequest(method, id, caller, false)
+    expect(csrf.status).toBe(403)
+    await waitForCsrfAudit(csrfCount + 1)
+    const csrfResult = await observe(`revoke_csrf_${method}`, before, csrf)
+    expect(csrfResult.observation.code).toBe('csrf_failed')
+    expect(revocationAudits(csrfResult.after) - revocationAudits(before)).toBe(0)
+    unchanged(withoutAudit(csrfResult.after), withoutAudit(before), 'CSRF denial preserves revocation business facts')
+    await pool.query(`UPDATE organization_memberships SET role='viewer' WHERE user_id=$1`, [user])
+    const viewerBefore = await facts()
+    const viewer = await revokeRequest(method, id)
+    const viewerResult = await observe(`revoke_capability_${method}`, viewerBefore, viewer)
+    expect(viewer.status).toBe(403)
+    expect(viewerResult.observation.code).toBe('forbidden')
+    unchanged(viewerResult.after, viewerBefore, 'Capability denial preserves revocation facts and audit')
+    // This role has credential:disable, but owns no project membership. Administrators retain their legitimate org access.
+    await pool.query(`UPDATE organization_memberships SET role='developer' WHERE user_id=$1`, [user])
+    const projectBefore = await facts()
+    const projectDenied = await revokeRequest(method, id)
+    const projectResult = await observe(`revoke_project_visibility_${method}`, projectBefore, projectDenied)
+    expect(projectDenied.status).toBe(404)
+    expect(projectResult.observation.code).toBe('tenant_isolation')
+    unchanged(projectResult.after, projectBefore, 'An unauthorized ordinary project actor preserves all facts')
+    await pool.query(`UPDATE organization_memberships SET role='admin' WHERE user_id=$1`, [user])
+    const foreignBefore = await facts()
+    const rejected = await revokeRequest(method, 'revocation-other-tenant-connection')
+    const foreignResult = await observe(`revoke_visibility_${method}`, foreignBefore, rejected)
+    expect(rejected.status).toBe(404)
+    expect(foreignResult.observation.code).toBe('tenant_isolation')
+    unchanged(foreignResult.after, foreignBefore, 'Unrelated tenant or org denial preserves all facts and audit')
+  }
 })
