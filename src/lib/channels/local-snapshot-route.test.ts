@@ -127,11 +127,53 @@ it('publishes every configured local model for gateway routing and model selecti
   expect(body.bundle.models.map((m: { id: string }) => m.id)).toEqual(['saved/fast', 'saved/model'])
 })
 
-it('rejects a local model list that no longer matches the credential-bound primary model', async () => {
+it.each([true, false])('rejects a mismatched local model binding even when credential enabled=%s', async (enabled) => {
   query.mockImplementation(async (sql: string) => ({
     rows: sql.includes('FROM channels c')
-      ? [savedChannel({ metadata: { ...savedChannel().metadata, models: ['unexpected/model', 'saved/model'] } })]
+      ? [
+          savedChannel({
+            credential_enabled: enabled,
+            metadata: { ...savedChannel().metadata, models: ['unexpected/model', 'saved/model'] },
+          }),
+        ]
       : [],
+  }))
+  expect((await GET(request('?tenant_id=tenant-a'))).status).toBe(500)
+})
+
+it('omits a valid disabled credential while signing the healthy local channel and its configured model', async () => {
+  query.mockImplementation(async (sql: string) => ({
+    rows: sql.includes('FROM channels c')
+      ? [
+          savedChannel({ credential_enabled: false }),
+          savedChannel({
+            id: 'healthy-channel',
+            credential_id: 'healthy-credential',
+            connection_id: 'healthy-connection',
+            connection_credential_ref: 'healthy-credential',
+            metadata: {
+              ...savedChannel().metadata,
+              connection_id: 'healthy-connection',
+              model: 'healthy/model',
+            },
+          }),
+        ]
+      : [],
+  }))
+  const response = await GET(request('?tenant_id=tenant-a'))
+  expect(response.status).toBe(200)
+  const body = await response.json()
+  expect(body.bundle.channels.map((c: { id: string }) => c.id)).toEqual(['healthy-channel'])
+  expect(body.bundle.models.map((m: { id: string }) => m.id)).toEqual(['healthy/model'])
+  expect(body.bundle.keys).toEqual([])
+  expect(body.signature).toBe(
+    createHmac('sha256', snapshotSigningKeyring().current.key).update(canonicalJson(body.bundle)).digest('hex'),
+  )
+})
+
+it.each([null, undefined, 0, 'false'])('refuses an invalid credential enabled state: %s', async (enabled) => {
+  query.mockImplementation(async (sql: string) => ({
+    rows: sql.includes('FROM channels c') ? [savedChannel({ credential_enabled: enabled })] : [],
   }))
   expect((await GET(request('?tenant_id=tenant-a'))).status).toBe(500)
 })
@@ -143,10 +185,31 @@ it.each([
   { connection_revoked_at: new Date() },
   { connection_provider: 'another-provider' },
   { connection_mode: 'subscription_interactive' },
-  { credential_enabled: false },
 ])('refuses to sign invalid local identity: %o', async (over) => {
   query.mockImplementation(async (sql: string) => ({
     rows: sql.includes('FROM channels c') ? [savedChannel(over)] : [],
+  }))
+  const response = await GET(request('?tenant_id=tenant-a'))
+  expect(response.status).toBe(500)
+  expect(await response.text()).not.toContain('signature')
+})
+
+it.each([
+  { connection_tenant_id: 'tenant-b' },
+  { credential_org_tenant_id: 'tenant-b' },
+  { connection_credential_ref: 'another-credential' },
+  { connection_revoked_at: new Date() },
+  { connection_provider: 'another-provider' },
+  { connection_mode: 'subscription_interactive' },
+  { metadata: { ...savedChannel().metadata, credential_version: undefined } },
+  { metadata: { ...savedChannel().metadata, credential_version: 0 } },
+  { metadata: { ...savedChannel().metadata, credential_version: Number.MAX_SAFE_INTEGER + 1 } },
+  { metadata: { ...savedChannel().metadata, credential_version: '1' } },
+  { capabilities: 'chat' },
+  { capabilities: {} },
+])('still refuses invalid local configuration on a disabled credential: %o', async (over) => {
+  query.mockImplementation(async (sql: string) => ({
+    rows: sql.includes('FROM channels c') ? [savedChannel({ ...over, credential_enabled: false })] : [],
   }))
   const response = await GET(request('?tenant_id=tenant-a'))
   expect(response.status).toBe(500)

@@ -301,7 +301,11 @@ async function loadChannels(tenantId: string | null, localOnly = false) {
           row.credential_tenant_id === null &&
           row.credential_organization_id === null &&
           row.credential_platform_managed === true
-        if ((!owned && !managed) || row.credential_provider_id !== row.provider_id || !row.credential_enabled)
+        if (
+          (!owned && !managed) ||
+          row.credential_provider_id !== row.provider_id ||
+          typeof row.credential_enabled !== 'boolean'
+        )
           throw new Error('Invalid channel credential scope')
       }
       if (Object.hasOwn(metadata, 'connection_id')) {
@@ -328,6 +332,18 @@ async function loadChannels(tenantId: string | null, localOnly = false) {
           row.connection_credential_ref !== row.credential_id)
       )
         throw new Error('Invalid local channel binding')
+      // Preserve the local builder's configuration checks even for an omitted
+      // candidate. Ordinary published configuration retains its existing shape.
+      if (
+        localOnly &&
+        (typeof metadata.credential_version !== 'number' ||
+          !Number.isSafeInteger(metadata.credential_version) ||
+          metadata.credential_version < 1 ||
+          !Array.isArray(row.capabilities ?? []))
+      )
+        throw new Error('Invalid local channel configuration')
+      // Availability is considered only after identity and binding validation.
+      if (row.credential_id && row.credential_enabled === false) return null
       return {
         ...(localOnly ? { tenant_id: row.tenant_id } : {}),
         id: row.id,
@@ -360,6 +376,7 @@ async function loadChannels(tenantId: string | null, localOnly = false) {
         enabled: true,
       }
     })
+    .filter((channel) => channel !== null)
 }
 
 /** Published models plus their aliases. */
