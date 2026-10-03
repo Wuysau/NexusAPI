@@ -232,7 +232,7 @@ func TestBuiltinRegistryReportsRequestValidationVersions(t *testing.T) {
 		t.Fatal(err)
 	}
 	versions := registry.Versions()
-	want := map[string]string{"anthropic": "1.0.7", "gemini": "1.0.5", "openai": "1.0.4", "deepseek": "1.0.4", "qwen": "1.0.4"}
+	want := map[string]string{"anthropic": "1.0.7", "gemini": "1.0.5", "openai": "1.0.5", "deepseek": "1.0.5", "qwen": "1.0.5"}
 	if !reflect.DeepEqual(versions, want) {
 		t.Fatalf("observable adapter versions = %v, want %v", versions, want)
 	}
