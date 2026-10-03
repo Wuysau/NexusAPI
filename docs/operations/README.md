@@ -14,7 +14,7 @@ See [slo.md](./slo.md) for service-level objectives, error-budget policy and ale
 |---|---|---|
 | [release.md](./release.md) | Deploying a new version | `scripts/ops/release.sh` |
 | [rollback.md](./rollback.md) | Reverting a deployment | `scripts/ops/rollback.sh` |
-| [key-rotation.md](./key-rotation.md) | Rotating credentials | `scripts/ops/rotate-key.sh` |
+| [key-rotation.md](./key-rotation.md) | Rotating credentials through their supported owners | — |
 | [incident.md](./incident.md) | Active incident | — |
 | [backup-restore.md](./backup-restore.md) | PITR recovery drill | `scripts/ops/pitr-verify.mjs` |
 | [reconciliation.md](./reconciliation.md) | Billing variance | `scripts/ops/reconcile-check.mjs` |
