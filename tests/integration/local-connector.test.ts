@@ -200,7 +200,7 @@ beforeAll(async () => {
     void relayRoute(req, res)
   })
   controlURL = (await listen(control)).replace('http:', 'https:')
-  upstream = createServer(async (req, res) => {
+  upstream = createTLSServer({ cert, key: tlsKey }, async (req, res) => {
     if (req.url === '/v1/models') {
       res.setHeader('content-type', 'application/json')
       res.end(JSON.stringify({ data: models.map((id) => ({ id })) }))
@@ -362,7 +362,7 @@ beforeAll(async () => {
     finished = true
     res.end('data: [DONE]\n\n')
   })
-  upstreamURL = await listen(upstream)
+  upstreamURL = (await listen(upstream)).replace('http:', 'https:')
 }, 60000)
 afterAll(async () => {
   await kill(connector)

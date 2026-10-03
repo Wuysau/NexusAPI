@@ -144,7 +144,7 @@ func New(config Config) (*Client, error) {
 	}
 	noRedirect := func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return &Client{config: config, remote: &http.Client{Transport: &http.Transport{TLSClientConfig: tlsConfig, ForceAttemptHTTP2: true, ResponseHeaderTimeout: 35 * time.Second, IdleConnTimeout: 60 * time.Second}, CheckRedirect: noRedirect},
-		local: &http.Client{Transport: &http.Transport{Proxy: nil, ResponseHeaderTimeout: time.Duration(config.UpstreamTimeoutSeconds) * time.Second}, CheckRedirect: noRedirect}}, nil
+		local: &http.Client{Transport: &http.Transport{Proxy: nil, TLSClientConfig: tlsConfig.Clone(), ForceAttemptHTTP2: true, ResponseHeaderTimeout: time.Duration(config.UpstreamTimeoutSeconds) * time.Second}, CheckRedirect: noRedirect}}, nil
 }
 func (c *Client) remoteJSON(ctx context.Context, path, token string, body any, out any) error {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
