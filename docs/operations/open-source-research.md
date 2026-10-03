@@ -104,6 +104,8 @@ The existing bounded-dependency design also applies to connector singleton acqui
 
 [Grafana v11.6.0's service-account token routes](https://github.com/grafana/grafana/blob/v11.6.0/pkg/services/serviceaccounts/api/api.go#L52-L63) combine the token write action with the selected account scope. NexusAPI applies the same action-and-resource principle before project-bound API key generation, using its existing managed-project resolver. A developer who cannot access a private project cannot mint a key attributed to it. Native HTTP/real-PostgreSQL tests prove that the former hidden-project issuance changes to fixed refusal without key or success-audit facts, while authorized and legacy unbound issuance remains. The check is scoped to the creation request; no new runtime membership policy or historical key revocation is inferred.
 
+[Vault v1.18.5 Transit rotation](https://github.com/hashicorp/vault/blob/v1.18.5/builtin/logical/transit/path_rotate.go#L84-L89) separates new encryption versions from retained older decryption. NexusAPI's operational guidance now preserves that distinction alongside independent enrollment/registry publication and later retirement. Production CP crypto remains unavailable. The obsolete restart-and-health script now returns a fixed unsupported result; health reachability cannot establish a rotation. Isolated actual script checks verify its nonzero result without exposing credential/environment files or a service-control socket. No CP rewrap feature or operational rotation is claimed.
+
 ## External contracts
 
 - [Stripe Checkout fulfillment](https://docs.stripe.com/checkout/fulfillment): complete orders via verified server callbacks, not browser redirects.
