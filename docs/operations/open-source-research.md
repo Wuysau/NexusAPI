@@ -66,6 +66,8 @@ That diagnostic-metadata separation also protects terminal persistence from valu
 
 [Drizzle's migration generator](https://orm.drizzle.team/docs/drizzle-kit-generate) compares schema snapshots, while its [metadata check](https://orm.drizzle.team/docs/drizzle-kit-check) checks migration history. NexusAPI applies that distinction to manual schema migrations: append the current generator baseline without rewriting published SQL, and test real unchanged generation against an isolated credential-free copy. A deliberate isolated schema addition remains detectable. The installed Kit 0.31.10 defines the tested file layout and custom-migration behavior; this check does not replace canonical SQL migration tests or live-database introspection.
 
+[Drizzle's named constraints](https://orm.drizzle.team/docs/indexes-constraints) also identify the objects that later generated DDL changes. NexusAPI aligns six manually created connector constraint names with its existing ORM through an append-only PostgreSQL rename migration. Populated upgrade checks preserve object identities and enforcement, while real generator changes execute in rolled-back fixture transactions. [PostgreSQL rename semantics](https://www.postgresql.org/docs/17/sql-altertable.html) preserve data and rename UNIQUE backing indexes; the corresponding table locks remain an explicit deployment consideration.
+
 ## External contracts
 
 - [Stripe Checkout fulfillment](https://docs.stripe.com/checkout/fulfillment): complete orders via verified server callbacks, not browser redirects.
