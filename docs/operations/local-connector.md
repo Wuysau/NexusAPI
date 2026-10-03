@@ -131,13 +131,15 @@ Windows 使用 `./nexus-connector.exe check --config connector.json`。无需配
 ## 3. 创建、配对、启动
 
 1. 管理员在控制台创建项目，再在“连接”添加 **本地连接器**，选择该项目。供应商为 Ollama。
-2. 打开“配置与详情”，填写上述多个模型 ID，点击“保存模型并生成一次性配对令牌”。服务端只保存令牌散列；令牌有效期 10 分钟，只显示一次，兑换后不可重用。
+2. 打开“配置与详情”，填写上述多个模型 ID，点击“保存模型并生成一次性配对令牌”。首次签发和后续轮换都沿用凭据轮换的近期认证规则：本次控制台认证超过 15 分钟时，先在弹窗重新验证登录密码，再重试原操作。服务端只保存令牌散列；令牌有效期 10 分钟，只显示一次，兑换后不可重用。
 3. 在本机运行以下命令，并在提示后粘贴令牌，不把它放进命令行参数或脚本：
 
 ```sh
 ./nexus-connector pair --config connector.json --identity connector-identity.json
 ./nexus-connector run --config connector.json --identity connector-identity.json
 ```
+
+近期认证不足时，签发接口返回 `401 forbidden`，不会生成令牌、改动获批模型或撤销现有连接器身份与租约。重新验证会替换当前控制台会话；成功后的原操作才签发令牌并轮换连接器身份。取消验证或关闭连接器面板后，待处理操作不会再次提交。直接调用管理接口时，也须使用经过近期认证的控制台会话和有效 CSRF 令牌；运行中的连接器续租及项目 API Key 调用仍使用各自既有的身份授权。
 
 身份文件包含该连接器的长期身份凭据，应保存在当前用户私有目录。Unix 新文件权限为 `0600`；Windows 使用用户个人目录及限制为当前用户的 ACL。不要提交或共享该文件。CLI 不读取 Codex、Claude Code 的任何订阅认证文件。
 
@@ -249,6 +251,15 @@ node --env-file=/path/to/disposable-configuration-test.env node_modules/vitest/v
 ```
 
 它覆盖真实删除/重配、共享凭据停用、无效绑定、正常轮换、暂停恢复，以及等待并发凭据停用后拒绝配置；失败前后比较连接、身份、租约、审计和记账事实。
+
+近期认证测试同样会清空专用测试库。原生路由测试只接受回环端口 `55439` 上的 `connector_test_reauth_round54` 或现有 CI 库 `convergence_ci15`；浏览器测试只接受独立的 `connector_test_reauth_browser_round54`。URL 不得包含查询或片段。分别准备两个专用环境文件，勿共用正在执行的测试库：
+
+```sh
+node --env-file=/path/to/disposable-reauth-test.env node_modules/vitest/vitest.mjs run tests/integration/connector-recent-auth.test.ts --no-file-parallelism
+node --env-file=/path/to/disposable-reauth-browser-test.env tests/e2e/local-connector-reauth.mjs
+```
+
+原生测试验证过期认证不会签发或轮换凭据、真实会话替换及 CSRF/权限拒绝。浏览器测试使用真实 Next 页面和认证接口，检查取消、按原模型重试一次，以及关闭或替换面板后的旧回调；它隔离 Next 输出并关闭自建进程，不运行 Go 推理。
 
 本地连接器端到端测试 `local-connector.test.ts` 调用真实控制面路由与数据库，以不同进程运行编译出的 Gateway 和 CLI，经不同监听端口访问由专用私有 CA 保护的 HTTPS mock Ollama，检查配对前诊断、配对后的健康检查、模型发现、普通及流式响应、请求归因及 Worker 未定价处理。检查命令前后核对连接、令牌、身份、租约和计量事实不变，且检查成功的未启动连接器仍不出现在项目模型列表。Go 单元测试检查 TLS 信任、私有地址、重定向和协议边界。
 
