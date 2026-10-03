@@ -78,6 +78,8 @@ That diagnostic-metadata separation also protects terminal persistence from valu
 
 [LiteLLM's per-attempt deployment hooks](https://docs.litellm.ai/docs/observability/custom_callback#per-attempt-deployment-hooks) separate failed and successful attempts from a logical request's eventual success. NexusAPI uses its own persisted attempt outcome to verify console connector tests: the selected connection must have a completed attempt for that exact tenant/request. A pre-dispatch capacity failure followed by another connection's success returns the existing selection conflict. Real attribution and unpriced usage remain attached to the actual completion; no inference replay or callback system is added.
 
+[Envoy's startup configuration validation](https://www.envoyproxy.io/docs/envoy/latest/operations/cli#cmdoption-mode) checks configuration before serving traffic. NexusAPI applies that early-validation principle to local connector models before pairing input, identity reservation or HTTP. The accepted alphabet and 200-character bound come from NexusAPI's existing Control Plane policy. Shared Go/TypeScript examples preserve compliant custom IDs and duplicate configuration behavior; invalid configuration cannot consume a pairing or create identity. No new validation command or general provider model restriction is introduced.
+
 ## External contracts
 
 - [Stripe Checkout fulfillment](https://docs.stripe.com/checkout/fulfillment): complete orders via verified server callbacks, not browser redirects.

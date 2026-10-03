@@ -16,6 +16,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -67,6 +68,9 @@ func localRetryAfterMillis(headers http.Header, now time.Time) int64 {
 
 var errRemote = errors.New("remote connector authorization or transport unavailable")
 
+// Local configuration must use the Control Plane's approved model-ID grammar.
+var modelIDPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$`)
+
 func (c *Config) Validate() error {
 	for _, raw := range []string{c.ControlURL, c.GatewayURL} {
 		u, e := url.Parse(raw)
@@ -99,7 +103,7 @@ func (c *Config) Validate() error {
 		return errors.New("explicit local model allowlist required")
 	}
 	for _, m := range c.Models {
-		if m == "" || len(m) > 200 || strings.ContainsAny(m, "\r\n\t ") {
+		if !modelIDPattern.MatchString(m) {
 			return errors.New("invalid model ID")
 		}
 	}

@@ -1,0 +1,82 @@
+{
+  "valid": [
+    {
+      "name": "simple",
+      "id": "fixture-model"
+    },
+    {
+      "name": "arbitrary_custom",
+      "id": "Org/model_v1.2:q4-K_M"
+    },
+    {
+      "name": "digit_prefix",
+      "id": "3custom-model"
+    },
+    {
+      "name": "single_character",
+      "id": "Z"
+    },
+    {
+      "name": "allowed_punctuation",
+      "id": "A._:/-B"
+    },
+    {
+      "name": "exact_200_bytes",
+      "id": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "leading_hyphen",
+      "id": "-fixture-model"
+    },
+    {
+      "name": "embedded_nul",
+      "id": "fixture\u0000model"
+    },
+    {
+      "name": "unicode",
+      "id": "模型:7b"
+    },
+    {
+      "name": "backslash",
+      "id": "Org\\model"
+    },
+    {
+      "name": "leading_underscore",
+      "id": "_fixture"
+    },
+    {
+      "name": "leading_slash",
+      "id": "/fixture"
+    },
+    {
+      "name": "leading_colon",
+      "id": ":fixture"
+    },
+    {
+      "name": "leading_dot",
+      "id": ".fixture"
+    },
+    {
+      "name": "embedded_control",
+      "id": "fixture\u0001model"
+    },
+    {
+      "name": "empty",
+      "id": ""
+    },
+    {
+      "name": "space",
+      "id": "fixture model"
+    },
+    {
+      "name": "newline",
+      "id": "fixture\nmodel"
+    },
+    {
+      "name": "over_200_bytes",
+      "id": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    }
+  ]
+}
