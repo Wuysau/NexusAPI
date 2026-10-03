@@ -940,12 +940,26 @@ it('projects connector readiness from current channel, provider, credential and 
           expect.soft(projected[0]?.status, mutation.name).toBe(mutation.resourceStatus)
           expect.soft(projected[0]?.health, mutation.name).toBe(mutation.expected.length ? 'healthy' : 'unknown')
         }
-        const listed = await gatewayFetch('/v1/models')
-        expect(listed.status, mutation.name).toBe(200)
-        expect(
-          (await listed.json()).data.map((model: { id: string }) => model.id),
-          mutation.name,
-        ).toEqual(mutation.expected)
+        const expectedModels = [...mutation.expected].sort()
+        let catalog: { status: number; modelIDs?: string[] } | undefined
+        const readCatalog = async () => {
+          const listed = await gatewayFetch('/v1/models')
+          const body = await listed.json()
+          catalog = {
+            status: listed.status,
+            modelIDs: Array.isArray(body.data) ? body.data.map((model: { id: string }) => model.id).sort() : undefined,
+          }
+          return listed.status === 200 && JSON.stringify(catalog.modelIDs) === JSON.stringify(expectedModels)
+        }
+        if (expectedModels.length) {
+          // Live authorization removes cached candidates immediately. A positive
+          // catalog also needs a snapshot that includes the restored candidates.
+          await waitFor(readCatalog)
+        } else {
+          await readCatalog()
+        }
+        expect(catalog?.status, mutation.name).toBe(200)
+        expect(catalog?.modelIDs, mutation.name).toEqual(expectedModels)
         expect(calls, mutation.name).toBe(beforeCalls)
       } finally {
         await db.query(`UPDATE ${mutation.table} SET ${mutation.field}=$1 WHERE id=$2`, [
@@ -968,7 +982,7 @@ it('projects connector readiness from current channel, provider, credential and 
   }
   await waitFor(async () => (await (await gatewayFetch('/v1/models')).json()).data?.length === 2)
   expect(calls).toBe(beforeCalls)
-})
+}, 30000)
 
 it('unions eligible models for a connection while projecting each channel resource independently', async () => {
   const channel = (await db.query(`SELECT * FROM channels WHERE metadata->>'connection_id'=$1`, [connectionId])).rows[0]

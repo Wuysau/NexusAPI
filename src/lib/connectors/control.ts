@@ -8,6 +8,9 @@ import { connectionVisibility, workspaceParams } from '@/lib/workspace/managemen
 export const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex')
 const secret = (prefix: string) => `${prefix}${randomBytes(32).toString('base64url')}`
 const denied = () => new AuthzError('connector_unauthorized', '连接器凭据、租约或授权无效', 401)
+// Shared by live authorization, management readiness and connector snapshots.
+// Public "chat" and legacy "text" grant Chat; object keys must not grant it.
+export const connectorChatCapabilitySQL = `jsonb_typeof(ch.capabilities)='array' AND (ch.capabilities ? 'chat' OR ch.capabilities ? 'text')`
 export function modelIDs(value: unknown): string[] {
   if (
     !Array.isArray(value) ||
@@ -82,7 +85,7 @@ export async function configureConnector(ctx: ControlPlaneContext, id: string, m
       channel = (
         await db.query(
           `INSERT INTO channels(tenant_id,provider_id,provider_credential_id,name,capabilities,metadata)
-        VALUES($1,$2,$3,'Ollama local connector','["text","streaming"]',$4::jsonb) RETURNING id,provider_credential_id`,
+        VALUES($1,$2,$3,'Ollama local connector','["chat"]',$4::jsonb) RETURNING id,provider_credential_id`,
           [
             ctx.tenantId,
             provider.id,
@@ -292,6 +295,7 @@ export async function authorizeConnector(input: ConnectorAuthorization) {
       JOIN providers provider ON provider.id=ch.provider_id AND provider.enabled=true
       JOIN downstream_api_keys k ON k.id=$4 AND k.tenant_id=ch.tenant_id AND k.organization_id=$5 AND k.project_id=$6
       WHERE ch.id=$1 AND ch.tenant_id=$2 AND ch.enabled=true AND ch.metadata->>'connection_id'=$3 AND ch.metadata->>'transport'='local_sidecar'
+      AND ${connectorChatCapabilitySQL}
       AND pc.enabled=true AND pc.organization_id=$5
       AND k.enabled=true AND k.revoked_at IS NULL AND k.deleted_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>now())
       AND jsonb_typeof(k.scopes)='array' AND (k.scopes ? '*' OR k.scopes ? $7)`,
@@ -358,6 +362,7 @@ export async function connectorState(ctx: ControlPlaneContext, id: string, chann
       JOIN provider_credentials pc ON pc.id=ch.provider_credential_id AND pc.tenant_id=ch.tenant_id AND pc.provider_id=ch.provider_id
       JOIN providers provider ON provider.id=ch.provider_id AND provider.enabled=true
       WHERE ch.tenant_id=c.tenant_id AND ch.metadata->>'connection_id'=c.id AND ch.enabled=true
+      AND ${connectorChatCapabilitySQL}
       AND ch.metadata->>'transport'='local_sidecar' AND pc.enabled=true AND pc.organization_id=p.organization_id
       AND ($6::text IS NULL OR ch.id=$6)) approved_model_lists
     FROM owned_connections c LEFT JOIN connector_leases l ON l.connection_id=c.id AND l.tenant_id=c.tenant_id

@@ -82,6 +82,8 @@ That diagnostic-metadata separation also protects terminal persistence from valu
 
 [Cloudflared's response cleanup](https://github.com/cloudflare/cloudflared/blob/f9676c585623c86c0a48dbb6ae80840b4c834718/proxy/proxy.go#L226-L270) ties response closure to request cancellation and requires interruptible request-body reads. NexusAPI also closes unused connector acknowledgment bodies immediately, then cancels local inference and joins its frame producer. Actual TLS HTTP/1 and HTTP/2 tests cover complete uploads, unfinished acknowledgments, early responses and worker reuse. The upload keeps its separate timeout so local failures can still be reported; no result replay is introduced. The [Go response contract](https://github.com/golang/go/blob/go1.24.0/src/net/http/response.go#L49-L60) permits losing HTTP/1 connection reuse after an unread nonempty error body.
 
+[LiteLLM's model access](https://docs.litellm.ai/docs/proxy/model_access) applies a configured model restriction to both discovery and calls. NexusAPI applies the same consistency principle to saved local connector Chat eligibility: one predicate gates signed Channel candidates, live authorization and management readiness. Public `chat` and historical `text` grant the existing Chat transport; unsupported-only selections remain saved facts and grant no Chat. An old signed bundle cannot bypass the live check, and explicit configuration restores service without changing connector identity. The current streaming behavior and ordinary Channel routing remain unchanged.
+
 ## External contracts
 
 - [Stripe Checkout fulfillment](https://docs.stripe.com/checkout/fulfillment): complete orders via verified server callbacks, not browser redirects.

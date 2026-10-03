@@ -1,6 +1,6 @@
 import { pool } from '@/db'
 import type { LocalSnapshotChannel } from '@/lib/channels/local-snapshot'
-import { modelIDs } from './control'
+import { connectorChatCapabilitySQL, modelIDs } from './control'
 
 export async function connectorChannels(tenantId: string | null): Promise<LocalSnapshotChannel[]> {
   if (!tenantId || process.env.NEXUS_CONNECTORS_ENABLED !== 'true') return []
@@ -12,6 +12,7 @@ export async function connectorChannels(tenantId: string | null): Promise<LocalS
     JOIN owned_connections c ON c.id=ch.metadata->>'connection_id' AND c.tenant_id=ch.tenant_id
     JOIN projects project ON project.id=c.project_id AND project.tenant_id=c.tenant_id AND project.organization_id=pc.organization_id
     WHERE ch.tenant_id=$1 AND ch.enabled=true AND ch.metadata->>'transport'='local_sidecar'
+    AND ${connectorChatCapabilitySQL}
     AND c.mode='local_sidecar' AND c.revoked_at IS NULL AND project.status='active' AND project.archived_at IS NULL`,
     [tenantId],
   )
