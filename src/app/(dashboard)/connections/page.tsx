@@ -24,6 +24,7 @@ import { ObserverPanel } from '@/components/workspace/ObserverPanel'
 import { SubscriptionProductGuide } from '@/components/workspace/SubscriptionProductGuide'
 import SubscriptionMonitor from '@/components/connections/SubscriptionMonitor'
 import { LocalConnectorPanel } from '@/components/connections/LocalConnectorPanel'
+import { ConnectionRevokeDialog } from '@/components/connections/ConnectionRevokeDialog'
 import {
   SUBSCRIPTION_PRODUCTS,
   connectionSubscriptionProduct,
@@ -124,21 +125,6 @@ export default function ConnectionsPage() {
       })
       setCreating(false)
       setNotice('连接已登记。请打开“配置与详情”查看此产品支持的能力和接入步骤。')
-      await reload()
-    } catch (e) {
-      setFormError(errorMessage(e))
-    } finally {
-      setBusy(false)
-    }
-  }
-  async function revoke() {
-    if (!revoking || busy) return
-    setBusy(true)
-    setFormError('')
-    try {
-      await apiSend('/api/connections/' + encodeURIComponent(revoking.id), 'DELETE')
-      setRevoking(null)
-      setNotice('连接已撤销。历史记录仍然保留；Nexus 中的撤销不会退出官方客户端账号。')
       await reload()
     } catch (e) {
       setFormError(errorMessage(e))
@@ -485,23 +471,17 @@ export default function ConnectionsPage() {
         </WorkspaceDialog>
       )}
       {revoking && (
-        <WorkspaceDialog title="撤销连接" busy={busy} onClose={() => setRevoking(null)}>
-          <div className={styles.form}>
-            <p className={styles.description}>
-              撤销「{title(revoking)}
-              」后，此映射不能继续关联新的观测记录，连接器租约也会撤销。历史用量保留；重新接入需创建新连接。
-            </p>
-            {formError && <WorkspaceNotice error>{formError}</WorkspaceNotice>}
-            <div className={styles.dialogActions}>
-              <button className={styles.secondary} disabled={busy} onClick={() => setRevoking(null)}>
-                取消
-              </button>
-              <button className={styles.danger} disabled={busy} onClick={() => void revoke()}>
-                {busy ? '撤销中…' : '确认撤销'}
-              </button>
-            </div>
-          </div>
-        </WorkspaceDialog>
+        <ConnectionRevokeDialog
+          key={revoking.id}
+          connectionId={revoking.id}
+          label={title(revoking)}
+          onClose={() => setRevoking(null)}
+          onRevoked={() => {
+            setRevoking(null)
+            setNotice('连接已撤销。历史记录仍然保留；Nexus 中的撤销不会退出官方客户端账号。')
+            void reload()
+          }}
+        />
       )}
       {setup && (
         <WorkspaceDialog title={title(setup) + ' · 连接详情'} onClose={() => setSetup(null)}>
