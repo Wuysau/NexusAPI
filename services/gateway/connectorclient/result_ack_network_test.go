@@ -17,9 +17,40 @@ import (
 
 const resultAckPayload = streamTimeoutPrefix + "data: [DONE]\n\n"
 
+type resultAckObservationKey struct{}
+
+type resultAckHeaders struct {
+	status, protocol int
+	tlsVersion       uint16
+}
+
+type resultAckTransport struct {
+	http.RoundTripper
+	observed *sync.Map
+}
+
+func (transport resultAckTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	response, err := transport.RoundTripper.RoundTrip(r)
+	if err == nil && strings.HasPrefix(r.URL.Path, "/connector/result/") {
+		headers := resultAckHeaders{status: response.StatusCode, protocol: response.ProtoMajor}
+		if response.TLS != nil {
+			headers.tlsVersion = response.TLS.Version
+		}
+		transport.observed.Store(r.URL.Path, headers)
+	}
+	return response, err
+}
+
+func (transport resultAckTransport) CloseIdleConnections() {
+	if idle, ok := transport.RoundTripper.(interface{ CloseIdleConnections() }); ok {
+		idle.CloseIdleConnections()
+	}
+}
+
 func resultAckTLSClient(t *testing.T, h2 bool, control, gateway, inference http.HandlerFunc) (*Client, Identity) {
 	t.Helper()
 	ca, logs := newLocalTLSAuthority(t), &localTLSLogs{}
+	observed := &sync.Map{}
 	protocol, maxVersion := 1, uint16(tls.VersionTLS12)
 	if h2 {
 		protocol, maxVersion = 2, 0
@@ -33,7 +64,9 @@ func resultAckTLSClient(t *testing.T, h2 bool, control, gateway, inference http.
 		}
 	}
 	cp := localTLSServer(t, ca.leaf(t, "127.0.0.1", false), h2, maxVersion, logs, verified(control))
-	gw := localTLSServer(t, ca.leaf(t, "127.0.0.1", false), h2, maxVersion, logs, verified(gateway))
+	gw := localTLSServer(t, ca.leaf(t, "127.0.0.1", false), h2, maxVersion, logs, verified(func(w http.ResponseWriter, r *http.Request) {
+		gateway(w, r.WithContext(context.WithValue(r.Context(), resultAckObservationKey{}, observed)))
+	}))
 	local := localTLSServer(t, ca.leaf(t, "127.0.0.1", false), h2, maxVersion, logs, verified(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "" {
 			t.Error("remote lease credential reached local inference")
@@ -64,6 +97,7 @@ func resultAckTLSClient(t *testing.T, h2 bool, control, gateway, inference http.
 	if err != nil {
 		t.Fatal(err)
 	}
+	client.remote.Transport = resultAckTransport{RoundTripper: client.remote.Transport, observed: observed}
 	t.Cleanup(client.remote.CloseIdleConnections)
 	t.Cleanup(client.local.CloseIdleConnections)
 	return client, Identity{ConnectorID: "connector-ack", ConnectionID: "connection-ack", TenantID: "tenant-ack",
@@ -111,10 +145,12 @@ func resultAckCheckUpload(t *testing.T, frames []frame) {
 	}
 }
 
-func resultAckWrite(t *testing.T, w http.ResponseWriter, mode string) {
+func resultAckWrite(t *testing.T, w http.ResponseWriter, r *http.Request, mode string) {
 	t.Helper()
+	status := http.StatusBadGateway
 	switch mode {
 	case "normal_204":
+		status = http.StatusNoContent
 		w.WriteHeader(http.StatusNoContent)
 	case "finite_error":
 		http.Error(w, "private-ack-diagnostic", http.StatusBadGateway)
@@ -123,8 +159,24 @@ func resultAckWrite(t *testing.T, w http.ResponseWriter, mode string) {
 		w.WriteHeader(http.StatusBadGateway)
 		_, _ = io.WriteString(w, "{")
 	}
-	if http.NewResponseController(w).Flush() != nil {
-		t.Error("fixture could not flush acknowledgment headers")
+	resultAckFlush(t, w, r, status)
+}
+
+func resultAckFlush(t *testing.T, w http.ResponseWriter, r *http.Request, status int) {
+	t.Helper()
+	if err := http.NewResponseController(w).Flush(); err != nil {
+		// Closing the unused HTTP/2 body can cancel this request after HEADERS
+		// arrive but before Flush finishes writing the diagnostic DATA frame.
+		// Accept that ordering only when the real client received this ACK.
+		observed, ok := r.Context().Value(resultAckObservationKey{}).(*sync.Map)
+		if ok && r.ProtoMajor == 2 && r.Context().Err() == context.Canceled {
+			value, received := observed.Load(r.URL.Path)
+			headers, valid := value.(resultAckHeaders)
+			if received && valid && headers.status == status && headers.protocol == 2 && headers.tlsVersion >= tls.VersionTLS12 {
+				return
+			}
+		}
+		t.Errorf("fixture could not flush acknowledgment headers: %v", err)
 	}
 }
 
@@ -159,7 +211,7 @@ func TestResultAcknowledgmentCompletedUpload(t *testing.T) {
 						defer close(ackEnded)
 						uploads.Add(1)
 						captured <- resultAckReadUpload(t, r)
-						resultAckWrite(t, w, mode)
+						resultAckWrite(t, w, r, mode)
 						close(ackStarted)
 						if mode == "stalled_error" || mode == "parent_cancel" {
 							select {
@@ -245,7 +297,7 @@ func TestResultAcknowledgmentReleasesRuntimeWorker(t *testing.T) {
 					byID[id]++
 					mu.Unlock()
 					if id == "req_00000000000000000000000000000005" {
-						resultAckWrite(t, w, "normal_204")
+						resultAckWrite(t, w, r, "normal_204")
 						close(fifthUploaded)
 						return
 					}
@@ -259,7 +311,7 @@ func TestResultAcknowledgmentReleasesRuntimeWorker(t *testing.T) {
 					case <-r.Context().Done():
 						return
 					}
-					resultAckWrite(t, w, "stalled_error")
+					resultAckWrite(t, w, r, "stalled_error")
 					ackFlushed <- struct{}{}
 					select {
 					case <-release:
@@ -338,9 +390,7 @@ func TestResultAcknowledgmentWhileUploadOpenHTTP2(t *testing.T) {
 				w.Header().Set("Content-Length", "1")
 				w.WriteHeader(http.StatusBadGateway)
 				_, _ = io.WriteString(w, "{")
-				if http.NewResponseController(w).Flush() != nil {
-					t.Error("fixture could not flush early response headers and data")
-				}
+				resultAckFlush(t, w, r, http.StatusBadGateway)
 				close(ackStarted)
 				if mode == "stalled_response" {
 					// Sending the advertised byte does not finish an HTTP/2
