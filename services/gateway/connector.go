@@ -219,7 +219,8 @@ func (h *ConnectorHub) poll(w http.ResponseWriter, r *http.Request, token string
 func (h *ConnectorHub) result(w http.ResponseWriter, r *http.Request, job *connectorJob) {
 	// A result upload lasts as long as generation; override the server's short
 	// ordinary-request body deadline with the bounded inference deadline.
-	if err := http.NewResponseController(w).SetReadDeadline(job.Deadline); err != nil {
+	controller := http.NewResponseController(w)
+	if err := controller.SetReadDeadline(job.Deadline); err != nil {
 		job.cancel()
 		http.Error(w, "streaming transport unavailable", 503)
 		return
@@ -236,12 +237,21 @@ func (h *ConnectorHub) result(w http.ResponseWriter, r *http.Request, job *conne
 		}
 	}()
 	finished := make(chan struct{})
-	defer close(finished)
+	watchDone := make(chan struct{})
+	stopWatcher := sync.OnceFunc(func() {
+		close(finished)
+		// The controller belongs to this handler, including on keepalive.
+		<-watchDone
+	})
+	defer stopWatcher()
 	go func() {
+		defer close(watchDone)
 		select {
 		case <-job.ctx.Done():
-			_ = r.Body.Close()
 			_ = job.writer.CloseWithError(job.ctx.Err())
+			// Body.Close can wait behind a blocked HTTP/1 Body.Read. Interrupt
+			// the network read after preserving the pipe's cancellation cause.
+			_ = controller.SetReadDeadline(time.Now())
 		case <-finished:
 		}
 	}()
@@ -282,11 +292,15 @@ func (h *ConnectorHub) result(w http.ResponseWriter, r *http.Request, job *conne
 			if !meta {
 				return
 			}
+			// Consumer EOF/Close can cancel the job immediately. Stop the read
+			// watcher before publishing a terminal result on a reusable socket.
+			stopWatcher()
 			_ = job.writer.Close()
 			complete = true
 			w.WriteHeader(204)
 			return
 		case "error":
+			stopWatcher()
 			err := errConnectorUnavailable
 			if frame.Code == "timeout" {
 				err = context.DeadlineExceeded

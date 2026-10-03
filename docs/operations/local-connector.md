@@ -154,6 +154,8 @@ Windows 使用 `./nexus-connector.exe check --config connector.json`。无需配
 
 控制面为测试调用保留 60 秒超时，并将收到的请求取消信号传给 Gateway，包括等待响应正文的阶段。取消不会撤销已经产生的用量；反向代理是否传递断线会影响本地模型实际停止的时机。关闭详情不会回滚已发出的配对或轮换操作。
 
+Gateway 收到调用取消后会中断该任务的结果上传读取，即使 HTTP/1 上传端仍保持正文打开，也会结束对应处理。正常上传仍使用原推理期限；取消回调在处理返回前退出，后续复用连接上的请求使用自己的读取期限。已经收到的可靠用量和首个终止原因按既有规则保留。
+
 ## 4. Coding Agent 接入
 
 在“API 密钥”创建绑定此项目的 Key，授权 `models:read` 和 `chat:write`。将 Agent 的 OpenAI 兼容 Base URL 设置为 `https://gateway.example.com/v1`，API Key 设置为该项目的 Nexus Key，模型设置为列表中的准确 ID：

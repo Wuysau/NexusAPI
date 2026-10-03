@@ -36,6 +36,8 @@ The connector's separately configured local upstream deadline can expire first. 
 
 Connector job cleanup preserves an already received terminal error until the response consumer reads it. Cleanup closes the pipe writer to wake blocked I/O; the consumer owns closing its response body. This prevents cleanup timing from replacing a reported timeout with a generic closed-pipe error.
 
+Job cancellation also interrupts the Gateway's result-upload read, including an HTTP/1 uploader that keeps its body open after cancellation. Accepted terminal frames stop the cancellation watcher before publishing EOF or an error to the consumer; other exits join it before the handler returns. A later request on a reused connection retains its own read deadline. Active uploads retain the bounded inference deadline and existing frame/total-size limits.
+
 ## Signed snapshot freshness
 
 A valid signature and HTTP 200 are insufficient to refresh authorization. A fetched bundle must have a signed expiry strictly after receipt, remain valid through verification, and complete within the fetch context. Effective expiry is the earlier of signed expiry and receipt plus the configured maximum age. A bundle that is already expired, expires during retrieval/verification, or arrives after cancellation cannot replace the cached generation.
