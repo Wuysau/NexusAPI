@@ -62,6 +62,8 @@ The [OpenAI SDK response request ID](https://github.com/openai/openai-python/blo
 
 The [Anthropic SDK response request ID](https://github.com/anthropics/anthropic-sdk-python/blob/18f25547f20cf5f01da69ac611e700e3bc9ebf21/src/anthropic/_response.py#L299-L301) is also separate from the [message object's ID](https://github.com/anthropics/anthropic-sdk-python/blob/18f25547f20cf5f01da69ac611e700e3bc9ebf21/src/anthropic/types/message.py#L18-L22). NexusAPI's native adapter retains the initially selected header through message start; the message ID remains its existing fallback when no header is available. An immutable presence flag preserves the old last-nonempty-body behavior without confusing the two namespaces. Token observations and the existing message-stop metadata dispatch are unchanged.
 
+That diagnostic-metadata separation also protects terminal persistence from values [PostgreSQL text cannot store](https://www.postgresql.org/docs/17/datatype-character.html). NexusAPI omits optional IDs containing NUL or invalid UTF-8 from its copied terminal usage while retaining reliable token evidence and original adapter observations. [Go JSON replacement of invalid UTF-8](https://pkg.go.dev/encoding/json#Marshal) can hide raw-header incompatibility during event validation; replacement is not adopted as a new correlation identity. Valid opaque Unicode values, including a literal U+FFFD, remain exact. These are NexusAPI storage rules, not a claim that SDKs apply the same omission policy or normal providers emit malformed IDs.
+
 ## External contracts
 
 - [Stripe Checkout fulfillment](https://docs.stripe.com/checkout/fulfillment): complete orders via verified server callbacks, not browser redirects.
