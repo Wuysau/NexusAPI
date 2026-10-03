@@ -74,6 +74,8 @@ That diagnostic-metadata separation also protects terminal persistence from valu
 
 [LiteLLM's effective key policy](https://docs.litellm.ai/docs/proxy/virtual_keys#custom-key-policy-one-hook-for-every-key-operation) validates existing state merged with a mutation immediately before persistence. NexusAPI applies that principle to connector configuration: check and lock the current credential's tenant, organization, provider and enabled state before rotating identity or issuing pairing material. Invalid prerequisites return a fixed conflict and preserve existing facts. The original SQL transaction uses the existing authorization model; no separate policy plugin or credential restoration path is added.
 
+[Caddy's method/path request matching](https://caddyserver.com/docs/caddyfile/matchers#method) selects the supported handler before that handler changes request state. NexusAPI applies this principle to its connector result claim: only an authenticated, correctly bound POST enters the existing one-claim transition. Rejected methods preserve their 404 response without consuming the first upload. The original Go change preserves the accepted POST's failure/no-replay behavior; no matcher framework, new method or path normalization is introduced.
+
 ## External contracts
 
 - [Stripe Checkout fulfillment](https://docs.stripe.com/checkout/fulfillment): complete orders via verified server callbacks, not browser redirects.

@@ -148,7 +148,7 @@ func (h *ConnectorHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	job := h.jobs[id]
 	valid := job != nil && job.session.token == token && job.session.grant.ConnectionID == grant.ConnectionID && job.session.grant.TenantID == grant.TenantID
-	if valid && strings.HasPrefix(r.URL.Path, "/connector/result/") {
+	if valid && r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/connector/result/") {
 		if job.claimed {
 			valid = false
 		} else {
