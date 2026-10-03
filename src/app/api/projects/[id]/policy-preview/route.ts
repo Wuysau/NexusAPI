@@ -1,4 +1,5 @@
 import { pool } from '@/db'
+import { connectionVisibility, resolveManagedProject, workspaceParams } from '@/lib/workspace/management'
 import {
   apiError,
   auditControlPlane,
@@ -16,14 +17,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const connectionId = typeof body?.connectionId === 'string' ? body.connectionId : ''
     const operation = typeof body?.operation === 'string' ? body.operation : 'chat'
     if (!connectionId) return apiError(400, 'invalid_request', '请选择连接')
+    await resolveManagedProject(pool, ctx, id)
     const project = await pool.query(`SELECT id FROM projects WHERE id=$1 AND tenant_id=$2 AND archived_at IS NULL`, [
       id,
       ctx.tenantId,
     ])
     if (!project.rows[0]) return apiError(404, 'not_found', '项目不存在')
     const connection = await pool.query(
-      `SELECT id,provider,mode,status,capabilities,revoked_at,last_heartbeat_at FROM owned_connections WHERE id=$1 AND tenant_id=$2`,
-      [connectionId, ctx.tenantId],
+      `SELECT c.id,c.provider,c.mode,c.status,c.capabilities,c.revoked_at,c.last_heartbeat_at
+       FROM owned_connections c WHERE ${connectionVisibility} AND c.id=$5`,
+      [...workspaceParams(ctx), connectionId],
     )
     if (!connection.rows[0]) return apiError(404, 'not_found', '连接不存在')
     const c = connection.rows[0]

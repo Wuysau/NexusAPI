@@ -21,6 +21,8 @@ When the selected project changes, `/routing` clears the previous project's poli
 
 After installing repository dependencies and Playwright Chromium, run `node tests/e2e/api-data-scope.mjs` to check this browser behavior. The test imports the actual React hook, providers and routing page against loopback HTTP fixtures; it requires no database and does not test server authorization or model execution.
 
+The legacy `POST /api/projects/:id/policy-preview` requires the existing project read capability and access to both the selected project and connection. Ordinary members need project membership or ownership of an unbound connection; owner/admin/billing retain their current organization management visibility. Archived projects are refused. A visible revoked connection returns its existing denied advisory decision. Hidden objects return 404 without connection facts or successful preview audit. The result checks only the existing reported operations and revocation state; actual model availability, Channel publication, API key permissions and Gateway dispatch remain separate authorities.
+
 ## Reference review, 2026-09-24
 
 - [New API channel model](https://github.com/QuantumNous/new-api/blob/main/model/channel.go) and [channel administration](https://github.com/QuantumNous/new-api-docs-v1/blob/main/content/docs/en/guide/feature-guide/admin/channel.mdx): priority, weight, model mapping, per-channel health and keys are useful gateway-plane patterns. Nexus already has channels, versioned model aliases, signed snapshots, health scoring and isolated billing; they remain authoritative.
