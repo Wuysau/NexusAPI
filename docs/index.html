@@ -180,6 +180,9 @@
                 为应用创建独立下游密钥，并按需要设置权限范围与过期时间。只在创建时安全保存完整密钥；请求中使用
                 <code>Authorization: Bearer YOUR_NEXUS_API_KEY</code>。
               </p>
+              <p>
+                提交创建内容后，服务会重新检查当前的密钥创建权限。检查时角色已降为查看者，会返回权限拒绝，不签发新密钥；原有密钥和历史记录保持不变。
+              </p>
             </article>
             <article class="workflow">
               <div class="workflow-title">
