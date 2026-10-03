@@ -70,6 +70,8 @@ That diagnostic-metadata separation also protects terminal persistence from valu
 
 [Cloudflared diagnostics](https://github.com/cloudflare/cloudflared/blob/master/cmd/cloudflared/tunnel/subcommands.go) and its [observability guidance](https://developers.cloudflare.com/tunnel/observability/) distinguish tunnel connectivity from origin service health. NexusAPI applies that distinction through its original `nexus-connector check` command: three fixed concurrent GETs share a five-second deadline, preserve verified TLS and local credential scope, and report only fixed statuses and configured model availability. This diagnostic requires no connector identity and changes no lease or usage fact. It establishes service health and local discovery; the existing project-key model list and actual inference remain the authorized routing test.
 
+[Cloudflared's HTTP cleanup](https://github.com/cloudflare/cloudflared/blob/f9676c585623c86c0a48dbb6ae80840b4c834718/proxy/proxy.go#L226-L270) cancels origin work before closing its response and requires pending body reads to be interruptible. NexusAPI applies that lifecycle principle to its Gateway upload handler: job cancellation first wakes the response pipe, then expires the request-body read deadline, and the handler joins its watcher before returning. The original server-side implementation uses [Go's response-controller lifetime contract](https://pkg.go.dev/net/http#ResponseController), retaining existing terminal causes, frame bounds and request accounting.
+
 ## External contracts
 
 - [Stripe Checkout fulfillment](https://docs.stripe.com/checkout/fulfillment): complete orders via verified server callbacks, not browser redirects.
