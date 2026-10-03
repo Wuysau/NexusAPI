@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-const openAIAdapterVersion = "1.0.4"
+const openAIAdapterVersion = "1.0.5"
 
 // OpenAICompatible implements Adapter for /chat/completions providers.
 type OpenAICompatible struct {
@@ -265,6 +265,7 @@ func (s *openAIStream) Next() (CanonicalChunk, error) {
 			return CanonicalChunk{Usage: s.usage}, fmt.Errorf("openai: malformed or failed stream chunk")
 		}
 		if chunk.Usage != nil {
+			chunk.Usage.ProviderRequestID = s.providerRequestID
 			if s.usage != nil {
 				chunk.Usage.Observed = mergeObserved(s.usage.Observed, chunk.Usage.Observed)
 			}

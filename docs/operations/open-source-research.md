@@ -58,6 +58,8 @@ The same principle applies to output: [OpenAI structured-output refusals](https:
 
 [LiteLLM's per-request call ID](https://docs.litellm.ai/docs/proxy/logging#getting-the-litellm-call-id) tracks a Gateway operation across components. NexusAPI likewise owns request/attempt/event identities separately from opaque provider correlation. Its provider identifiers retain lookup indexes without enforcing tenant-wide uniqueness across vendors, accounts or custom endpoints. Existing operation claims, complete event-authority replay checks and request-derived ledger keys continue to prevent replay charges. This refines the original secondary provider-ID deduplication assumption without changing prices, token observations or ledger calculation; it does not assume every external gateway storage path follows the same policy.
 
+The [OpenAI SDK response request ID](https://github.com/openai/openai-python/blob/v1.109.1/src/openai/_response.py#L255-L256) is distinct from a [Chat completion chunk's ID](https://github.com/openai/openai-python/blob/v1.109.1/src/openai/types/chat/chat_completion_chunk.py#L100-L102). NexusAPI's compatible stream adapter preserves the already captured HTTP identifier on actual reported usage, including reliable evidence retained after a stream failure. Optional header metadata never creates usage observations. The Gateway keeps its own public request/completion identity, existing metadata bound and accounting replay protections.
+
 ## External contracts
 
 - [Stripe Checkout fulfillment](https://docs.stripe.com/checkout/fulfillment): complete orders via verified server callbacks, not browser redirects.
