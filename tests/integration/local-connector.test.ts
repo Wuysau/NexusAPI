@@ -58,6 +58,9 @@ const retryBodyMarker = 'private retry body marker 513a'
 const localDeadlineMarker = 'private local deadline output marker 93d2'
 const bomContentMarker = 'private initial BOM output marker c614'
 let bomFraming = { ending: '\n', first: 'content' }
+const usageTotalContentMarker = 'private usage total output marker 257e'
+const usageTotalInvalidMarker = 'private malformed usage total marker ae47'
+let malformedUsageTotal = '25.5'
 const reasoningToolCalls = [
   {
     id: 'call_lookup',
@@ -242,6 +245,20 @@ beforeAll(async () => {
     }
     const event = (delta: unknown, finish: string | null = null) =>
       `data: ${JSON.stringify({ id: 'mock-1', object: 'chat.completion.chunk', model: body.model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`
+    if (mode === 'malformed_usage_total') {
+      res.writeHead(200, { 'content-type': 'text/event-stream' })
+      res.write(event({ role: 'assistant', content: usageTotalContentMarker }))
+      res.write(
+        `data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7, prompt_tokens_details: { cached_tokens: 0 }, completion_tokens_details: { reasoning_tokens: 0 } } })}\n\n`,
+      )
+      // Write the number lexeme directly so JavaScript cannot round the int64 overflow fixture.
+      res.write(
+        `data: {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":20,"total_tokens":${malformedUsageTotal},"prompt_tokens_details":{"cached_tokens":0},"completion_tokens_details":{"reasoning_tokens":0}}}\n\n`,
+      )
+      finished = true
+      res.end('data: [DONE]\n\n')
+      return
+    }
     if (mode === 'sse_bom') {
       res.writeHead(200, { 'content-type': 'text/event-stream' })
       // Separate writes exercise the connector transport. Provider tests also
@@ -1124,6 +1141,199 @@ it('preserves initial BOM content and usage through the standalone connector for
   ).toBe(0)
   const retained = JSON.stringify(records) + JSON.stringify(events) + gatewayLogs + cliLogs
   for (const marker of [bomContentMarker, 'private prompt marker', key, 'SECRET-UPSTREAM-KEY'])
+    expect(retained).not.toContain(marker)
+})
+
+it('rejects malformed usage totals through the standalone connector while reconciling prior observations without charges', async () => {
+  const before = calls
+  const requestIds: string[] = []
+  const expected = new Map<string, { model: string; stream: boolean }>()
+  try {
+    mode = 'malformed_usage_total'
+    for (const total of ['25.5', JSON.stringify(usageTotalInvalidMarker), '9223372036854775808']) {
+      malformedUsageTotal = total
+      for (const stream of [false, true]) {
+        // Three failures per model stay below the real Gateway's five-failure breaker threshold.
+        const model = models[Number(stream)]
+        const started = calls
+        const response = await gatewayFetch('/v1/chat/completions', chat(stream, model))
+        const text = await response.text()
+        expect(response.status, text).toBe(stream ? 200 : 502)
+        expect(calls).toBe(started + 1)
+        expect(response.headers.get('x-request-id')).toBeTruthy()
+        const id = response.headers.get('x-request-id')!
+        requestIds.push(id)
+        expected.set(id, { model, stream })
+        if (stream) {
+          expect(response.headers.get('content-type')).toContain('text/event-stream')
+          expect(text).not.toContain('[DONE]')
+          const frames = text
+            .split('\n\n')
+            .filter((frame) => frame.startsWith('data: '))
+            .map((frame) => JSON.parse(frame.slice(6)))
+          expect(
+            frames
+              .flatMap((frame) => frame.choices ?? [])
+              .map((choice) => choice.delta?.content ?? '')
+              .join(''),
+          ).toBe(usageTotalContentMarker)
+          expect(frames.filter((frame) => frame.error)).toHaveLength(1)
+          expect(frames.at(-1).error.code).toBe('upstream_protocol_error')
+        } else {
+          expect(JSON.parse(text).error.code).toBe('upstream_protocol_error')
+          expect(text).not.toContain(usageTotalContentMarker)
+        }
+        for (const marker of [usageTotalInvalidMarker, 'private prompt marker', key, 'SECRET-UPSTREAM-KEY']) {
+          expect(text).not.toContain(marker)
+          expect(JSON.stringify([...response.headers])).not.toContain(marker)
+        }
+      }
+    }
+  } finally {
+    mode = 'normal'
+    malformedUsageTotal = '25.5'
+  }
+  expect(calls - before).toBe(6)
+  expect(new Set(requestIds).size).toBe(6)
+  await waitFor(
+    async () =>
+      (
+        await db.query("SELECT id FROM outbox_events WHERE aggregate_type='usage' AND aggregate_id=ANY($1::text[])", [
+          requestIds,
+        ])
+      ).rowCount === 6,
+  )
+  const records = (
+    await db.query(
+      `SELECT to_jsonb(r) request_record,to_jsonb(f) project_fact,to_jsonb(a) attempt_record,
+       r.id,r.status,r.error_code,r.input_tokens,r.output_tokens,r.cached_tokens,r.reasoning_tokens,
+       f.project_id,f.api_key_id,a.id attempt_id,a.attempt_number,a.connection_id,a.channel_id,a.provider_credential_id,
+       a.price_version_id,a.execution_mode,a.status attempt_status,a.input_tokens attempt_input_tokens,
+       a.output_tokens attempt_output_tokens,a.cached_tokens attempt_cached_tokens,a.reasoning_tokens attempt_reasoning_tokens
+       FROM request_records r JOIN request_project_facts f ON f.request_id=r.id JOIN attempts a ON a.request_id=r.id WHERE r.id=ANY($1::text[])`,
+      [requestIds],
+    )
+  ).rows
+  expect(records).toHaveLength(6)
+  expect(new Set(records.map((record) => record.id)).size).toBe(6)
+  expect(new Set(records.map((record) => record.attempt_id)).size).toBe(6)
+  for (const record of records)
+    expect(record).toMatchObject({
+      status: 'unknown',
+      error_code: 'upstream_protocol_error',
+      input_tokens: 5,
+      output_tokens: 2,
+      cached_tokens: 0,
+      reasoning_tokens: 0,
+      project_id: 'connector-project',
+      api_key_id: 'connector-key',
+      connection_id: connectionId,
+      price_version_id: null,
+      execution_mode: 'byok',
+      attempt_number: 1,
+      attempt_status: 'unknown',
+      attempt_input_tokens: 5,
+      attempt_output_tokens: 2,
+      attempt_cached_tokens: 0,
+      attempt_reasoning_tokens: 0,
+    })
+  const events = (
+    await db.query("SELECT * FROM outbox_events WHERE aggregate_type='usage' AND aggregate_id=ANY($1::text[])", [
+      requestIds,
+    ])
+  ).rows
+  expect(events).toHaveLength(6)
+  expect(new Set(events.map((event) => event.aggregate_id)).size).toBe(6)
+  expect(new Set(events.map((event) => event.payload.event_id)).size).toBe(6)
+  for (const event of events) {
+    const record = records.find((record) => record.id === event.aggregate_id)!
+    expect(event.event_type).toBe('usage.v2.unknown')
+    expect(event.payload).toMatchObject({
+      schema_version: 2,
+      request_id: record.id,
+      attempt_id: record.attempt_id,
+      model_id: expected.get(record.id)!.model,
+      streaming: expected.get(record.id)!.stream,
+      status: 'unknown',
+      price_version_id: null,
+      attribution: {
+        project_id: 'connector-project',
+        api_key_id: 'connector-key',
+        connection_id: connectionId,
+        channel_id: record.channel_id,
+        credential_id: record.provider_credential_id,
+        execution_mode: 'byok',
+      },
+      usage: {
+        input_tokens: 5,
+        output_tokens: 2,
+        total_tokens: 7,
+        cached_input_tokens: 0,
+        reasoning_tokens: 0,
+        estimated: true,
+      },
+    })
+  }
+  const client = await db.connect()
+  try {
+    await client.query('BEGIN')
+    for (const event of events)
+      expect(await processOutboxEvent(client, event)).toMatchObject({
+        requestId: event.aggregate_id,
+        disposition: 'reconciled',
+        channelKind: 'byok',
+        chargeMicros: 0n,
+        detail: 'unknown_completion',
+      })
+    await client.query('COMMIT')
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
+  const anchors = (await db.query('SELECT * FROM usage_events WHERE request_id=ANY($1::text[])', [requestIds])).rows
+  const cases = (await db.query('SELECT * FROM reconciliation_cases WHERE request_id=ANY($1::text[])', [requestIds]))
+    .rows
+  expect(anchors).toHaveLength(6)
+  expect(new Set(anchors.map((anchor) => anchor.request_id)).size).toBe(6)
+  expect(cases).toHaveLength(6)
+  expect(new Set(cases.map((reconciliation) => reconciliation.request_id)).size).toBe(6)
+  for (const anchor of anchors) {
+    const event = events.find((event) => event.aggregate_id === anchor.request_id)!
+    expect(anchor.attempt_id).toBe(event.payload.attempt_id)
+    expect(anchor.payload.event).toEqual(event.payload)
+    expect(cases.find((reconciliation) => reconciliation.request_id === anchor.request_id)).toMatchObject({
+      usage_event_id: anchor.id,
+      reason: 'unknown_completion',
+      status: 'open',
+    })
+  }
+  expect((await db.query('SELECT id FROM usage_records WHERE request_id=ANY($1::text[])', [requestIds])).rowCount).toBe(
+    0,
+  )
+  expect(
+    (
+      await db.query(
+        "SELECT id FROM ledger_transactions WHERE type='usage' AND reference_type='request' AND reference_id=ANY($1::text[])",
+        [requestIds],
+      )
+    ).rowCount,
+  ).toBe(0)
+  const retained =
+    JSON.stringify(records) +
+    JSON.stringify(events) +
+    JSON.stringify(anchors) +
+    JSON.stringify(cases) +
+    gatewayLogs +
+    cliLogs
+  for (const marker of [
+    usageTotalContentMarker,
+    usageTotalInvalidMarker,
+    'private prompt marker',
+    key,
+    'SECRET-UPSTREAM-KEY',
+  ])
     expect(retained).not.toContain(marker)
 })
 
