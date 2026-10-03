@@ -1,10 +1,12 @@
 import { pool } from '@/db'
 import type { PoolClient } from 'pg'
+import type { Role } from '@/lib/auth/capabilities'
 import { requireContext, routeError, apiError, type ControlPlaneContext } from '../_lib/control-plane'
-import { resolveQuotaProject } from '@/lib/quota/access'
+import { resolveQuotaProject, type QuotaAccessDatabase } from '@/lib/quota/access'
 import { TaskRuntimeError } from '@/lib/task-runtime/configuration'
 import type { TaskScope } from '@/lib/task-runtime/store'
-import { RoutingPolicyError } from '@/lib/task-runtime/router'
+import { RoutingPolicyError, type RoutingPolicy } from '@/lib/task-runtime/router'
+import { connectionVisibility } from '@/lib/workspace/management'
 
 export function taskError(error: unknown) {
   if (error instanceof TaskRuntimeError)
@@ -16,12 +18,16 @@ export async function projectScope(
   req: Request,
   projectId: unknown,
   write = false,
-): Promise<{ ctx: ControlPlaneContext; scope: TaskScope }> {
+): Promise<{ ctx: ControlPlaneContext; scope: TaskScope; role: Role }> {
   const ctx = await requireContext(req, write ? 'project:update' : 'project:read')
   if (typeof projectId !== 'string' || !projectId || projectId.length > 128)
     throw new TaskRuntimeError('project_required')
-  await resolveQuotaProject(pool, ctx, projectId, { write })
-  return { ctx, scope: { tenantId: ctx.tenantId, organizationId: ctx.organizationId, projectId } }
+  const currentProject = await resolveQuotaProject(pool, ctx, projectId, { write })
+  return {
+    ctx,
+    scope: { tenantId: ctx.tenantId, organizationId: ctx.organizationId, projectId },
+    role: currentProject.role,
+  }
 }
 export async function taskScope(req: Request, id: string) {
   const ctx = await requireContext(req, 'project:update')
@@ -44,14 +50,14 @@ export async function taskScope(req: Request, id: string) {
 export async function withProjectWrite<T>(
   ctx: ControlPlaneContext,
   scope: TaskScope,
-  write: (client: PoolClient) => Promise<T>,
+  write: (client: PoolClient, role: Role) => Promise<T>,
 ): Promise<T> {
   const client = await pool.connect()
   let discardClient = false
   try {
     await client.query('BEGIN')
-    await resolveQuotaProject(client, ctx, scope.projectId, { write: true, lock: true })
-    const result = await write(client)
+    const currentProject = await resolveQuotaProject(client, ctx, scope.projectId, { write: true, lock: true })
+    const result = await write(client, currentProject.role)
     await client.query('COMMIT')
     return result
   } catch (error) {
@@ -64,4 +70,26 @@ export async function withProjectWrite<T>(
   } finally {
     client.release(discardClient)
   }
+}
+
+/** HTTP resource visibility; local execution retains its independent profile authority. */
+export async function visibleTaskPolicy(
+  db: QuotaAccessDatabase,
+  ctx: ControlPlaneContext,
+  currentRole: Role,
+  policy: RoutingPolicy,
+): Promise<RoutingPolicy> {
+  if (!policy.candidates.length) return policy
+  const visible = await db.query<{ id: string }>(
+    `SELECT c.id FROM owned_connections c WHERE ${connectionVisibility} AND c.id=ANY($5::text[])`,
+    [
+      ctx.tenantId,
+      ctx.organizationId,
+      ctx.session.userId,
+      ['owner', 'admin', 'billing'].includes(currentRole),
+      policy.candidates.map((candidate) => candidate.connectionId),
+    ],
+  )
+  const ids = new Set(visible.rows.map((connection) => connection.id))
+  return { ...policy, candidates: policy.candidates.filter((candidate) => ids.has(candidate.connectionId)) }
 }
