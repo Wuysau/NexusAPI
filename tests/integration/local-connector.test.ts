@@ -16,6 +16,7 @@ import { POST as lease } from '@/app/api/connector/lease/route'
 import { POST as authorize } from '@/app/api/internal/gateway/connector/route'
 import { GET as snapshot } from '@/app/api/internal/gateway/snapshot/route'
 import { GET as resources } from '@/app/api/resources/route'
+import { GET as health } from '@/app/api/health/route'
 import { createSession, SESSION_COOKIE } from '@/lib/auth/sessions'
 import { tokenHash } from '@/lib/connectors/control'
 import { processOutboxEvent } from '../../services/worker/processor'
@@ -107,6 +108,45 @@ async function kill(child?: ChildProcess) {
     await done
   }
 }
+async function checkCLI(configFile: string, identityFile: string) {
+  const child = spawn(cliExe, ['check', '--config', configFile, '--identity', identityFile], {
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    signal: AbortSignal.timeout(10000),
+  })
+  let stdout = '',
+    stderr = ''
+  child.stdout!.on('data', (chunk) => {
+    stdout += chunk
+  })
+  child.stderr!.on('data', (chunk) => {
+    stderr += chunk
+  })
+  try {
+    const [code] = await once(child, 'close')
+    return { code, stdout, stderr, report: JSON.parse(stdout) }
+  } finally {
+    await kill(child)
+  }
+}
+async function checkFacts() {
+  const facts: Record<string, unknown[]> = {}
+  for (const table of ['owned_connections', 'connector_pairings', 'connector_identities', 'connector_leases']) {
+    const column = table === 'connector_pairings' ? 'connection_id' : 'id'
+    facts[table] = (await db.query(`SELECT * FROM ${table} ORDER BY ${column}`)).rows
+  }
+  facts.accounting = (
+    await db.query(`SELECT
+      (SELECT count(*) FROM request_records) AS requests,
+      (SELECT count(*) FROM attempts) AS attempts,
+      (SELECT count(*) FROM outbox_events) AS outboxes,
+      (SELECT count(*) FROM usage_events) AS usage,
+      (SELECT count(*) FROM ledger_transactions) AS ledger,
+      (SELECT count(*) FROM ledger_postings) AS postings,
+      (SELECT count(*) FROM wallet_ledger_entries) AS legacy_ledger`)
+  ).rows
+  return facts
+}
 async function gatewayFetch(route: string, body?: unknown, token = key, signal?: AbortSignal) {
   return new Promise<Response>((resolve, reject) => {
     const req = httpsRequest(
@@ -151,15 +191,17 @@ async function relayRoute(req: IncomingMessage, res: ServerResponse) {
       if (metadata.scope === 'models:read' && typeof metadata.model === 'string') singleModelAuthorizations++
     }
     const handler =
-      pathname === '/api/connector/pair'
-        ? pair
-        : pathname === '/api/connector/lease'
-          ? lease
-          : pathname === '/api/internal/gateway/connector'
-            ? authorize
-            : pathname === '/api/internal/gateway/snapshot'
-              ? snapshot
-              : null
+      pathname === '/api/health'
+        ? (_request: Request) => health()
+        : pathname === '/api/connector/pair'
+          ? pair
+          : pathname === '/api/connector/lease'
+            ? lease
+            : pathname === '/api/internal/gateway/connector'
+              ? authorize
+              : pathname === '/api/internal/gateway/snapshot'
+                ? snapshot
+                : null
     const response = handler ? await handler(request) : new Response('', { status: 404 })
     res.writeHead(response.status, Object.fromEntries(response.headers))
     res.end(Buffer.from(await response.arrayBuffer()))
@@ -618,6 +660,42 @@ it('authorizes bounded model batches with live ownership checks and no heartbeat
   }
 })
 
+it('checks private-TLS services before pairing while preserving connector and accounting facts', async () => {
+  const reservation = createServer()
+  const offlineGatewayURL = (await listen(reservation)).replace('http:', 'https:')
+  await new Promise<void>((resolve) => reservation.close(() => resolve()))
+  const configFile = path.join(folder, 'check-before-pair.json')
+  const identityFile = path.join(folder, `check-unused-identity-${Date.now()}.json`)
+  await writeFile(
+    configFile,
+    JSON.stringify({
+      controlUrl: controlURL,
+      gatewayUrl: offlineGatewayURL,
+      upstreamUrl: upstreamURL + '/v1',
+      models,
+      caFile: path.join(folder, 'tls-cert.pem'),
+    }),
+  )
+  await expect(readFile(identityFile)).rejects.toMatchObject({ code: 'ENOENT' })
+  const before = await checkFacts()
+  const beforeCalls = calls
+  const checked = await checkCLI(configFile, identityFile)
+  expect(checked.code).toBe(1)
+  expect(checked.report).toEqual({
+    controlPlane: 'ok',
+    gateway: 'unavailable',
+    upstream: 'ok',
+    models: models.map((id) => ({ id, available: true })),
+    ok: false,
+  })
+  expect(checked.stderr).toContain('connector check failed')
+  for (const value of [pairingToken, controlURL, upstreamURL, offlineGatewayURL, configFile, identityFile])
+    expect(checked.stdout + checked.stderr).not.toContain(value)
+  expect(await checkFacts()).toEqual(before)
+  expect(calls).toBe(beforeCalls)
+  await expect(readFile(identityFile)).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
 it('pairs through the standalone CLI, starts a separate Gateway and lists only ready project-authorized models', async () => {
   const reservation = createServer()
   gatewayURL = (await listen(reservation)).replace('http:', 'https:')
@@ -677,11 +755,29 @@ it('pairs through the standalone CLI, starts a separate Gateway and lists only r
   })
   await waitFor(async () => {
     try {
-      return (await gatewayFetch('/healthz')).ok
+      return (await gatewayFetch('/readyz')).ok
     } catch {
       return false
     }
   })
+  const factsBeforeCheck = await checkFacts()
+  const identityBeforeCheck = await readFile(identityFile)
+  const checked = await checkCLI(path.join(folder, 'connector.json'), identityFile)
+  expect(checked.code).toBe(0)
+  expect(checked.stderr).toBe('')
+  expect(checked.report).toEqual({
+    controlPlane: 'ok',
+    gateway: 'ok',
+    upstream: 'ok',
+    models: models.map((id) => ({ id, available: true })),
+    ok: true,
+  })
+  expect(await readFile(identityFile)).toEqual(identityBeforeCheck)
+  expect(await checkFacts()).toEqual(factsBeforeCheck)
+  expect(checked.stdout).not.toContain(identity.credential)
+  expect(checked.stdout).not.toContain(pairingToken)
+  // Local discovery can pass before a runtime has established its leased route.
+  expect((await (await gatewayFetch('/v1/models')).json()).data).toEqual([])
   connector = spawn(cliExe, ['run', '--config', path.join(folder, 'connector.json'), '--identity', identityFile], {
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],

@@ -68,6 +68,8 @@ That diagnostic-metadata separation also protects terminal persistence from valu
 
 [Drizzle's named constraints](https://orm.drizzle.team/docs/indexes-constraints) also identify the objects that later generated DDL changes. NexusAPI aligns six manually created connector constraint names with its existing ORM through an append-only PostgreSQL rename migration. Populated upgrade checks preserve object identities and enforcement, while real generator changes execute in rolled-back fixture transactions. [PostgreSQL rename semantics](https://www.postgresql.org/docs/17/sql-altertable.html) preserve data and rename UNIQUE backing indexes; the corresponding table locks remain an explicit deployment consideration.
 
+[Cloudflared diagnostics](https://github.com/cloudflare/cloudflared/blob/master/cmd/cloudflared/tunnel/subcommands.go) and its [observability guidance](https://developers.cloudflare.com/tunnel/observability/) distinguish tunnel connectivity from origin service health. NexusAPI applies that distinction through its original `nexus-connector check` command: three fixed concurrent GETs share a five-second deadline, preserve verified TLS and local credential scope, and report only fixed statuses and configured model availability. This diagnostic requires no connector identity and changes no lease or usage fact. It establishes service health and local discovery; the existing project-key model list and actual inference remain the authorized routing test.
+
 ## External contracts
 
 - [Stripe Checkout fulfillment](https://docs.stripe.com/checkout/fulfillment): complete orders via verified server callbacks, not browser redirects.
