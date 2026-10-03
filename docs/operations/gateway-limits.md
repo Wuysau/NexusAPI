@@ -38,6 +38,8 @@ Connector job cleanup preserves an already received terminal error until the res
 
 Job cancellation also interrupts the Gateway's result-upload read, including an HTTP/1 uploader that keeps its body open after cancellation. Accepted terminal frames stop the cancellation watcher before publishing EOF or an error to the consumer; other exits join it before the handler returns. A later request on a reused connection retains its own read deadline. Active uploads retain the bounded inference deadline and existing frame/total-size limits.
 
+Only an authorized POST to a result path can claim its upload slot. Other methods retain the existing 404 response and leave the first valid upload available. The accepted POST still has one claim, including when its frame stream is malformed or interrupted; neither a second upload nor a new inference replay is permitted by that failure.
+
 ## Signed snapshot freshness
 
 A valid signature and HTTP 200 are insufficient to refresh authorization. A fetched bundle must have a signed expiry strictly after receipt, remain valid through verification, and complete within the fetch context. Effective expiry is the earlier of signed expiry and receipt plus the configured maximum age. A bundle that is already expired, expires during retrieval/verification, or arrives after cancellation cannot replace the cached generation.
