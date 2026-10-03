@@ -21,7 +21,7 @@ func main() {
 }
 func run() error {
 	if len(os.Args) < 2 {
-		return fmt.Errorf("usage: nexus-connector pair|run --config connector.json --identity connector-identity.json")
+		return fmt.Errorf("usage: nexus-connector check|pair|run --config connector.json [--identity connector-identity.json]")
 	}
 	action := os.Args[1]
 	flags := flag.NewFlagSet(action, flag.ContinueOnError)
@@ -45,6 +45,18 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	switch action {
+	case "check":
+		report := client.Check(ctx)
+		if ctx.Err() != nil {
+			return nil
+		}
+		if json.NewEncoder(os.Stdout).Encode(report) != nil {
+			return fmt.Errorf("check output unavailable")
+		}
+		if !report.OK {
+			return fmt.Errorf("connector check failed; review the report")
+		}
+		return nil
 	case "pair":
 		// Read from stdin, keeping one-time credentials out of shell history and argv.
 		fmt.Fprintln(os.Stderr, "Paste one-time pairing token, then press Enter:")
@@ -88,7 +100,7 @@ func run() error {
 		fmt.Println("Connector starting; local allowlist and verified remote TLS are enforced.")
 		return client.Run(ctx, identity)
 	default:
-		return fmt.Errorf("unknown action; use pair or run")
+		return fmt.Errorf("unknown action; use check, pair or run")
 	}
 }
 

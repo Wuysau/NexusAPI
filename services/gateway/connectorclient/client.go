@@ -197,33 +197,7 @@ func (c *Client) currentLease() lease { c.mu.RLock(); defer c.mu.RUnlock(); retu
 func (c *Client) readyModels(ctx context.Context) []string {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	r, _ := http.NewRequestWithContext(ctx, "GET", strings.TrimRight(c.config.UpstreamURL, "/")+"/models", nil)
-	c.localAuth(r)
-	res, e := c.local.Do(r)
-	if e != nil {
-		return []string{}
-	}
-	defer res.Body.Close()
-	if res.StatusCode != 200 {
-		return []string{}
-	}
-	var catalog struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-	}
-	if decodeBoundedJSON(res.Body, 1<<20, &catalog) != nil {
-		return []string{}
-	}
-	ready := []string{}
-	for _, m := range c.config.Models {
-		for _, entry := range catalog.Data {
-			if entry.ID == m {
-				ready = append(ready, m)
-				break
-			}
-		}
-	}
+	ready, _ := c.discoverModels(ctx)
 	return ready
 }
 func (c *Client) renew(ctx context.Context, identity Identity, enforceLease bool) error {
