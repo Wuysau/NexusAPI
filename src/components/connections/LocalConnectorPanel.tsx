@@ -1,6 +1,8 @@
 'use client'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiGet, apiSend, errorMessage } from '@/components/lib/api'
+import { useHighRiskAction } from '@/components/lib/useHighRiskAction'
+import { ReauthDialog } from '@/components/ReauthDialog'
 import { WorkspaceNotice, localDate } from '@/components/workspace/Workspace'
 import styles from '@/components/workspace/workspace.module.css'
 
@@ -41,6 +43,10 @@ export function LocalConnectorPanel({
   const scope = useRef<AbortController | null>(null)
   const testRequest = useRef<AbortController | null>(null)
   const refreshVersion = useRef(0)
+  const highRisk = useHighRiskAction()
+  const clearPendingPairing = highRisk.clear
+  const blocked = busy || highRisk.busy || highRisk.needsReauth
+  const dialogLifetime = scope.current
   const refresh = useCallback(
     async (signal: AbortSignal) => {
       if (signal.aborted) return
@@ -68,6 +74,7 @@ export function LocalConnectorPanel({
       clearTimeout(timer)
       clearInterval(interval)
       lifetime.abort()
+      clearPendingPairing()
       if (scope.current === lifetime) {
         scope.current = null
         const pending = testRequest.current
@@ -75,32 +82,53 @@ export function LocalConnectorPanel({
         pending?.abort()
       }
     }
-  }, [refresh])
+  }, [refresh, clearPendingPairing])
   async function pair() {
     const lifetime = scope.current
-    if (!lifetime || lifetime.signal.aborted || busy) return
-    setBusy(true)
+    if (!lifetime || lifetime.signal.aborted || blocked) return
+    const current = () => !lifetime.signal.aborted && scope.current === lifetime
+    const approvedModels = models
+      .split(/[\n,]/)
+      .map((v) => v.trim())
+      .filter(Boolean)
     setError('')
     setPairing(null)
     try {
-      const result = await apiSend<{ pairingToken: string; expiresAt: string }>(base, 'POST', {
-        models: models
-          .split(/[\n,]/)
-          .map((v) => v.trim())
-          .filter(Boolean),
+      await highRisk.run(async () => {
+        if (!current()) return
+        setBusy(true)
+        try {
+          const result = await apiSend<{ pairingToken: string; expiresAt: string }>(
+            base,
+            'POST',
+            { models: approvedModels },
+            lifetime.signal,
+          )
+          if (!current()) return
+          setPairing(result)
+          await refresh(lifetime.signal)
+        } catch (e) {
+          // An obsolete denial must not queue another action in the shared hook.
+          if (current()) throw e
+        } finally {
+          if (current()) setBusy(false)
+        }
       })
-      if (lifetime.signal.aborted) return
-      setPairing(result)
-      await refresh(lifetime.signal)
     } catch (e) {
-      if (!lifetime.signal.aborted) setError(errorMessage(e))
-    } finally {
-      if (!lifetime.signal.aborted) setBusy(false)
+      if (current()) setError(errorMessage(e))
+    }
+  }
+  async function retryPair(lifetime: AbortController | null) {
+    if (!lifetime || lifetime.signal.aborted || scope.current !== lifetime) return
+    try {
+      await highRisk.retry()
+    } catch (e) {
+      if (!lifetime.signal.aborted && scope.current === lifetime) setError(errorMessage(e))
     }
   }
   async function test() {
     const lifetime = scope.current
-    if (!lifetime || lifetime.signal.aborted || busy || testRequest.current) return
+    if (!lifetime || lifetime.signal.aborted || blocked || testRequest.current) return
     const controller = new AbortController()
     testRequest.current = controller
     const current = () => !lifetime.signal.aborted && !controller.signal.aborted && testRequest.current === controller
@@ -172,7 +200,7 @@ export function LocalConnectorPanel({
             />
           </label>
           <p className={styles.hint}>生成新令牌会撤销旧连接器身份和租约。使用新的本机身份文件重新配对。</p>
-          <button type="button" className={styles.primary} disabled={busy} onClick={() => void pair()}>
+          <button type="button" className={styles.primary} disabled={blocked} onClick={() => void pair()}>
             保存模型并生成一次性配对令牌 / 轮换身份
           </button>
           {pairing && (
@@ -247,7 +275,7 @@ export function LocalConnectorPanel({
           <button
             type="button"
             className={styles.secondary}
-            disabled={busy || !key || !model}
+            disabled={blocked || !key || !model}
             onClick={() => void test()}
           >
             {testing ? '测试调用进行中…' : '执行测试调用（产生真实用量）'}
@@ -261,6 +289,15 @@ export function LocalConnectorPanel({
       )}
       {error && <WorkspaceNotice error>{error}</WorkspaceNotice>}
       {notice && <WorkspaceNotice>{notice}</WorkspaceNotice>}
+      {highRisk.needsReauth && (
+        <ReauthDialog
+          onClose={() => {
+            if (dialogLifetime && !dialogLifetime.signal.aborted && scope.current === dialogLifetime)
+              clearPendingPairing()
+          }}
+          onSuccess={() => void retryPair(dialogLifetime)}
+        />
+      )}
     </section>
   )
 }

@@ -1,4 +1,11 @@
-import { auditControlPlane, jsonOk, readJsonBody, requireContext, routeError } from '../../../_lib/control-plane'
+import {
+  auditControlPlane,
+  jsonOk,
+  readJsonBody,
+  requireContext,
+  requireHighRiskContext,
+  routeError,
+} from '../../../_lib/control-plane'
 import { configureConnector, connectorState } from '@/lib/connectors/control'
 export const dynamic = 'force-dynamic'
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -11,7 +18,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 }
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const ctx = await requireContext(req, 'credential:rotate')
+    const ctx = await requireHighRiskContext(req, 'credential:rotate')
     const { id } = await params
     const body = await readJsonBody<{ models?: unknown }>(req)
     const result = await configureConnector(ctx, id, body?.models)
