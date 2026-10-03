@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import modelIDCases from '../../../tests/fixtures/connector-model-ids.json'
 
 const mocks = vi.hoisted(() => ({ query: vi.fn() }))
 vi.mock('@/db', () => ({ pool: { query: mocks.query } }))
 
-import { authorizeConnector, type ConnectorAuthorization } from './control'
+import { authorizeConnector, modelIDs, type ConnectorAuthorization } from './control'
 
 const bindings: ConnectorAuthorization = {
   leaseToken: 'nxlease_fixture',
@@ -34,6 +35,17 @@ function liveRows(readyModels: unknown = lease.ready_models, approvedModels: unk
 }
 
 beforeEach(() => mocks.query.mockReset())
+
+describe('connector model policy shared with the CLI', () => {
+  it.each(modelIDCases.valid)('accepts $name', ({ id }) => {
+    expect(modelIDs([id])).toEqual([id])
+  })
+
+  it.each(modelIDCases.invalid)('rejects $name', ({ id }) => {
+    expect(() => modelIDs([id])).toThrowError(expect.objectContaining({ code: 'invalid_models', status: 400 }))
+    expect(mocks.query).not.toHaveBeenCalled()
+  })
+})
 
 describe('connector model batch authorization', () => {
   it('authorizes one live batch and returns only requested, ready and approved models', async () => {
