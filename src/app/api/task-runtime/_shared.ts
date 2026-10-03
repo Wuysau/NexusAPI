@@ -1,4 +1,5 @@
 import { pool } from '@/db'
+import type { PoolClient } from 'pg'
 import { requireContext, routeError, apiError, type ControlPlaneContext } from '../_lib/control-plane'
 import { resolveQuotaProject } from '@/lib/quota/access'
 import { TaskRuntimeError } from '@/lib/task-runtime/configuration'
@@ -36,5 +37,31 @@ export async function taskScope(req: Request, id: string) {
   return {
     ctx,
     scope: { tenantId: ctx.tenantId, organizationId: ctx.organizationId, projectId: row.project_id } as TaskScope,
+  }
+}
+
+/** Keep current project authority locked through a Control Plane write. */
+export async function withProjectWrite<T>(
+  ctx: ControlPlaneContext,
+  scope: TaskScope,
+  write: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+  const client = await pool.connect()
+  let discardClient = false
+  try {
+    await client.query('BEGIN')
+    await resolveQuotaProject(client, ctx, scope.projectId, { write: true, lock: true })
+    const result = await write(client)
+    await client.query('COMMIT')
+    return result
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK')
+    } catch {
+      discardClient = true
+    }
+    throw error
+  } finally {
+    client.release(discardClient)
   }
 }

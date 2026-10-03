@@ -1,8 +1,7 @@
-import { pool } from '@/db'
 import { auditControlPlane, jsonOk, readJsonBody } from '../../../_lib/control-plane'
 import { requestTaskAction } from '@/lib/task-runtime/store'
 import { TaskRuntimeError } from '@/lib/task-runtime/configuration'
-import { taskScope, taskError } from '../../_shared'
+import { taskScope, taskError, withProjectWrite } from '../../_shared'
 export async function POST(req: Request, route: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await route.params
@@ -14,7 +13,8 @@ export async function POST(req: Request, route: { params: Promise<{ id: string }
       Object.keys(body).some((k) => k !== 'targetConnectionId')
     )
       throw new TaskRuntimeError('invalid_target_resource')
-    await requestTaskAction(pool, scope, id, 'switch', body.targetConnectionId)
+    const target = body.targetConnectionId
+    await withProjectWrite(ctx, scope, (client) => requestTaskAction(client, scope, id, 'switch', target))
     await auditControlPlane(
       ctx,
       'task.switch.requested',

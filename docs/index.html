@@ -455,6 +455,9 @@
                   先检查工作目录和上次执行结果，再点击“恢复任务”。如果任务已完成，还想沿用原目标继续工作，
                   在本地终端提交新指令。<code>TASK_ID</code> 可从任务卡片或下方状态命令获取。
                 </p>
+                <p>
+                  控制台恢复和切换请求在提交命令时校验当前组织及项目权限。当前权限已不允许操作或项目已归档时，请求会被拒绝；成功接受表示命令已排队，执行结果仍须在任务状态中确认。
+                </p>
                 <pre><code>npm run nexus -- status --project PROJECT_ID
 npm run nexus -- continue --project PROJECT_ID --task TASK_ID --instruction "继续完成剩余工作"</code></pre>
               </li>
