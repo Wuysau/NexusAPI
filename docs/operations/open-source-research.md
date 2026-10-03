@@ -54,6 +54,8 @@ The same principle applies to output: [OpenAI structured-output refusals](https:
 
 [LiteLLM's Anthropic image translation](https://github.com/BerriAI/litellm/blob/cede93e826b2c352de62dcc3bbe725f9728d0352/litellm/litellm_core_utils/prompt_templates/factory.py#L828) illustrates the need to translate canonical media parts before provider execution. NexusAPI independently converts a documented subset of `image_url` references/data into native image blocks, preserving tool relationships and validating unsupported semantics before credential/budget access. It performs no media download or local file read; system/developer content that cannot survive the current text conversion is rejected.
 
+[OpenAI's request-ID metadata](https://github.com/openai/openai-python/blob/becc1d20eed83c1b8d85e15dc131a372d9dc7813/src/openai/_models.py#L133-L143) and [Anthropic's corresponding metadata](https://github.com/anthropics/anthropic-sdk-python/blob/18f25547f20cf5f01da69ac611e700e3bc9ebf21/src/anthropic/_models.py#L125-L132) support provider debugging separately from response content and token usage. NexusAPI preserves that separation when projecting terminal facts: reported identifiers exceeding its existing 512-code-point event limit are omitted from all durable projections, while compliant values and reliable usage remain unchanged. The limit is NexusAPI's contract policy; the SDKs are not claimed to enforce it. No provider identifier is truncated, hashed or substituted for the Gateway's authoritative request identity.
+
 ## External contracts
 
 - [Stripe Checkout fulfillment](https://docs.stripe.com/checkout/fulfillment): complete orders via verified server callbacks, not browser redirects.
