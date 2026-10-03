@@ -54,6 +54,8 @@ export type KeyVerifyResult = { ok: true; key: ApiKeyRow } | { ok: false; reason
 export interface CreateDownstreamKeyInput {
   tenantId: string
   name: string
+  /** Optional project binding already authorized by the caller. */
+  projectId?: string | null
   scopes?: readonly string[]
   expiresAt?: Date | null
   actorUserId?: string
@@ -174,6 +176,13 @@ export async function createDownstreamKey(
       },
       client,
     )
+    if (input.projectId) {
+      await client.query(`UPDATE downstream_api_keys SET project_id = $1 WHERE id = $2 AND tenant_id = $3`, [
+        input.projectId,
+        key.id,
+        input.tenantId,
+      ])
+    }
     if (input.expiresAt) {
       await client.query(`UPDATE downstream_api_keys SET expires_at = $1 WHERE id = $2 AND tenant_id = $3`, [
         input.expiresAt,
@@ -181,6 +190,24 @@ export async function createDownstreamKey(
         input.tenantId,
       ])
     }
+    // Scope, expiry and mandatory audit become visible together.
+    await logAudit({
+      actorUserId: input.actorUserId,
+      tenantId: input.tenantId,
+      action: AUDIT_ACTIONS.apiKeyCreated,
+      targetType: 'downstream_api_key',
+      targetId: key.id,
+      metadata: {
+        name,
+        scopes,
+        prefix: API_KEY_PREFIX,
+        fingerprint,
+        expiresAt: input.expiresAt ? input.expiresAt.toISOString() : null,
+      },
+      ip: input.ip,
+      traceId: input.traceId,
+      client,
+    })
     await client.query('COMMIT')
   } catch (err) {
     try {
@@ -194,24 +221,6 @@ export async function createDownstreamKey(
   }
 
   key.expiresAt = input.expiresAt ?? null
-
-  // Fail-closed: a key that cannot be audited is not handed out.
-  await logAudit({
-    actorUserId: input.actorUserId,
-    tenantId: input.tenantId,
-    action: AUDIT_ACTIONS.apiKeyCreated,
-    targetType: 'downstream_api_key',
-    targetId: key.id,
-    metadata: {
-      name,
-      scopes,
-      prefix: API_KEY_PREFIX,
-      fingerprint,
-      expiresAt: input.expiresAt ? input.expiresAt.toISOString() : null,
-    },
-    ip: input.ip,
-    traceId: input.traceId,
-  })
 
   return { plaintext, key }
 }

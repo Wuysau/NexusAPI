@@ -85,17 +85,12 @@ export async function POST(req: Request) {
       const { plaintext, key } = await createDownstreamKey({
         tenantId: ctx.tenantId,
         name,
+        projectId,
         scopes,
         expiresAt,
         actorUserId: ctx.principal.userId,
         ip: clientIp(req),
       })
-      if (projectId)
-        await pool.query('UPDATE downstream_api_keys SET project_id = $1 WHERE id = $2 AND tenant_id = $3', [
-          projectId,
-          key.id,
-          ctx.tenantId,
-        ])
       return jsonOk({ token: plaintext, key: { ...safeKey(key), projectId } }, 201)
     } catch (error) {
       if (error instanceof ApiKeyError) return apiError(400, error.code, error.message)
