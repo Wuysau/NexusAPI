@@ -6,6 +6,22 @@ Published SQL, timestamps and checksums remain unchanged. Migration 0005 repeats
 
 `DATABASE_URL=... npm run db:migration:verify` checks Drizzle metadata and executes real PostgreSQL migration tests, including schema resets. Supply an isolated disposable test database; this command is not a deployment command.
 
+## Authoring schema migrations
+
+`npm run db:generate` compares `src/db/schema.ts` with the latest generator snapshot; it does not compare the ORM schema with a live database or reconstruct it from published SQL. `drizzle-kit check` validates migration metadata/history and does not establish that the latest snapshot matches the current schema. Keep those checks separate from canonical SQL deployment.
+
+For a normal ORM schema change, review the generated SQL, journal entry and snapshot together before committing. For manually authored schema DDL, update the ORM declaration and append its current-schema snapshot as part of the same change. Generate and review that snapshot in an isolated copy with a minimal `dialect`/`schema`/`out` config and no database credentials; verify that its differences correspond to the new canonical SQL before adopting it. Do not apply or publish duplicate SQL for changes already present in the journal. Preserve published SQL, journal timestamps/checksums and older snapshots. SQL-only functions, triggers or data migrations do not need fictitious ORM schema changes. In the installed Kit 0.31.10, `generate --custom` retains the previous schema shape, so an empty custom migration alone does not synchronize a stale baseline.
+
+The appended `0026_snapshot.json` records the current ORM schema after the manual connector migration and provider metadata indexes. Its parent is the prior 0022 snapshot; intervening SQL-only migrations remain unchanged. This metadata adds no database migration and does not certify every live constraint name or SQL-only invariant. In particular, 0025's unnamed inline UNIQUE/foreign-key constraints have PostgreSQL names that differ from the ORM's generated names. Before changing or removing a manually authored constraint, inspect its actual `pg_constraint` name and review the generated ALTER/DROP statements against it; an unchanged generation check does not verify those future operations.
+
+Run the offline generator regression after a migration change:
+
+```bash
+npx vitest run tests/contract/migration-generation.test.ts
+```
+
+It runs the installed CLI against temporary copies, requires unchanged generation to emit no SQL or metadata changes, and verifies an intentional isolated schema addition. It reads no `.env` or database credentials. Run `npm run db:migration:verify` separately with an explicitly injected disposable PostgreSQL database to verify the canonical SQL and legacy import.
+
 ## Migration 0026: provider diagnostic metadata
 
 `0026_provider_request_metadata` replaces the two tenant/provider-identifier unique indexes with ordinary lookup indexes. It preserves existing rows and opaque identifiers. The original secondary provider-ID deduplication assumed a shared namespace across providers, accounts and custom endpoints; diagnostic metadata does not establish that operation identity. Request/attempt primary keys, scoped client idempotency claims, tenant/event-ID uniqueness, full event replay checks and request-derived ledger keys remain the accounting protections. Two distinct operations can retain the same upstream correlation value.
