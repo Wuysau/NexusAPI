@@ -52,8 +52,9 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    const ctx = await requireContext(req, 'apikey:create')
+    await requireContext(req, 'apikey:create')
     const body = await readJsonBody<CreateKeyBody>(req)
+    const ctx = await requireContext(req, 'apikey:create')
     const name = typeof body?.name === 'string' ? body.name.trim() : ''
     if (!name) return apiError(400, 'invalid_name', '请填写密钥名称')
     if (name.length > 80) return apiError(400, 'invalid_name', '密钥名称不能超过 80 个字符')
