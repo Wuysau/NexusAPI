@@ -64,6 +64,8 @@ The [Anthropic SDK response request ID](https://github.com/anthropics/anthropic-
 
 That diagnostic-metadata separation also protects terminal persistence from values [PostgreSQL text cannot store](https://www.postgresql.org/docs/17/datatype-character.html). NexusAPI omits optional IDs containing NUL or invalid UTF-8 from its copied terminal usage while retaining reliable token evidence and original adapter observations. [Go JSON replacement of invalid UTF-8](https://pkg.go.dev/encoding/json#Marshal) can hide raw-header incompatibility during event validation; replacement is not adopted as a new correlation identity. Valid opaque Unicode values, including a literal U+FFFD, remain exact. These are NexusAPI storage rules, not a claim that SDKs apply the same omission policy or normal providers emit malformed IDs.
 
+[Drizzle's migration generator](https://orm.drizzle.team/docs/drizzle-kit-generate) compares schema snapshots, while its [metadata check](https://orm.drizzle.team/docs/drizzle-kit-check) checks migration history. NexusAPI applies that distinction to manual schema migrations: append the current generator baseline without rewriting published SQL, and test real unchanged generation against an isolated credential-free copy. A deliberate isolated schema addition remains detectable. The installed Kit 0.31.10 defines the tested file layout and custom-migration behavior; this check does not replace canonical SQL migration tests or live-database introspection.
+
 ## External contracts
 
 - [Stripe Checkout fulfillment](https://docs.stripe.com/checkout/fulfillment): complete orders via verified server callbacks, not browser redirects.
