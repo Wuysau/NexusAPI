@@ -8,6 +8,7 @@ import { createDownstreamKey, ApiKeyError } from '@/lib/auth/api-keys'
 import { pool } from '@/db'
 import { listApiKeys } from '@/lib/db/repositories'
 import { API_KEY_SCOPES } from '@/lib/auth/api-keys'
+import { resolveManagedProject } from '@/lib/workspace/management'
 import { apiError, clientIp, jsonOk, readJsonBody, requireContext, routeError } from '../_lib/control-plane'
 
 export const dynamic = 'force-dynamic'
@@ -74,6 +75,7 @@ export async function POST(req: Request) {
     try {
       const projectId = typeof body?.projectId === 'string' ? body.projectId : null
       if (projectId) {
+        await resolveManagedProject(pool, ctx, projectId)
         const project = await pool.query(
           'SELECT id FROM projects WHERE id = $1 AND tenant_id = $2 AND archived_at IS NULL',
           [projectId, ctx.tenantId],
