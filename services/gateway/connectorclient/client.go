@@ -74,7 +74,7 @@ var modelIDPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$`)
 func (c *Config) Validate() error {
 	for _, raw := range []string{c.ControlURL, c.GatewayURL} {
 		u, e := url.Parse(raw)
-		if e != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+		if e != nil || u.Host == "" || u.User != nil || strings.ContainsAny(raw, "?#") || (u.Path != "" && u.Path != "/") {
 			return errors.New("remote URL must be an HTTPS origin")
 		}
 		ip, _ := netip.ParseAddr(u.Hostname())
@@ -83,7 +83,7 @@ func (c *Config) Validate() error {
 		}
 	}
 	u, e := url.Parse(c.UpstreamURL)
-	if e != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Scheme != "http" && u.Scheme != "https") || strings.TrimRight(u.Path, "/") != "/v1" {
+	if e != nil || u.User != nil || strings.ContainsAny(c.UpstreamURL, "?#") || (u.Scheme != "http" && u.Scheme != "https") || strings.TrimRight(u.Path, "/") != "/v1" {
 		return errors.New("upstream must be an explicit private IP OpenAI /v1 endpoint")
 	}
 	host := u.Hostname()
@@ -93,12 +93,14 @@ func (c *Config) Validate() error {
 		if u.Port() == "" {
 			u.Host = host
 		}
-		c.UpstreamURL = u.String()
 	}
 	ip, e := netip.ParseAddr(host)
 	if e != nil || (!ip.IsLoopback() && !ip.IsPrivate()) || ip.IsUnspecified() {
 		return errors.New("upstream requires a loopback or private literal IP")
 	}
+	// Fixed endpoint suffixes must extend the validated path, not an encoded hint.
+	u.Path, u.RawPath = "/v1", ""
+	c.UpstreamURL = u.String()
 	if len(c.Models) < 1 || len(c.Models) > 64 {
 		return errors.New("explicit local model allowlist required")
 	}

@@ -84,6 +84,8 @@ That diagnostic-metadata separation also protects terminal persistence from valu
 
 [LiteLLM's model access](https://docs.litellm.ai/docs/proxy/model_access) applies a configured model restriction to both discovery and calls. NexusAPI applies the same consistency principle to saved local connector Chat eligibility: one predicate gates signed Channel candidates, live authorization and management readiness. Public `chat` and historical `text` grant the existing Chat transport; unsupported-only selections remain saved facts and grant no Chat. An old signed bundle cannot bypass the live check, and explicit configuration restores service without changing connector identity. The current streaming behavior and ordinary Channel routing remain unchanged.
 
+The same [Envoy startup-validation principle](https://www.envoyproxy.io/docs/envoy/latest/operations/cli#cmdoption-mode) applies to connector endpoint configuration. Validate the supplied URL representation before credential input or network actions, and store the already-approved upstream as a canonical `/v1` base. [Go 1.24's URL implementation](https://github.com/golang/go/blob/go1.24.0/src/net/url/url.go) distinguishes empty queries, discards empty fragments during parsing and retains encoded path hints; inspecting only decoded values cannot establish the fixed wire paths. NexusAPI rejects literal query/fragment delimiters and clears the accepted upstream path hint, while retaining exact remote identity-origin bindings and existing private-target/TLS policies.
+
 ## External contracts
 
 - [Stripe Checkout fulfillment](https://docs.stripe.com/checkout/fulfillment): complete orders via verified server callbacks, not browser redirects.
