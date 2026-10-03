@@ -767,7 +767,8 @@ npm run nexus -- continue --project PROJECT_ID --task TASK_ID --instruction "继
                 <code>go build -o nexus-connector ./cmd/nexus-connector</code>（services/gateway 目录）构建独立程序。
               </li>
               <li>
-                在连接页添加“本地连接器”、绑定项目，在详情填写多个准确模型 ID，生成仅显示一次、10 分钟有效的配对令牌。
+                组织所有者或管理员在连接页添加“本地连接器”、绑定项目，在详情填写多个准确模型 ID，生成仅显示一次、10
+                分钟有效的配对令牌。签发和轮换会检查当前管理员权限；操作期间已降权时会拒绝，保留现有身份与租约。
               </li>
               <li>
                 按连接详情示例创建本机 connector.json，配置远端 HTTPS 地址、本机
