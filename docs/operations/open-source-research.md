@@ -96,6 +96,8 @@ The same policy consistency applies to irreversible connection revocation. [Next
 
 The same action-and-resource check now covers the legacy project policy-preview API. NexusAPI reuses its managed-project authorization and connection visibility predicate before returning provider/mode/status or appending preview success audit. Ordinary members cannot inspect another private project or another owner's unbound connection through that endpoint. Existing visible-resource decisions, organization management roles and archive refusal remain. This preview is advisory; it creates no Channel binding and grants no model execution authority.
 
+The existing bounded-dependency design also applies to connector singleton acquisition. [Installed pgx v5.7.6](https://github.com/jackc/pgx/blob/v5.7.6/pgconn/pgconn.go#L244-L260) uses the caller context when connect_timeout is omitted; a TCP peer that stops during PostgreSQL startup otherwise waits for process cancellation. NexusAPI gives Connect and the first advisory-lock query one two-second acquisition budget, while retaining the original process context for lifetime heartbeats. Synthetic real-protocol tests cover both stalled phases, caller cancellation, occupied-lock rejection and heartbeats beyond that deadline. The single-Gateway deployment restriction and fixed errors remain.
+
 ## External contracts
 
 - [Stripe Checkout fulfillment](https://docs.stripe.com/checkout/fulfillment): complete orders via verified server callbacks, not browser redirects.

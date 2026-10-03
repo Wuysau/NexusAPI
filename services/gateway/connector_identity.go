@@ -62,13 +62,15 @@ func (p *Proxy) resolveChannelCredential(ctx context.Context, c *SnapshotChannel
 // A dedicated database session holds the lock for the entire Gateway lifetime.
 // Heartbeat failure cancels the process, so a disconnected lock holder cannot keep serving.
 func connectorSingleton(ctx context.Context, databaseURL string, stop context.CancelFunc) (func(), error) {
-	conn, err := pgx.Connect(ctx, databaseURL)
+	acquireCtx, cancelAcquire := context.WithTimeout(ctx, readinessTimeout)
+	defer cancelAcquire()
+	conn, err := pgx.Connect(acquireCtx, databaseURL)
 	if err != nil {
 		return nil, errors.New("connector singleton database unavailable")
 	}
 	var acquired bool
-	if conn.QueryRow(ctx, "SELECT pg_try_advisory_lock(782349201,1)").Scan(&acquired) != nil || !acquired {
-		_ = conn.Close(context.Background())
+	if conn.QueryRow(acquireCtx, "SELECT pg_try_advisory_lock(782349201,1)").Scan(&acquired) != nil || !acquired {
+		_ = conn.Close(acquireCtx)
 		return nil, errors.New("connector transport requires exactly one Gateway; singleton lock is held")
 	}
 	leaseCtx, cancel := context.WithCancel(ctx)
