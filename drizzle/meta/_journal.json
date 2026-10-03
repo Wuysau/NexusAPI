@@ -183,6 +183,13 @@
       "when": 1790640000002,
       "tag": "0025_local_connectors",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1791016581000,
+      "tag": "0026_provider_request_metadata",
+      "breakpoints": true
     }
   ]
 }

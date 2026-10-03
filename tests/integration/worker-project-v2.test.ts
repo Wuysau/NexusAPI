@@ -645,3 +645,128 @@ it('keeps managed price mandatory and unpriced BYOK pins immutable in PostgreSQL
     pool.query("UPDATE attempts SET price_version_id='price' WHERE id=$1", [event.attempt_id]),
   ).rejects.toThrow('captured attempt identity and pins are immutable')
 })
+
+it.each([
+  { name: 'managed', mode: 'managed' as const, priceId: 'price', reason: null },
+  { name: 'byok', mode: 'byok' as const, priceId: 'price', reason: null },
+  { name: 'unpriced_byok', mode: 'byok' as const, priceId: null, reason: 'missing_price_version' },
+  { name: 'unknown_byok', mode: 'byok' as const, priceId: 'price', reason: 'unknown_completion' },
+])(
+  'keeps repeated provider metadata separate for distinct $name operations',
+  async ({ name, mode, priceId, reason }) => {
+    const events = [
+      await fixture(undefined, mode, undefined, priceId),
+      await fixture(undefined, mode, undefined, priceId),
+    ]
+    const requestIds = events.map((event) => event.request_id)
+    const providerRequestId = `req_r39_diagnostic_${name}`
+    expect(new Set(requestIds).size).toBe(2)
+    expect(new Set(events.map((event) => event.attempt_id)).size).toBe(2)
+    expect(new Set(events.map((event) => event.event_id)).size).toBe(2)
+    // Independent frozen operation facts isolate the Worker anchor from Gateway attempt persistence.
+    for (const event of events) {
+      event.provider_request_id = providerRequestId
+      if (reason === 'unknown_completion') {
+        event.status = 'unknown'
+        event.usage.estimated = true
+        await pool.query("UPDATE request_records SET status='unknown' WHERE tenant_id='tenant' AND id=$1", [
+          event.request_id,
+        ])
+        await pool.query("UPDATE attempts SET status='unknown' WHERE tenant_id='tenant' AND id=$1", [event.attempt_id])
+      }
+    }
+    const walletBalance = async () => {
+      const client = await pool.connect()
+      try {
+        return await getWalletBalance('tenant', 'wallet', client)
+      } finally {
+        client.release()
+      }
+    }
+    const facts = async () => ({
+      anchors: (
+        await pool.query(
+          "SELECT * FROM usage_events WHERE tenant_id='tenant' AND request_id=ANY($1::text[]) ORDER BY request_id,id",
+          [requestIds],
+        )
+      ).rows,
+      records: (
+        await pool.query(
+          "SELECT * FROM usage_records WHERE tenant_id='tenant' AND request_id=ANY($1::text[]) ORDER BY request_id,id",
+          [requestIds],
+        )
+      ).rows,
+      ledger: (
+        await pool.query(
+          "SELECT * FROM ledger_transactions WHERE tenant_id='tenant' AND reference_id=ANY($1::text[]) ORDER BY reference_id,id",
+          [requestIds],
+        )
+      ).rows,
+      cases: (
+        await pool.query(
+          "SELECT * FROM reconciliation_cases WHERE tenant_id='tenant' AND request_id=ANY($1::text[]) ORDER BY request_id,id",
+          [requestIds],
+        )
+      ).rows,
+    })
+    const walletBefore = await walletBalance()
+    const charge = mode === 'managed' ? 290n : 0n
+    for (const event of events)
+      expect(await deliver(event)).toMatchObject({
+        requestId: event.request_id,
+        disposition: reason ? 'reconciled' : 'settled',
+        channelKind: mode === 'managed' ? 'platform' : 'byok',
+        chargeMicros: charge,
+        ...(reason ? { detail: reason } : {}),
+      })
+    const stored = await facts()
+    expect(stored.anchors).toHaveLength(2)
+    expect(new Set(stored.anchors.map((anchor) => anchor.id)).size).toBe(2)
+    expect(stored.records).toHaveLength(reason ? 0 : 2)
+    expect(stored.ledger).toHaveLength(reason ? 0 : 2)
+    expect(stored.cases).toHaveLength(reason ? 2 : 0)
+    for (const event of events) {
+      const anchor = stored.anchors.find((row) => row.request_id === event.request_id)
+      expect(anchor).toMatchObject({
+        attempt_id: event.attempt_id,
+        event_id: event.event_id,
+        provider_request_id: providerRequestId,
+        event_type: `usage.v2.${event.status}`,
+        payload: { event },
+      })
+      expect(anchor.payload.event).toEqual(event)
+      if (reason) {
+        expect(stored.cases.filter((row) => row.request_id === event.request_id)).toEqual([
+          expect.objectContaining({ usage_event_id: anchor.id, reason, status: 'open' }),
+        ])
+      } else {
+        expect(stored.records.filter((row) => row.request_id === event.request_id)).toEqual([
+          expect.objectContaining({
+            usage_event_id: anchor.id,
+            input_tokens: 50,
+            output_tokens: 10,
+            cached_tokens: 50,
+            reasoning_tokens: 10,
+            upstream_cost_amount: '290',
+            charge_amount: charge.toString(),
+            authoritative_metering: event,
+            calculator_version: 'nexus-billing-inclusive-v3',
+          }),
+        ])
+        expect(stored.ledger.filter((row) => row.reference_id === event.request_id)).toEqual([
+          expect.objectContaining({ idempotency_key: `usage:${event.request_id}` }),
+        ])
+      }
+      expect(await deliver(event)).toMatchObject({ requestId: event.request_id, disposition: 'replayed' })
+    }
+    const changedMetadata = structuredClone(events[0])
+    changedMetadata.provider_request_id = `${providerRequestId}_changed`
+    await expect(deliver(changedMetadata)).rejects.toMatchObject({ code: 'event_replay_mismatch' })
+    const changedUsage = structuredClone(events[1])
+    changedUsage.usage.input_tokens = 101
+    changedUsage.usage.total_tokens = 121
+    await expect(deliver(changedUsage)).rejects.toMatchObject({ code: 'event_replay_mismatch' })
+    expect(await facts()).toEqual(stored)
+    expect(await walletBalance()).toBe(walletBefore - 2n * charge)
+  },
+)

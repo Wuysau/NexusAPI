@@ -55,6 +55,71 @@ describe('canonical journal migration', () => {
     }
   })
 
+  it('upgrades populated provider metadata indexes without weakening operation identities', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'nexus-provider-metadata-'))
+    try {
+      cpSync('drizzle', dir, { recursive: true })
+      const previous = { ...journal, entries: journal.entries.slice(0, 26) }
+      expect(journal.entries[26].tag).toBe('0026_provider_request_metadata')
+      writeFileSync(join(dir, 'meta/_journal.json'), JSON.stringify(previous))
+      expect((await runMigrations(pool, { migrationsFolder: dir })).applied).toBe(26)
+      await pool.query(`
+        INSERT INTO organizations(id,tenant_id,name,slug) VALUES('org-metadata','tenant-metadata','Metadata','metadata');
+        INSERT INTO request_records(id,tenant_id,organization_id,request_model,channel_kind)
+          VALUES('request-one','tenant-metadata','org-metadata','model','byok'),
+                ('request-two','tenant-metadata','org-metadata','model','byok');
+        INSERT INTO attempts(id,request_id,tenant_id,attempt_number,upstream_request_id)
+          VALUES('attempt-one','request-one','tenant-metadata',1,'opaque-provider-id');
+        INSERT INTO usage_events(id,tenant_id,request_id,attempt_id,event_id,event_type,provider_request_id)
+          VALUES('usage-one','tenant-metadata','request-one','attempt-one','event-one','usage.v2.completed','opaque-provider-id')`)
+      const originalAttempt = (await pool.query('SELECT * FROM attempts ORDER BY id')).rows
+      const originalEvent = (await pool.query('SELECT * FROM usage_events ORDER BY id')).rows
+      const originalHistory = (await pool.query('SELECT hash,created_at FROM drizzle.__drizzle_migrations ORDER BY id'))
+        .rows
+      expect((await runMigrations(pool)).applied).toBe(journal.entries.length - 26)
+      expect((await pool.query('SELECT * FROM attempts ORDER BY id')).rows).toEqual(originalAttempt)
+      expect((await pool.query('SELECT * FROM usage_events ORDER BY id')).rows).toEqual(originalEvent)
+      expect(
+        (await pool.query('SELECT hash,created_at FROM drizzle.__drizzle_migrations ORDER BY id')).rows.slice(0, 26),
+      ).toEqual(originalHistory)
+      const indexes = (
+        await pool.query(`SELECT c.relname AS name,i.indisunique AS unique
+          FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid
+          WHERE c.relname IN ('attempts_upstream_request_idx','usage_events_tenant_provider_req_idx','usage_events_tenant_event_idx')
+          ORDER BY c.relname`)
+      ).rows
+      expect(indexes).toEqual([
+        { name: 'attempts_upstream_request_idx', unique: false },
+        { name: 'usage_events_tenant_event_idx', unique: true },
+        { name: 'usage_events_tenant_provider_req_idx', unique: false },
+      ])
+      await pool.query(`
+        INSERT INTO attempts(id,request_id,tenant_id,attempt_number,upstream_request_id)
+          VALUES('attempt-two','request-two','tenant-metadata',1,'opaque-provider-id');
+        INSERT INTO usage_events(id,tenant_id,request_id,attempt_id,event_id,event_type,provider_request_id)
+          VALUES('usage-two','tenant-metadata','request-two','attempt-two','event-two','usage.v2.completed','opaque-provider-id')`)
+      expect((await pool.query('SELECT upstream_request_id FROM attempts ORDER BY id')).rows).toEqual([
+        { upstream_request_id: 'opaque-provider-id' },
+        { upstream_request_id: 'opaque-provider-id' },
+      ])
+      await expect(
+        pool.query(
+          "INSERT INTO attempts(id,request_id,tenant_id,attempt_number) VALUES('attempt-one','request-two','tenant-metadata',2)",
+        ),
+      ).rejects.toMatchObject({ code: '23505', constraint: 'attempts_pkey' })
+      await expect(
+        pool.query(
+          "INSERT INTO usage_events(id,tenant_id,event_id,event_type) VALUES('usage-three','tenant-metadata','event-one','usage.v2.completed')",
+        ),
+      ).rejects.toMatchObject({ code: '23505', constraint: 'usage_events_tenant_event_idx' })
+      expect((await runMigrations(pool)).applied).toBe(0)
+      expect((await pool.query('SELECT * FROM attempts')).rowCount).toBe(2)
+      expect((await pool.query('SELECT * FROM usage_events')).rowCount).toBe(2)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it.each(['hash', 'timestamp', 'gap', 'duplicate'])('rejects invalid complete applied history: %s', async (kind) => {
     await through0004()
     if (kind === 'hash') await pool.query("UPDATE drizzle.__drizzle_migrations SET hash='bad' WHERE id=2")
