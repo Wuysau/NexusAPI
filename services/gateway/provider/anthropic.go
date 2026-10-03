@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	anthropicAdapterVersion = "1.0.7"
+	anthropicAdapterVersion = "1.0.8"
 	anthropicAPIVersion     = "2023-06-01"
 	// defaultAnthropicMaxTokens is applied when the client omits max_tokens,
 	// which the Messages API rejects. Chosen to match the legacy gateway's
@@ -195,22 +195,25 @@ func (a *Anthropic) Stream(ctx context.Context, client *http.Client, call *Provi
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 		return nil, newUpstreamHTTPError(resp.StatusCode, body, resp.Header, time.Now())
 	}
+	headerRequestID := requestIDFromHeaders(resp.Header)
 	return &anthropicStream{
-		resp:              resp,
-		reader:            NewSSEReader(resp.Body),
-		providerRequestID: requestIDFromHeaders(resp.Header),
-		usage:             &CanonicalUsage{},
+		resp:                   resp,
+		reader:                 NewSSEReader(resp.Body),
+		providerRequestID:      headerRequestID,
+		headerRequestIDPresent: headerRequestID != "",
+		usage:                  &CanonicalUsage{},
 	}, nil
 }
 
 type anthropicStream struct {
-	observedWire      *anthropicObservedWire
-	resp              *http.Response
-	reader            *SSEReader
-	providerRequestID string
-	usage             *CanonicalUsage
-	finished          bool
-	toolIndexes       map[int]int
+	observedWire           *anthropicObservedWire
+	resp                   *http.Response
+	reader                 *SSEReader
+	providerRequestID      string
+	headerRequestIDPresent bool
+	usage                  *CanonicalUsage
+	finished               bool
+	toolIndexes            map[int]int
 	// closed is written by Close() on the request goroutine and read by Next()
 	// on the relay's read goroutine, so it must be atomic. finished and usage
 	// are only ever touched by Next(), which the relay calls from one goroutine
@@ -292,7 +295,7 @@ func (s *anthropicStream) Next() (CanonicalChunk, error) {
 			if wire.Message != nil {
 				s.usage.InputTokens = wire.Message.Usage.InputTokens
 				s.usage.CachedInputTokens = wire.Message.Usage.CacheReadInputTokens
-				if wire.Message.ID != "" {
+				if wire.Message.ID != "" && !s.headerRequestIDPresent {
 					s.providerRequestID = wire.Message.ID
 				}
 			}

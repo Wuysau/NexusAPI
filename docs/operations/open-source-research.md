@@ -60,6 +60,8 @@ The same principle applies to output: [OpenAI structured-output refusals](https:
 
 The [OpenAI SDK response request ID](https://github.com/openai/openai-python/blob/v1.109.1/src/openai/_response.py#L255-L256) is distinct from a [Chat completion chunk's ID](https://github.com/openai/openai-python/blob/v1.109.1/src/openai/types/chat/chat_completion_chunk.py#L100-L102). NexusAPI's compatible stream adapter preserves the already captured HTTP identifier on actual reported usage, including reliable evidence retained after a stream failure. Optional header metadata never creates usage observations. The Gateway keeps its own public request/completion identity, existing metadata bound and accounting replay protections.
 
+The [Anthropic SDK response request ID](https://github.com/anthropics/anthropic-sdk-python/blob/18f25547f20cf5f01da69ac611e700e3bc9ebf21/src/anthropic/_response.py#L299-L301) is also separate from the [message object's ID](https://github.com/anthropics/anthropic-sdk-python/blob/18f25547f20cf5f01da69ac611e700e3bc9ebf21/src/anthropic/types/message.py#L18-L22). NexusAPI's native adapter retains the initially selected header through message start; the message ID remains its existing fallback when no header is available. An immutable presence flag preserves the old last-nonempty-body behavior without confusing the two namespaces. Token observations and the existing message-stop metadata dispatch are unchanged.
+
 ## External contracts
 
 - [Stripe Checkout fulfillment](https://docs.stripe.com/checkout/fulfillment): complete orders via verified server callbacks, not browser redirects.
