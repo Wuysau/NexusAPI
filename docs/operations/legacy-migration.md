@@ -6,6 +6,18 @@ Published SQL, timestamps and checksums remain unchanged. Migration 0005 repeats
 
 `DATABASE_URL=... npm run db:migration:verify` checks Drizzle metadata and executes real PostgreSQL migration tests, including schema resets. Supply an isolated disposable test database; this command is not a deployment command.
 
+## Migration 0026: provider diagnostic metadata
+
+`0026_provider_request_metadata` replaces the two tenant/provider-identifier unique indexes with ordinary lookup indexes. It preserves existing rows and opaque identifiers. The original secondary provider-ID deduplication assumed a shared namespace across providers, accounts and custom endpoints; diagnostic metadata does not establish that operation identity. Request/attempt primary keys, scoped client idempotency claims, tenant/event-ID uniqueness, full event replay checks and request-derived ledger keys remain the accounting protections. Two distinct operations can retain the same upstream correlation value.
+
+Deploy this migration in a maintenance window:
+
+1. Prepare the compatible Gateway build, drain active calls, and stop every Gateway writer and Worker consumer.
+2. Inject the intended deployment `DATABASE_URL` and run `npm run db:migrate` with the normal migration runner. Index replacement is transactional; ordinary index construction takes write locks.
+3. Restart the compatible Gateway and Worker builds, verify readiness, and resume calls. The Gateway build must use plain attempt INSERTs rather than `ON CONFLICT (tenant_id, upstream_request_id)`.
+
+Older Gateway binaries cannot write attempts after this migration because their conflict target requires the removed unique index, including for pending attempts with a null identifier. The compatible writer build is the rollback floor. Restoring old global uniqueness can fail once valid repeated identifiers have been stored; do not use it as an automatic rollback. Published earlier migrations and their checksums remain unchanged.
+
 ## Prepare ownership and recovery evidence
 
 Stop every legacy writer, drain reservations, and keep writes frozen through final verification. Take a protected database backup, record its SHA-256 and storage reference, and verify it restores into a separate database. Neither the manifest nor the importer proves an operator actually froze external applications or stored a backup: those references must point to reviewed operational evidence. Import transactions additionally take SHARE locks on all four source tables and serialize importers with an advisory lock.

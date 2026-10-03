@@ -1501,7 +1501,7 @@ export const attempts = pgTable(
   (t) => ({
     attReqIdx: index('attempts_request_idx').on(t.requestId),
     attTenantIdx: index('attempts_tenant_idx').on(t.tenantId, t.createdAt),
-    attUpstreamReqIdx: uniqueIndex('attempts_upstream_request_idx').on(t.tenantId, t.upstreamRequestId),
+    attUpstreamReqIdx: index('attempts_upstream_request_idx').on(t.tenantId, t.upstreamRequestId),
   }),
 )
 
@@ -1523,7 +1523,7 @@ export const usageEvents = pgTable(
   },
   (t) => ({
     ueTenantEventIdx: uniqueIndex('usage_events_tenant_event_idx').on(t.tenantId, t.eventId),
-    ueTenantProviderReqIdx: uniqueIndex('usage_events_tenant_provider_req_idx').on(t.tenantId, t.providerRequestId),
+    ueTenantProviderReqIdx: index('usage_events_tenant_provider_req_idx').on(t.tenantId, t.providerRequestId),
     ueRequestLatestIdx: index('usage_events_request_latest_idx').on(
       t.tenantId,
       t.requestId,

@@ -323,8 +323,7 @@ INSERT INTO attempts (
   $10,$11,$12,$13,
   $14,$15,$16,$17,
   $18,$19
-)
-ON CONFLICT (tenant_id, upstream_request_id) DO NOTHING`
+)`
 
 const insertOutboxSQL = `
 INSERT INTO outbox_events (
@@ -334,8 +333,7 @@ ON CONFLICT (tenant_id, idempotency_key) DO NOTHING`
 
 const insertAttemptV2SQL = `
 INSERT INTO attempts(id,request_id,tenant_id,provider_id,provider_credential_id,channel_id,attempt_number,status,upstream_request_id,input_tokens,output_tokens,cached_tokens,reasoning_tokens,upstream_cost_amount,upstream_cost_currency,error_code,error_message,started_at,completed_at,connection_id,resolved_model,execution_mode,price_version_id,catalog_version_id,policy_version_id)
-VALUES($1,$2,$3,NULLIF($4,''),NULLIF($5,''),NULLIF($6,''),$7,$8,NULLIF($9,''),$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,NULLIF($20,''),$21,$22,NULLIF($23,''),$24,$25)
-ON CONFLICT (tenant_id,upstream_request_id) DO NOTHING`
+VALUES($1,$2,$3,NULLIF($4,''),NULLIF($5,''),NULLIF($6,''),$7,$8,NULLIF($9,''),$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,NULLIF($20,''),$21,$22,NULLIF($23,''),$24,$25)`
 
 // PersistTerminal writes all three rows in a single transaction.
 func (s *PostgresStore) PersistTerminal(ctx context.Context, rec *TerminalRecord) error {
