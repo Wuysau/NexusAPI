@@ -34,6 +34,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -743,6 +744,11 @@ type attemptResult struct {
 func (r *attemptResult) applyUsage(usage *provider.CanonicalUsage, req *chatRequest) {
 	if usage != nil && !usage.LegacyMissing {
 		r.usage = *usage
+		// Optional metadata must fit the canonical event without invalidating
+		// otherwise reliable usage. Preserve compliant identifiers verbatim.
+		if utf8.RuneCountInString(r.usage.ProviderRequestID) > 512 {
+			r.usage.ProviderRequestID = ""
+		}
 		return
 	}
 	r.usageEstimated = true
