@@ -99,9 +99,23 @@ func run() error {
 		return fmt.Errorf("outbox store: %w", err)
 	}
 	cleanup.add(store.Close)
-	if err := store.Ping(rootCtx); err != nil {
-		logger.Warn("database not reachable at startup; terminal writes will fail closed", "err", err.Error())
+	probeCtx, cancelProbe := context.WithTimeout(rootCtx, readinessTimeout)
+	probeErr := store.Ping(probeCtx)
+	cancelProbe()
+	store.healthy.Store(probeErr == nil)
+	if probeErr != nil {
+		logger.Warn("database not reachable at startup; terminal writes will fail closed")
 	}
+	healthCtx, cancelHealth := context.WithCancel(rootCtx)
+	healthDone := make(chan struct{})
+	go func() {
+		defer close(healthDone)
+		store.RunHealthProbe(healthCtx, time.Second)
+	}()
+	cleanup.add(func() {
+		cancelHealth()
+		<-healthDone
+	})
 
 	limiter, err := newGatewayLimiter(env.RedisURL, limits.MaxConcurrent, logger)
 	if err != nil {
