@@ -56,6 +56,8 @@ const refusalFragments = [refusalMarker.slice(0, 12), refusalMarker.slice(12)]
 const retryHeaderMarker = 'private retry header marker 12cb'
 const retryBodyMarker = 'private retry body marker 513a'
 const localDeadlineMarker = 'private local deadline output marker 93d2'
+const bomContentMarker = 'private initial BOM output marker c614'
+let bomFraming = { ending: '\n', first: 'content' }
 const reasoningToolCalls = [
   {
     id: 'call_lookup',
@@ -240,6 +242,26 @@ beforeAll(async () => {
     }
     const event = (delta: unknown, finish: string | null = null) =>
       `data: ${JSON.stringify({ id: 'mock-1', object: 'chat.completion.chunk', model: body.model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`
+    if (mode === 'sse_bom') {
+      res.writeHead(200, { 'content-type': 'text/event-stream' })
+      // Separate writes exercise the connector transport. Provider tests also
+      // force every BOM byte into a separate read, regardless of TCP buffering.
+      for (const byte of [0xef, 0xbb, 0xbf]) {
+        res.write(Buffer.from([byte]))
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      const frame = (payload: string) => payload.slice(0, -2) + bomFraming.ending.repeat(2)
+      const contentFrame = frame(event({ role: 'assistant', content: bomContentMarker }))
+      const usageFrame = frame(
+        `data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7, prompt_tokens_details: { cached_tokens: 0 }, completion_tokens_details: { reasoning_tokens: 0 } } })}\n\n`,
+      )
+      for (const next of bomFraming.first === 'usage' ? [usageFrame, contentFrame] : [contentFrame, usageFrame])
+        res.write(next)
+      res.write(frame(event({}, 'stop')))
+      finished = true
+      res.end(frame('data: [DONE]\n\n'))
+      return
+    }
     if (mode === 'body_deadline') {
       res.writeHead(200, { 'content-type': 'text/event-stream' })
       res.write(event({ role: 'assistant', content: localDeadlineMarker }))
@@ -888,6 +910,14 @@ it('unions eligible models for a connection while projecting each channel resour
   }
   expect((await (await state(admin(), params())).json()).readyModels).toEqual(models)
   expect(await projection()).toHaveLength(1)
+  // The running Gateway may have accepted a snapshot while these channels
+  // were disabled. Wait for its routed view after restoring the fixture.
+  await waitFor(async () => {
+    const response = await gatewayFetch('/v1/models')
+    if (!response.ok) return false
+    const listed = (await response.json()).data.map((model: { id: string }) => model.id).sort()
+    return JSON.stringify(listed) === JSON.stringify([...models].sort())
+  })
   expect(calls).toBe(beforeCalls)
 })
 
@@ -930,6 +960,171 @@ it('relays nonstreaming and streaming chat through the local process with durabl
   expect((await db.query('SELECT id FROM usage_records')).rowCount).toBe(0)
   expect((await db.query(`SELECT id FROM ledger_transactions WHERE type='usage'`)).rowCount).toBe(0)
   expect(JSON.stringify(events)).not.toContain('private prompt marker')
+})
+
+it('preserves initial BOM content and usage through the standalone connector for all SSE line endings', async () => {
+  const before = calls
+  const requestIds: string[] = []
+  type Frame = {
+    type?: string
+    delta?: string
+    choices?: Array<{ delta?: { content?: string }; finish_reason?: string | null }>
+    usage?: Record<string, unknown>
+    response?: {
+      status: string
+      output: Array<{ content: Array<{ text: string }> }>
+      usage: Record<string, unknown>
+    }
+  }
+  const frames = (text: string): Frame[] =>
+    text.split('\n\n').flatMap((block) => {
+      const line = block.split('\n').find((value) => value.startsWith('data: '))
+      return line && line !== 'data: [DONE]' ? [JSON.parse(line.slice(6)) as Frame] : []
+    })
+  const chatUsage = {
+    prompt_tokens: 5,
+    completion_tokens: 2,
+    total_tokens: 7,
+    prompt_tokens_details: { cached_tokens: 0 },
+    completion_tokens_details: { reasoning_tokens: 0 },
+  }
+  try {
+    mode = 'sse_bom'
+    for (const endpoint of ['/v1/chat/completions', '/v1/responses']) {
+      for (const ending of endpoint === '/v1/responses' ? ['\n'] : ['\n', '\r', '\r\n']) {
+        for (const first of ['content', 'usage']) {
+          bomFraming = { ending, first }
+          for (const stream of [false, true]) {
+            const response = await gatewayFetch(
+              endpoint,
+              endpoint === '/v1/responses'
+                ? { model: models[0], input: chat().messages[0].content, stream }
+                : chat(stream),
+            )
+            const text = await response.text()
+            expect(response.status, `${endpoint} ${JSON.stringify(bomFraming)} stream=${stream}`).toBe(200)
+            expect(response.headers.get('x-request-id')).toBeTruthy()
+            requestIds.push(response.headers.get('x-request-id')!)
+            if (endpoint === '/v1/chat/completions') {
+              if (stream) {
+                const chunks = frames(text)
+                const choices = chunks.flatMap((chunk) => chunk.choices ?? [])
+                expect(choices.map((choice) => choice.delta?.content ?? '').join('')).toBe(bomContentMarker)
+                expect(choices.flatMap((choice) => (choice.finish_reason ? [choice.finish_reason] : []))).toEqual([
+                  'stop',
+                ])
+                expect(chunks.flatMap((chunk) => (chunk.usage ? [chunk.usage] : []))).toEqual([chatUsage])
+                expect(text.split('data: [DONE]')).toHaveLength(2)
+              } else {
+                const completion = JSON.parse(text)
+                expect(completion.choices[0]).toMatchObject({
+                  message: { content: bomContentMarker },
+                  finish_reason: 'stop',
+                })
+                expect(completion.usage).toEqual(chatUsage)
+              }
+            } else {
+              const events = stream ? frames(text) : []
+              const completion = stream ? events.at(-1)!.response! : JSON.parse(text)
+              expect(completion.status).toBe('completed')
+              expect(completion.output[0].content[0].text).toBe(bomContentMarker)
+              expect(completion.usage).toMatchObject({ input_tokens: 5, output_tokens: 2, total_tokens: 7 })
+              if (stream) {
+                expect(
+                  events
+                    .filter((event) => event.type === 'response.output_text.delta')
+                    .map((event) => event.delta)
+                    .join(''),
+                ).toBe(bomContentMarker)
+                expect(events.filter((event) => event.type === 'response.completed')).toHaveLength(1)
+                expect(events.at(-1)!.type).toBe('response.completed')
+              }
+            }
+          }
+        }
+      }
+    }
+  } finally {
+    mode = 'normal'
+  }
+  expect(calls - before).toBe(16)
+  expect(new Set(requestIds).size).toBe(16)
+  await waitFor(
+    async () =>
+      (await db.query("SELECT id FROM request_records WHERE id=ANY($1::text[]) AND status='completed'", [requestIds]))
+        .rowCount === 16,
+  )
+  const records = (
+    await db.query(
+      'SELECT f.request_id,f.project_id,f.api_key_id,a.connection_id,a.price_version_id,a.execution_mode,a.status FROM request_project_facts f JOIN attempts a ON a.request_id=f.request_id WHERE f.request_id=ANY($1::text[])',
+      [requestIds],
+    )
+  ).rows
+  expect(records).toHaveLength(16)
+  expect(new Set(records.map((record) => record.request_id)).size).toBe(16)
+  for (const record of records)
+    expect(record).toMatchObject({
+      project_id: 'connector-project',
+      api_key_id: 'connector-key',
+      connection_id: connectionId,
+      price_version_id: null,
+      execution_mode: 'byok',
+      status: 'completed',
+    })
+  const events = (
+    await db.query("SELECT * FROM outbox_events WHERE aggregate_type='usage' AND aggregate_id=ANY($1::text[])", [
+      requestIds,
+    ])
+  ).rows
+  expect(events).toHaveLength(16)
+  for (const event of events) {
+    expect(event.payload.status).toBe('completed')
+    expect(event.payload.price_version_id).toBeNull()
+    expect(event.payload.usage).toMatchObject({
+      input_tokens: 5,
+      output_tokens: 2,
+      total_tokens: 7,
+      cached_input_tokens: 0,
+      reasoning_tokens: 0,
+      estimated: false,
+    })
+  }
+  const client = await db.connect()
+  try {
+    await client.query('BEGIN')
+    for (const event of events) await processOutboxEvent(client, event)
+    await client.query('COMMIT')
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
+  expect((await db.query('SELECT id FROM usage_events WHERE request_id=ANY($1::text[])', [requestIds])).rowCount).toBe(
+    16,
+  )
+  expect(
+    (
+      await db.query(
+        "SELECT id FROM reconciliation_cases WHERE request_id=ANY($1::text[]) AND reason='missing_price_version'",
+        [requestIds],
+      )
+    ).rowCount,
+  ).toBe(16)
+  expect((await db.query('SELECT id FROM usage_records WHERE request_id=ANY($1::text[])', [requestIds])).rowCount).toBe(
+    0,
+  )
+  expect(
+    (
+      await db.query(
+        "SELECT id FROM ledger_transactions WHERE type='usage' AND reference_type='request' AND reference_id=ANY($1::text[])",
+        [requestIds],
+      )
+    ).rowCount,
+  ).toBe(0)
+  const retained = JSON.stringify(records) + JSON.stringify(events) + gatewayLogs + cliLogs
+  for (const marker of [bomContentMarker, 'private prompt marker', key, 'SECRET-UPSTREAM-KEY'])
+    expect(retained).not.toContain(marker)
 })
 
 it('keeps modern Chat and Responses output limits effective at the local Ollama process', async () => {

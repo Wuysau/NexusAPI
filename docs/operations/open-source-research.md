@@ -1,6 +1,6 @@
 # Open-source integration decisions
 
-Research date: 2026-09-29. These are independently implemented design ideas; no third-party project source has been copied into NexusAPI.
+Research dates: 2026-09-29 through 2026-10-03. These are independently implemented design ideas; no third-party project source has been copied into NexusAPI.
 
 | Primary source | Useful pattern | NexusAPI implementation |
 | --- | --- | --- |
@@ -37,6 +37,8 @@ The connector panel applies the corresponding [AI SDK stop lifecycle](https://ai
 [SWR's read/mutation ordering](https://github.com/vercel/swr/blob/main/src/index/use-swr.ts) prevents older reads from replacing newer operation results. NexusAPI uses separate session-read and auth-operation identities within its existing provider. Logout, login and reauthentication invalidate obsolete reads; a superseded reauthentication rejects before its success callback can retry an old action. Dispatched auth POSTs retain their server-side behavior and are not replayed.
 
 [OpenAI Node SDK v7.27.0's incremental line decoder](https://github.com/openai/openai-node/blob/v7.27.0/src/internal/decoders/line.ts) handles a trailing CR immediately and suppresses its optional following LF. NexusAPI applies that principle in its own buffered Go SSE reader, supporting all three line endings from the [SSE specification](https://html.spec.whatwg.org/multipage/server-sent-events.html#parsing-an-event-stream). Bounded chunk scanning avoids the measured overhead of a per-byte prototype. The existing raw event limit, incomplete-event discard, provider completion checks and no-replay rule remain authoritative; a blank-line CR reserves one possible LF within the size limit.
+
+[eventsource-parser's initial BOM state](https://github.com/rexxars/eventsource-parser/blob/c3729207bf7bc71297cc4485629633b3bce2fb05/src/parse.ts) separates stream initialization from later chunks. NexusAPI applies the [SSE rule for one leading UTF-8 BOM](https://html.spec.whatwg.org/multipage/server-sent-events.html#event-stream-interpretation) directly to its owned byte stream after raw-size accounting. Only the first line may lose one prefix; later markers and payload characters remain intact. This original Go change prevents silent first-content/usage loss without adding the JavaScript parser or weakening unknown-usage reconciliation.
 
 Compatible message history follows the same parameter-fidelity principle: preserve caller-supplied `reasoning_content` needed for [DeepSeek tool follow-ups](https://api-docs.deepseek.com/guides/thinking_mode/), and map it to the `reasoning` field in [Ollama's OpenAI protocol](https://github.com/ollama/ollama/blob/main/openai/openai.go). Native adapters reject history they cannot translate. NexusAPI does not synthesize placeholder reasoning or infer thinking settings from model names. Two-turn HTTP and standalone-connector tests verify the original history and tool results survive the round trip.
 
