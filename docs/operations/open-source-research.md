@@ -80,6 +80,8 @@ That diagnostic-metadata separation also protects terminal persistence from valu
 
 [Envoy's startup configuration validation](https://www.envoyproxy.io/docs/envoy/latest/operations/cli#cmdoption-mode) checks configuration before serving traffic. NexusAPI applies that early-validation principle to local connector models before pairing input, identity reservation or HTTP. The accepted alphabet and 200-character bound come from NexusAPI's existing Control Plane policy. Shared Go/TypeScript examples preserve compliant custom IDs and duplicate configuration behavior; invalid configuration cannot consume a pairing or create identity. No new validation command or general provider model restriction is introduced.
 
+[Cloudflared's response cleanup](https://github.com/cloudflare/cloudflared/blob/f9676c585623c86c0a48dbb6ae80840b4c834718/proxy/proxy.go#L226-L270) ties response closure to request cancellation and requires interruptible request-body reads. NexusAPI also closes unused connector acknowledgment bodies immediately, then cancels local inference and joins its frame producer. Actual TLS HTTP/1 and HTTP/2 tests cover complete uploads, unfinished acknowledgments, early responses and worker reuse. The upload keeps its separate timeout so local failures can still be reported; no result replay is introduced. The [Go response contract](https://github.com/golang/go/blob/go1.24.0/src/net/http/response.go#L49-L60) permits losing HTTP/1 connection reuse after an unread nonempty error body.
+
 ## External contracts
 
 - [Stripe Checkout fulfillment](https://docs.stripe.com/checkout/fulfillment): complete orders via verified server callbacks, not browser redirects.
