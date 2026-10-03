@@ -18,6 +18,9 @@ export const projectVisibility = `(p.tenant_id=$1 AND p.organization_id=$2 AND (
 export const connectionVisibility = `(c.tenant_id=$1 AND (
   (c.project_id IS NOT NULL AND EXISTS (SELECT 1 FROM projects p WHERE p.id=c.project_id AND ${projectVisibility}))
   OR (c.project_id IS NULL AND ($4::boolean OR c.owner_user_id=$3))))`
+export const apiKeyVisibility = `(k.tenant_id=$1 AND k.organization_id=$2 AND (
+  (k.project_id IS NOT NULL AND EXISTS (SELECT 1 FROM projects p WHERE p.id=k.project_id AND ${projectVisibility}))
+  OR (k.project_id IS NULL AND ($4::boolean OR k.created_by=$3))))`
 export const observedVisibility = `(e.tenant_id=$1 AND e.organization_id=$2 AND ($4::boolean OR EXISTS
   (SELECT 1 FROM project_memberships access WHERE access.tenant_id=$1 AND access.project_id=e.project_id AND access.user_id=$3)))`
 

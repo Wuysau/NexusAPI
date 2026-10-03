@@ -1,0 +1,13 @@
+# Apply workspace scope to Key metadata and lifecycle
+
+## Characterization
+
+R62 explicitly left existing Key listing/lifecycle separate from project-bound creation. Exact disposable round76 native OLD twice:7 failures/6 controls,2.026/2.047 seconds, six inputs unchanged and zero other clients. Actual developer/viewer projectGET404 contrasts with Key list exposing hidden metadata. Developer hidden-bound enable/disable/revoke and other-owner-unbound disable/revoke return200 and change facts, successful audit/cache/outbox. Synthetic hashes only; no Key minting, Gateway inference or live credentials. Existing legitimate scope/role/list controls pass.
+
+## Minimal correction
+
+One apiKeyVisibility predicate composes existing projectVisibility and workspaceParams with Key tenant/organization plus visible-project or unbound creator/privileged scope. GET batches visible IDs and filters existing Key rows before safe DTO/demo count, two constant queries without N+1. PATCH repeats existing capability after body and applies target visibility/nondeleted/nonrevoked in UPDATE. DELETE checks scope before unchanged revoke helper, preserving recent-auth, cache epoch, outbox and redacted audit behavior. Archived project management visibility, privileged organization reads and creator-owned unbound compatibility remain. No repository/service, migration or Gateway hot-path change. GET/DELETE guarantees remain authorization/scope at read; concurrent later role/project-membership changes are not serialized. PATCH target scope is checked at its mutation statement, without an added role lock.
+
+## Verification
+
+Same frozen native13 GREEN/0fail/0skip,2.249 seconds, six stable inputs and no other clients; denied facts/audit/cache/outbox unchanged. Formal retains original13 assertions and adds three legitimate DELETE and one real stale-session recent-auth control. Native SHA256 `c2b11d58fd930ad437d7799bde28fb6ff447ae56aac1ec620fddefb60bd458f0`; formatted formal SHA256 `2b73c67652787ffad2babc10f143ef8df77521f9d287401c655e4f192d2b1e0e`. Actual formal17/issuance-authority8/atomic4/auth32/project7 pass:68 total/0fail/0skip,363 inputs stable per phase, closed fixture pools and zero other clients. Auth32 deliberately uses its existing0000–0002 schema; subsequent project7 restores canonical28, which the other fixtures also use. Fresh nonincremental compiler, scoped lint/format/secrets and related contract13 pass. Independent exact patch and actual applied source/test review approve; C12 issuance checks remain unchanged. Ignored key-lifecycle-scope-round76 retains source copies/patch/OLD/GREEN/related evidence. Manual and diagnostics guide updated. Follow the separate authority-serialization boundary with native evidence afterward.

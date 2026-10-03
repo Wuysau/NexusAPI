@@ -8,7 +8,7 @@ import { createDownstreamKey, ApiKeyError } from '@/lib/auth/api-keys'
 import { pool } from '@/db'
 import { listApiKeys } from '@/lib/db/repositories'
 import { API_KEY_SCOPES } from '@/lib/auth/api-keys'
-import { resolveManagedProject } from '@/lib/workspace/management'
+import { apiKeyVisibility, resolveManagedProject, workspaceParams } from '@/lib/workspace/management'
 import { apiError, clientIp, jsonOk, readJsonBody, requireContext, routeError } from '../_lib/control-plane'
 
 export const dynamic = 'force-dynamic'
@@ -38,7 +38,12 @@ function safeKey(row: Awaited<ReturnType<typeof listApiKeys>>[number]) {
 export async function GET(req: Request) {
   try {
     const ctx = await requireContext(req, 'apikey:read')
-    const keys = await listApiKeys(ctx.tenantId)
+    const visible = await pool.query<{ id: string }>(
+      `SELECT k.id FROM downstream_api_keys k WHERE ${apiKeyVisibility} AND k.deleted_at IS NULL`,
+      workspaceParams(ctx),
+    )
+    const visibleIds = new Set(visible.rows.map((key) => key.id))
+    const keys = (await listApiKeys(ctx.tenantId)).filter((key) => visibleIds.has(key.id))
     const usable = keys.filter((key) => key.id !== 'key-demo-production')
     return jsonOk({
       keys: usable.map(safeKey),

@@ -2,6 +2,7 @@
 // high-risk → fresh session required).
 
 import { pool } from '@/db'
+import { apiKeyVisibility, workspaceParams } from '@/lib/workspace/management'
 import { ApiKeyError, invalidateDownstreamKeyCache, revokeDownstreamKey } from '@/lib/auth/api-keys'
 import {
   apiError,
@@ -23,15 +24,16 @@ interface PatchBody {
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params
-    const ctx = await requireContext(req, 'apikey:revoke')
+    await requireContext(req, 'apikey:revoke')
     const body = await readJsonBody<PatchBody>(req)
+    const ctx = await requireContext(req, 'apikey:revoke')
     if (typeof body?.enabled !== 'boolean') return apiError(400, 'invalid_request', '缺少 enabled 字段')
 
     const updated = await pool.query(
-      `UPDATE downstream_api_keys SET enabled = $3
-        WHERE id = $1 AND tenant_id = $2 AND revoked_at IS NULL
-        RETURNING id`,
-      [id, ctx.tenantId, body.enabled],
+      `UPDATE downstream_api_keys k SET enabled = $6
+        WHERE ${apiKeyVisibility} AND k.id=$5 AND k.revoked_at IS NULL AND k.deleted_at IS NULL
+        RETURNING k.id`,
+      [...workspaceParams(ctx), id, body.enabled],
     )
     if (!updated.rowCount) return apiError(404, 'not_found', '密钥不存在或已撤销')
     if (!body.enabled) invalidateDownstreamKeyCache(id)
@@ -54,6 +56,11 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     const { id } = await params
     // Revocation is terminal and cannot be undone → fresh session required.
     const ctx = await requireHighRiskContext(req, 'apikey:revoke')
+    const visible = await pool.query(
+      `SELECT k.id FROM downstream_api_keys k WHERE ${apiKeyVisibility} AND k.id=$5 AND k.deleted_at IS NULL`,
+      [...workspaceParams(ctx), id],
+    )
+    if (!visible.rows.length) return apiError(404, 'not_found', '密钥不存在或已撤销')
     try {
       const revoked = await revokeDownstreamKey({
         tenantId: ctx.tenantId,
