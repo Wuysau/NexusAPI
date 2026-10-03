@@ -1,6 +1,6 @@
 # Open-source integration decisions
 
-Research dates: 2026-09-29 through 2026-10-03. These are independently implemented design ideas; no third-party project source has been copied into NexusAPI.
+Research dates: 2026-09-29 through 2026-10-04. These are independently implemented design ideas; no third-party project source has been copied into NexusAPI.
 
 | Primary source | Useful pattern | NexusAPI implementation |
 | --- | --- | --- |
@@ -89,6 +89,8 @@ The same [Envoy startup-validation principle](https://www.envoyproxy.io/docs/env
 For sensitive connector pairing/rotation, [GitHub sudo mode](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/sudo-mode) and [Nextcloud password confirmation](https://docs.nextcloud.com/server/stable/developer_manual/digging_deeper/javascript-apis.html#nextcloud-password-confirmation) show how recent verification can resume a pending operation. NexusAPI applies its existing fifteen-minute `credential:rotate` session check to initial pairing issuance and subsequent rotation, and reuses its existing reauthentication dialog. The pending model list and connection lifetime are retained; cancellation or panel removal prevents an old action from being submitted. Runtime connector leases and project API key authorization retain their own established boundaries.
 
 The same policy consistency applies to irreversible connection revocation. [Nextcloud's server middleware](https://github.com/nextcloud/server/blob/v31.0.0/lib/private/AppFramework/Middleware/Security/PasswordConfirmationMiddleware.php) checks recent confirmation before marked actions, while its [promise wrapper](https://github.com/nextcloud-libraries/nextcloud-password-confirmation) coordinates the pending frontend operation. NexusAPI's connection PATCH/DELETE use the same existing `credential:disable` recent-auth guard as Channel deletion. A keyed confirmation component retains the original connection ID and rejects obsolete callbacks. Existing visibility and revocation transactions remain authoritative; closing a confirmation cannot roll back a mutation already accepted by the server.
+
+[Grafana's resource API](https://github.com/grafana/grafana/blob/v11.6.0/pkg/api/api.go#L360-L373) separates read/write actions and requested object scopes. NexusAPI applies the same consistency principle to legacy generic connection heartbeats: the existing `credential:create` write capability replaces the read-only gate, and the shared workspace connection predicate covers both lookup and mutation. An UPDATE observes current project membership even when it changes during request-body reading. Authorized ordinary heartbeat behavior is preserved; this metadata does not authenticate a local connector or grant API routing. No role, permission matrix or recent-auth policy is added.
 
 ## External contracts
 
