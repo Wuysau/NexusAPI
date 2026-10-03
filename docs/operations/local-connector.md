@@ -77,7 +77,9 @@ Windows 使用 `go build -o nexus-connector.exe ./cmd/nexus-connector`，随后�
 }
 ```
 
-模型 ID 必须同时位于管理员批准列表、本机配置列表和本机 `/v1/models` 返回列表中。地址必须是明确配置的回环或私有 IP，固定使用 `/v1/models` 和 `/v1/chat/completions`；不跟随重定向，不使用上游代理环境变量。`localhost` 会固定为 `127.0.0.1`。如果本机兼容服务需要密钥，设置 `apiKeyEnv` 为本机环境变量名；密钥值不会上传。私有 CA 可通过 `caFile` 指向本机 PEM 文件；没有跳过证书验证的选项。
+模型 ID 必须同时位于管理员批准列表、本机配置列表和本机 `/v1/models` 返回列表中。地址必须是明确配置的回环或私有 IP，固定使用 `/v1/models` 和 `/v1/chat/completions`；不跟随重定向，不使用上游代理环境变量。`localhost` 会固定为 `127.0.0.1`。如果本机兼容服务需要密钥，设置 `apiKeyEnv` 为本机环境变量名；密钥值不会上传。私有 CA 可通过 `caFile` 指向本机 PEM 文件；该文件扩展系统信任，应用到远端 Control Plane/Gateway 和配置的本地 HTTPS 上游。连接器始终验证证书链、有效期和访问地址，最低使用 TLS 1.2；没有跳过验证的选项。
+
+默认 Ollama 的回环 HTTP 配置可以继续使用。如果自行配置内网 HTTPS 兼容服务，例如 `https://192.168.1.4:11434/v1`，证书的 IP SAN 必须包含配置中的 IP，`caFile` 应包含其可信签发 CA。仅有 DNS 名称的证书不能证明该 IP 的身份。多个服务由不同私有 CA 签发时，可在同一 PEM 文件中放入明确信任的 CA；文件只在本机读取，不上传至控制平面。HTTPS 会在上游支持时协商 HTTP/2，否则使用 HTTP/1.1。
 
 Gateway 查询模型列表时，先执行现有路由过滤，再按 Channel 批量实时校验本地模型；每批最多 64 个 ID，最多同时检查 4 批，整个列表的认证、快照读取和实时检查共用 5 秒期限。无法及时确认的连接器模型不会出现在结果中，其他已确认可用的模型可以正常返回。列表授权结果不跨请求缓存，也不延长在线状态；真正的 Chat 调用仍单独实时检查授权。
 
@@ -157,7 +159,7 @@ Gateway 传输端点的 401 也可能来自暂时无法完成实时授权；连�
 | 现象 | 检查 |
 |---|---|
 | 配对被拒绝 | 令牌是否过期、已兑换、被新令牌替代，连接是否撤销；重新生成后配对 |
-| TLS 验证失败 | 域名、证书有效期、证书链；私有 CA 用 `caFile`，不要关闭验证 |
+| TLS 验证失败 | 检查访问地址对应的 DNS/IP SAN、证书有效期及证书链；远端和本地 HTTPS 的私有 CA 都放入 `caFile`，不要关闭验证 |
 | 页面显示离线 | CLI 是否运行、出站 HTTPS 是否可达、Gateway 是否为指定的单实例、代理是否允许长轮询 |
 | CLI 因租约到期退出 | 检查 Control Plane 的出站连通性和本机时钟；网络恢复后重新运行 `run`。检查原调用状态，再决定是否发起新调用 |
 | CLI 提示身份授权被拒绝 | 检查连接、组织和项目是否仍有效；管理员轮换身份后须使用新文件重新配对 |
@@ -182,7 +184,7 @@ npm run gateway:vet
 node --env-file=/path/to/disposable-test.env node_modules/vitest/vitest.mjs run tests/integration/canonical-migrations.test.ts
 ```
 
-该测试调用真实控制面路由与数据库，以不同进程运行编译出的 Gateway 和 CLI，经不同监听端口访问 mock Ollama，检查请求归因及 Worker 未定价处理。Go 单元测试检查 TLS 信任、私有地址、重定向和协议边界。
+该测试调用真实控制面路由与数据库，以不同进程运行编译出的 Gateway 和 CLI，经不同监听端口访问由专用私有 CA 保护的 HTTPS mock Ollama，检查模型发现、普通及流式响应、请求归因及 Worker 未定价处理。Go 单元测试检查 TLS 信任、私有地址、重定向和协议边界。
 
 浏览器取消测试复用刚生成的专用数据库，并自行启动临时 Next.js 和回环 mock Gateway；请先停止当前工作区的 Next 开发服务器。它验证真实控制台请求的取消传播和界面状态，不运行 Go 模型推理，也不写入假用量。正常结束后会停止自建进程、撤销测试租约并停用测试 Key；截图保存在 `output/playwright/local-connector-cancel.png`。已安装 Chromium 时可跳过安装命令。
 
