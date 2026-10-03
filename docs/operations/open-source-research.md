@@ -106,6 +106,8 @@ The existing bounded-dependency design also applies to connector singleton acqui
 
 [Vault v1.18.5 Transit rotation](https://github.com/hashicorp/vault/blob/v1.18.5/builtin/logical/transit/path_rotate.go#L84-L89) separates new encryption versions from retained older decryption. NexusAPI's operational guidance now preserves that distinction alongside independent enrollment/registry publication and later retirement. Production CP crypto remains unavailable. The obsolete restart-and-health script now returns a fixed unsupported result; health reachability cannot establish a rotation. Isolated actual script checks verify its nonzero result without exposing credential/environment files or a service-control socket. No CP rewrap feature or operational rotation is claimed.
 
+[Kong 3.9.1's address lifecycle](https://github.com/Kong/kong/blob/3.9.1/kong/runloop/balancer/balancers.lua#L268-L299) distinguishes known-address ownership checks from changes to address availability. NexusAPI applies that distinction to its signed Channel projection: validate the credential, connection and local configuration before omitting a correctly bound disabled credential. A real shared-credential Channel deletion no longer blocks an independent healthy candidate's bundle. Native OLD/GREEN tests preserve fixed refusal for invalid bindings, signed directory facts and legitimate management audits. Existing published catalog and cache-expiry policies remain; no Kong code, cascade or independent credential authority is introduced.
+
 ## External contracts
 
 - [Stripe Checkout fulfillment](https://docs.stripe.com/checkout/fulfillment): complete orders via verified server callbacks, not browser redirects.
