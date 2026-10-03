@@ -63,6 +63,14 @@ const checks = docker
                   : []),
               ]
             : []),
+          // Hosted checkouts belong to the runner UID; retain VCS stamping in
+          // the root-owned container by trusting only this explicit mount.
+          '-e',
+          'GIT_CONFIG_COUNT=1',
+          '-e',
+          'GIT_CONFIG_KEY_0=safe.directory',
+          '-e',
+          'GIT_CONFIG_VALUE_0=/repo',
           '-e',
           'GOPROXY=https://goproxy.cn,direct',
           '-v',
