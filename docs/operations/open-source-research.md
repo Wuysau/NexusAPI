@@ -129,6 +129,8 @@ The existing bounded-dependency design also applies to connector singleton acqui
 
 [Kong 3.9.1's address lifecycle](https://github.com/Kong/kong/blob/3.9.1/kong/runloop/balancer/balancers.lua#L268-L299) distinguishes known-address ownership checks from changes to address availability. NexusAPI applies that distinction to its signed Channel projection: validate the credential, connection and local configuration before omitting a correctly bound disabled credential. A real shared-credential Channel deletion no longer blocks an independent healthy candidate's bundle. Native OLD/GREEN tests preserve fixed refusal for invalid bindings, signed directory facts and legitimate management audits. Existing published catalog and cache-expiry policies remain; no Kong code, cascade or independent credential authority is introduced.
 
+PostgreSQL 17's [transaction-local lock timeout](https://www.postgresql.org/docs/17/runtime-config-client.html#GUC-LOCK-TIMEOUT) bounds each lock acquisition; zero disables that bound. NexusAPI applies a ten-second ceiling inside API-key authorization transactions and preserves a stricter operator setting. An authorization lock timeout rolls back before mutation and returns a fixed 503. Real-database checks cover held resource locks, session revocation, hidden-resource refusal and setting restoration after both rollback and commit. This is not a whole-request deadline. Global pool changes, client-side timeout races and automatic mutation retries are rejected for this slice. The implementation is original SQL and TypeScript; no external source code is copied.
+
 ## External contracts
 
 - [Stripe Checkout fulfillment](https://docs.stripe.com/checkout/fulfillment): complete orders via verified server callbacks, not browser redirects.

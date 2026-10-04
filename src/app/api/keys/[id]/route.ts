@@ -30,6 +30,12 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const ctx = await requireContext(req, 'apikey:revoke')
     if (typeof body?.enabled !== 'boolean') return apiError(400, 'invalid_request', '缺少 enabled 字段')
 
+    const visible = await pool.query(
+      `SELECT k.id FROM downstream_api_keys k WHERE ${apiKeyVisibility} AND k.id=$5 AND k.deleted_at IS NULL`,
+      [...workspaceParams(ctx), id],
+    )
+    if (!visible.rows.length) return apiError(404, 'not_found', '密钥不存在或已撤销')
+
     const updated = await withManagedApiKeyWrite(ctx, id, (client) =>
       client.query(
         `UPDATE downstream_api_keys k SET enabled = $4

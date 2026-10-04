@@ -156,6 +156,7 @@ export type AuthzErrorCode =
   | 'not_found'
   | 'invalid_project'
   | 'project_not_found'
+  | 'key_resource_busy'
   | 'invalid_provider'
   | 'credential_reference_conflict'
   | 'credential_disabled'
