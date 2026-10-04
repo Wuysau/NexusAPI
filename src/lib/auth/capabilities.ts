@@ -155,6 +155,7 @@ export type AuthzErrorCode =
   | 'invalid_models'
   | 'not_found'
   | 'invalid_project'
+  | 'project_not_found'
   | 'invalid_provider'
   | 'credential_reference_conflict'
   | 'credential_disabled'

@@ -142,6 +142,7 @@ export function __resetRevocationStateForTests(): void {
 
 export async function createDownstreamKey(
   input: CreateDownstreamKeyInput,
+  authorize?: (client: PoolClient) => Promise<void>,
 ): Promise<{ plaintext: string; key: ApiKeyRow }> {
   const name = input.name?.trim()
   if (!name) throw new ApiKeyError('invalid_name', 'key name is required')
@@ -165,6 +166,7 @@ export async function createDownstreamKey(
   let key: ApiKeyRow
   try {
     await client.query('BEGIN')
+    if (authorize) await authorize(client)
     key = await createApiKey(
       input.tenantId,
       {
