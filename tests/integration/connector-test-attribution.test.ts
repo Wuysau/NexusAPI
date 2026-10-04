@@ -486,7 +486,7 @@ afterAll(async () => {
     else process.env[key] = value
   }
   if (folder && path.dirname(path.resolve(folder)) === artifactRoot && path.basename(folder).startsWith('run-'))
-    await rm(folder, { recursive: true, force: true })
+    await rm(folder, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
   for (const value of [apiKey, cookie, localCredential, privatePrompt, database.href, 'private attribution header'])
     expect(processLogs.includes(value), 'Process logs omit private fixture inputs').toBe(false)
 })
