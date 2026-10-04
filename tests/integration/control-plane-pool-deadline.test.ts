@@ -24,6 +24,7 @@ const migrationPath = '../../scripts/db-migrate.mjs'
 const { runMigrations } = await import(migrationPath)
 let owner: PoolClient | undefined
 let locked = false
+let tableCreated = false
 const observations: Record<string, unknown>[] = []
 const table = 'nexus_control_pool_deadline83'
 
@@ -70,16 +71,23 @@ beforeAll(async () => {
     ).rows[0]?.n !== 0
   )
     throw new Error('Control Plane pool fixture has other clients')
+  // Other migration/catalog suites intentionally leave incompatible schemas.
+  // Only reset after the exact disposable target and exclusive ownership checks.
+  await owner.query('DROP SCHEMA IF EXISTS drizzle CASCADE; DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public')
   expect((await runMigrations(pool)).total).toBe(28)
   await owner.query(`CREATE TABLE ${table} (value text PRIMARY KEY)`)
+  tableCreated = true
 }, 30000)
 afterAll(async () => {
   if (process.env.NEXUS_POOL_DEADLINE_REPORT === '1')
     console.info('Control Plane pool safe observations:', JSON.stringify(observations))
   try {
     if (owner && locked) {
-      await owner.query(`DROP TABLE ${table}`)
-      await owner.query("SELECT pg_advisory_unlock(hashtextextended('nexus-control-pool-deadline83',0))")
+      try {
+        if (tableCreated) await owner.query(`DROP TABLE ${table}`)
+      } finally {
+        await owner.query("SELECT pg_advisory_unlock(hashtextextended('nexus-control-pool-deadline83',0))")
+      }
     }
   } finally {
     owner?.release()

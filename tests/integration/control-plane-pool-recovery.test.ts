@@ -48,6 +48,8 @@ beforeAll(async () => {
     ).rows[0]?.n !== 0
   )
     throw new Error('Idle recovery fixture has other clients')
+  // Own a canonical fixture regardless of prior migration/catalog test order.
+  await owner.query('DROP SCHEMA IF EXISTS drizzle CASCADE; DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public')
   expect((await runMigrations(pool)).total).toBe(28)
   await owner.query(`CREATE TABLE ${table} (value text PRIMARY KEY)`)
   tableCreated = true

@@ -79,6 +79,9 @@ beforeAll(async () => {
     ).rows[0]?.n !== 0
   )
     throw new Error('Budget idle recovery fixture has other clients')
+  // Earlier suites can intentionally leave drift or a partial legacy schema.
+  // Exact target, current_database, exclusion and no-other-client checks precede reset.
+  await owner.query('DROP SCHEMA IF EXISTS drizzle CASCADE; DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public')
   const migrationModule = pathToFileURL(resolve('scripts/db-migrate.mjs')).href
   const { runMigrations } = await import(migrationModule)
   const migrations = new Pool({
@@ -93,6 +96,35 @@ beforeAll(async () => {
   } finally {
     await migrations.end()
   }
+  // Preserve nonempty history so digest checks detect updates/deletions as well
+  // as new writes. Balanced postings and their transaction commit together.
+  await owner.query('BEGIN')
+  try {
+    await owner.query(`
+      INSERT INTO organizations(id,tenant_id,name,slug)
+        VALUES('budget-idle-org','budget-idle-tenant','Budget idle fixture','budget-idle-fixture');
+      INSERT INTO request_records(id,tenant_id,organization_id,request_model,channel_kind,status,input_tokens,output_tokens)
+        VALUES('budget-idle-request','budget-idle-tenant','budget-idle-org','fixture-model','byok','completed',3,7);
+      INSERT INTO ledger_accounts(id,tenant_id,type,currency,code) VALUES
+        ('budget-idle-adjustment','budget-idle-tenant','adjustment','USD','fixture:adjustment'),
+        ('budget-idle-clearing','budget-idle-tenant','clearing','USD','fixture:clearing');
+      INSERT INTO ledger_transactions(id,tenant_id,type,currency,idempotency_key)
+        VALUES('budget-idle-transaction','budget-idle-tenant','adjustment','USD','budget-idle-transaction');
+      INSERT INTO ledger_postings(id,transaction_id,tenant_id,account_id,currency,amount,entry_type) VALUES
+        ('budget-idle-credit','budget-idle-transaction','budget-idle-tenant','budget-idle-adjustment','USD',7,'credit'),
+        ('budget-idle-debit','budget-idle-transaction','budget-idle-tenant','budget-idle-clearing','USD',-7,'debit');
+      INSERT INTO outbox_events(id,tenant_id,aggregate_type,aggregate_id,event_type,payload,idempotency_key,status,published_at)
+        VALUES('budget-idle-event','budget-idle-tenant','fixture','budget-idle-request','fixture.preserved',
+          '{"fixture":"budget-idle-preserved"}'::jsonb,'budget-idle-event','published',now());
+    `)
+    await owner.query('COMMIT')
+  } catch (error) {
+    await owner.query('ROLLBACK')
+    throw error
+  }
+  expect(
+    Object.fromEntries(Object.entries(await accountingFacts()).map(([table, facts]) => [table, facts.count])),
+  ).toEqual({ request_records: 1, ledger_transactions: 1, ledger_postings: 2, outbox_events: 1 })
   await mkdir(folder, { recursive: true })
   await writeFile(emptyEnvironment, '')
   const buildModule = pathToFileURL(resolve('scripts/build-services.mjs')).href
