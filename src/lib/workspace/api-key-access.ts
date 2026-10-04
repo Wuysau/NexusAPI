@@ -7,6 +7,15 @@ const notFound = (): never => {
   throw new AuthzError('not_found', '密钥不存在或已撤销', 404)
 }
 
+/** Lock actor eligibility before resource locks and retain it through commit. */
+async function lockActiveKeyActor(client: PoolClient, ctx: ControlPlaneContext): Promise<void> {
+  const actor = await client.query(
+    "SELECT id FROM users WHERE id=$1 AND status='active' AND deleted_at IS NULL FOR SHARE",
+    [ctx.session.userId],
+  )
+  if (!actor.rows.length) throw new AuthzError('unauthenticated', '请先登录')
+}
+
 async function lockKeyAuthority(
   client: PoolClient,
   ctx: ControlPlaneContext,
@@ -59,11 +68,13 @@ export async function lockApiKeyCreation(
   ctx: ControlPlaneContext,
   projectId: string | null,
 ): Promise<void> {
+  await lockActiveKeyActor(client, ctx)
   await lockKeyAuthority(client, ctx, projectId, 'apikey:create')
 }
 
 /** Keep one transaction through the mutation; management includes archived projects. */
 export async function lockManagedApiKey(client: PoolClient, ctx: ControlPlaneContext, id: string): Promise<void> {
+  await lockActiveKeyActor(client, ctx)
   const key = (
     await client.query<{ project_id: string | null; created_by: string | null }>(
       `SELECT project_id,created_by FROM downstream_api_keys
