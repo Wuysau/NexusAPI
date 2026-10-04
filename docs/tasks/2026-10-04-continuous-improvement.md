@@ -111,4 +111,6 @@ Exact round80 OLD twice4RED/2controls→same6 GREEN. Formal18 plus related127:14
 
 ## Verification and decisions
 
+C17 broad checkpoint exposed a test fixture defect:unit754/contract391 PASS, Integration775PASS/3FAIL/0skip,932 inputs unchanged; security not reached. Exact main33b5b57 CI37175128988 has the same three required8-second natural-clock cases timing out at the repository default5 seconds. C17a adds explicit20-second timeout only to those cases; actual unmodified root Vitest configuration regression18 PASS/0skip, compiler/scoped lint/format/diff PASS. Production/clock boundary/assertions unchanged. Current baseline is red until fresh broad/exact hosted acceptance. Preserve `periodic-key-session/` failure and `key-session-timeout-round80/` actual-config correction evidence. C18 actual-clock recent-auth OLD twice1RED/2controls is ready, but its production modification waits for this checkpoint repair.
+
 Receipts go into ignored `.test-artifacts/continuous-maintenance/`. Do not copy fixture secret custody into public evidence. Use targeted regression/compiler/format/lint before each commit, broad checkpoints after several rounds and complete relevant verification for Gateway or architecture changes. Update this concise file after meaningful checkpoints; prior detailed evidence remains in its original task documents.

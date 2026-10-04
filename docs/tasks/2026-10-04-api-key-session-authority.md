@@ -17,3 +17,7 @@ Formal SHA256 `20bbbcc3714ee48915d641631b8dec205e266b79e277df78a54ef454046466bf`
 ## Next action
 
 Run a fresh broad checkpoint after C15–C17, maintaining source stability during verification. Characterize recent authentication crossing its window during a locked Key DELETE using a real clock, with regular PATCH and fresh DELETE controls. Continue after commit.
+
+## C17a — Actual CI timeout correction
+
+The full committed C17 checkpoint had932 unchanged Git inputs, unit754/contract391 PASS, Integration775PASS/3FAIL/0skip; security was not reached. Exact main33b5b57 CI37175128988 failed the same three natural expiry cases (Linux774PASS/3FAIL). Their required8-second clock wait exceeded the repository's default5-second test timeout; the ignored related config's20-second override had masked this fixture defect. Production behavior and assertions are unchanged. Only these three tests now explicitly declare20 seconds. Actual unmodified `vitest.config.mjs` regression18 PASS/0skip in28.919s,932 Git hashes unchanged, canonical28/clients0; receipt `key-session-timeout-round80/regression.json`. Failed full receipts are preserved. Do not claim the C17 repository baseline healthy until the fresh complete checkpoint and exact new hosted revision pass.
