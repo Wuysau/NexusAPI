@@ -65,7 +65,9 @@
           <a href="#start">01 · 开始使用</a>
           <a href="#paths">选择使用方式</a>
           <a href="#api">02 · API 渠道</a>
+          <a href="#message-history">消息历史兼容性</a>
           <a href="#playground">在线调试 Playground</a>
+          <a href="#response-status">回复结束原因</a>
           <a href="#request-trace">请求详情与用量依据</a>
           <a href="#codex">03 · Codex 订阅</a>
           <a href="#subscriptions">多服务订阅与账号池</a>
@@ -75,6 +77,7 @@
           <a href="#pages">05 · 功能导览</a>
           <a href="#concepts">06 · 关键概念</a>
           <a href="#deploy">07 · 本地部署</a>
+          <a href="#database-recovery">数据库恢复与健康检查</a>
           <a href="#faq">常见问题</a>
         </aside>
         <div class="manual-content">
@@ -201,7 +204,10 @@
                 资源争用导致授权锁等待过长时，会提示“密钥管理资源暂忙”（503）。本次操作回滚，不修改密钥；请稍后再明确发起操作。没有访问权的项目密钥仍返回不存在（404）。
               </p>
               <p>
-                数据库连接繁忙或启动连接失败时，控制面会结束连接等待并返回失败；健康检查显示不可用。恢复连接后可重新检查。操作不会因连接恢复而自动重试，已经发出的操作仍须核对实际状态。
+                数据库连接繁忙或启动连接失败时，控制面会结束连接等待并返回失败；健康检查显示不可用。恢复连接后可重新检查。操作不会因连接恢复而自动重试，已经发出的操作仍须核对实际状态。管理员可查看<a
+                  href="#database-recovery"
+                  >数据库恢复与健康检查</a
+                >。
               </p>
             </article>
             <article class="workflow">
@@ -239,6 +245,35 @@
                   >请求详情</a
                 >查看已记录的执行尝试与用量依据。“用量与计费”按请求、项目等维度展示可归属的用量；缺少价格依据时，费用显示为未知，不会被当作免费。
               </p>
+            </article>
+            <article id="message-history" class="workflow">
+              <div class="workflow-title">
+                <span class="number">COMPAT</span>
+                <div>
+                  <h3>检查客户端发送的消息历史</h3>
+                  <p>用于直接接入网关的客户端</p>
+                </div>
+              </div>
+              <p>
+                网关不支持消息级音频响应引用和旧式函数调用历史。Chat 请求的
+                <code>messages[i].audio</code> 或 <code>messages[i].function_call</code> 字段存在且不为
+                <code>null</code> 时，返回 400 <code>unsupported_parameter</code>；错误参数指出对应消息和字段，例如
+                <code>messages[0].function_call</code>。空对象、空字符串等非 <code>null</code> 值也会被拒绝。
+              </p>
+              <p>
+                请检查客户端保存和回传的历史格式，使用已有的现代 <code>tool_calls</code>
+                与工具结果格式承接函数调用，或重新开始不含这些引用的对话。省略上述字段或传入
+                <code>null</code> 保持兼容；Responses 的函数调用条目及已有内容数组仍按各自规则处理。 这不会扩大<a
+                  href="#playground"
+                  >在线调试</a
+                >的普通文本输入范围。
+              </p>
+              <div class="expected">
+                <strong>拒绝发生在执行之前</strong>
+                <span
+                  >这些字段检查在认证和执行资源申请之前完成，不派发上游调用、不占用幂等键，也不生成该次执行的会计事实。</span
+                >
+              </div>
             </article>
           </section>
 
@@ -306,7 +341,11 @@
                 <li>当前不提供流式显示、工具执行或多模态输入。</li>
               </ul>
               <p>
-                如果回复包含推理扩展、工具调用、拒绝信息或其他无法完整保留的助手内容，或结束原因未知、文本未完成，页面会停止继续该对话。请点击“清空对话”后重新开始。
+                如果回复包含推理扩展、工具调用、拒绝信息或其他无法完整保留的助手内容，或结束原因未知、文本未完成，页面会停止继续该对话。
+                <code>length</code>（截断）或 <code>content_filter</code>（过滤）也不能继续拼接历史。 请核对<a
+                  href="#response-status"
+                  >回复结束原因</a
+                >，点击“清空对话”后重新开始；清空不会撤销已产生的用量。
               </p>
             </article>
             <div class="callout amber">
@@ -326,6 +365,55 @@
                 >在线调试与请求详情操作说明 ↗</a
               >。
             </p>
+          </section>
+
+          <section id="response-status" class="chapter">
+            <div class="chapter-head">
+              <span>RESPONSE STATUS</span>
+              <h2>理解回复的结束原因</h2>
+              <p>结束原因描述输出是否完整。请结合请求记录核对执行和用量，不能只看是否收到了文本。</p>
+            </div>
+            <div class="concept-grid">
+              <div>
+                <h3>length · 输出被截断</h3>
+                <p>
+                  Anthropic 的 <code>model_context_window_exceeded</code> 现在映射为
+                  <code>length</code>，保留已返回的部分文本和已报告用量。重新开始前可缩短上下文；
+                  若是输出上限导致截断，再检查最大输出 Token 设置。
+                </p>
+              </div>
+              <div>
+                <h3>content_filter · 输出被过滤</h3>
+                <p>
+                  Gemini 的 <code>SAFETY</code> 与 Anthropic 分类器的 <code>refusal</code> 映射为
+                  <code>content_filter</code>，保留已有文本和已报告用量，不自动重试或切换供应商。
+                  模型自行生成的普通拒绝文字仍按原有结束原因处理。
+                </p>
+              </div>
+              <div>
+                <h3>Responses · incomplete</h3>
+                <p>
+                  上述截断和过滤会将 Responses 输出标记为 <code>incomplete</code>。 截断沿用
+                  <code>max_output_tokens</code> 分类，不能单凭此值区分上下文容量耗尽与请求输出上限； 过滤使用
+                  <code>content_filter</code> 分类。
+                </p>
+              </div>
+              <div>
+                <h3>Playground · 先清空再开始</h3>
+                <p>
+                  在线调试不将截断、过滤或无法完整保留的回复继续拼接到下一轮历史。
+                  核对本次结果后，点击“清空对话”并明确发起新请求；页面不会自动重发。
+                </p>
+              </div>
+            </div>
+            <div class="callout amber">
+              <strong>输出不完整，仍可能已完成执行并产生用量</strong>
+              <p>
+                已识别的截断和过滤不等于网关执行失败：请求、执行尝试和会计事实仍记录已完成的执行，
+                不会因此惩罚渠道健康、重试或切换供应商。未报告的 Token 保持未知；请通过
+                <a href="#request-trace">请求详情</a>核对已有的用量依据。
+              </p>
+            </div>
           </section>
 
           <section id="request-trace" class="chapter">
@@ -361,6 +449,25 @@
                 </p>
               </li>
             </ol>
+            <article class="workflow">
+              <div class="workflow-title">
+                <span class="number">ERROR</span>
+                <div>
+                  <h3>收到上游协议错误时</h3>
+                  <p>先核对本次请求，不自动重发</p>
+                </div>
+              </div>
+              <p>
+                Anthropic 返回未识别的非空停止原因时，网关返回固定错误
+                <code>upstream_protocol_error</code>。普通响应返回 502；已开始输出的流保留已有前缀，
+                随后发送错误，不发送成功结束标记。网关不会展示供应商原始停止原因或说明。
+              </p>
+              <p>
+                已开始的执行记录为 <code>unknown</code>，有效用量仍保留。收到部分文字或错误都不能据此判断
+                “未执行”或“没有费用”；网关不会自动重发或切换供应商。请保存请求 ID，检查请求日志和已有用量，
+                再决定是否明确发起新请求。已知的截断与过滤另见<a href="#response-status">回复结束原因</a>。
+              </p>
+            </article>
             <div class="callout amber">
               <strong>未知不等于零，记录也有范围</strong>
               <p>
@@ -878,6 +985,63 @@ npm run dev</code></pre>
                 </p>
               </li>
             </ol>
+            <article id="database-recovery" class="workflow">
+              <div class="workflow-title">
+                <span class="number">HEALTH</span>
+                <div>
+                  <h3>升级后的数据库恢复与健康检查</h3>
+                  <p>重启服务以加载新的连接池处理</p>
+                </div>
+              </div>
+              <p>
+                升级后重启控制面、Worker 和 Budget；开发模式中已缓存的连接池也需要重启。 控制面与 Worker 共用池、独立
+                Budget 池遇到空闲连接断开时，会移除失效连接，记录固定的
+                <code>database_idle_connection_lost</code> 事件，并保留进程供后续明确发起的查询使用。
+                数据库恢复后可重新检查；此前已提交的操作不会重放，执行中查询的错误仍交由调用方处理。
+              </p>
+              <p>
+                控制面的 <code>/api/health</code> 在数据库正常时返回 <code>200 {"ok":true}</code>，探测失败返回
+                <code>500 {"ok":false}</code>。 连接申请与探测响应读取分别限制两秒，两阶段合计可能约四秒；这不是整次
+                HTTP 请求的两秒保证。 探测响应超时会关闭该连接，后续新的探测可重新连接；普通业务 SQL
+                沿用各自的执行边界。
+              </p>
+              <p>
+                Worker 申请连接失败时，失败的申请不会开始新的处理周期，进程清理后以退出码 1 结束，
+                由部署的重启策略重新启动。Budget 不会因恢复连接而重放预算预留或账务操作；
+                数据库不可用期间仍须通过其就绪与授权检查，不能假定整个中断期间服务可用。
+              </p>
+              <div class="expected">
+                <strong>恢复后核对状态</strong>
+                <span>再次探测健康，并核对此前操作的实际结果。连接恢复不会自动重试请求、推理或已提交的会计处理。</span>
+              </div>
+            </article>
+            <article class="workflow">
+              <div class="workflow-title">
+                <span class="number">BUILD</span>
+                <div>
+                  <h3>构建与运行正式产物</h3>
+                  <p>使用仓库提供的构建和启动命令</p>
+                </div>
+              </div>
+              <p>
+                先按生产部署说明向进程注入所需环境变量，完成数据库迁移及独立服务配置，再构建并启动控制面。
+                下列启动命令使用生产模式，不能直接沿用上方的开发配置。
+              </p>
+              <pre><code>npm run build
+npm start</code></pre>
+              <p>
+                控制面通过 <code>.next/standalone/start-control.cjs</code> 启动。
+                构建已缩小运行时路径造成的文件追踪范围，同时保留 LICENSE、启动与配置文件、静态资源和所需运行依赖。
+                数据库迁移应在源码仓库中按部署流程另行执行，不依赖 standalone 产物包含迁移工具。
+              </p>
+              <p>
+                读取 Codex 官方账户与额度，或运行受监督的 Codex 任务时，仍需自行安装并提供 Codex
+                可执行文件；构建不会将它打包进去。 具体产物结构与验证方法见
+                <a href="https://github.com/Wuysau/NexusAPI/blob/main/docs/operations/ci-verification.md"
+                  >构建与验证说明 ↗</a
+                >。
+              </p>
+            </article>
             <p class="note">
               生产部署有独立的数据库角色、密钥服务和迁移要求；请阅读仓库的
               <a href="https://github.com/Wuysau/NexusAPI/blob/main/README.md">README</a> 与
@@ -904,6 +1068,35 @@ npm run dev</code></pre>
                 模型列表不是实时调用保证。确认 Key 属于所选活跃项目，且有 <code>models:read</code> 与
                 <code>chat:write</code>
                 权限；实际发送还要通过网关的模型、渠道、策略和额度检查。调用结果不明时不会自动重发，请先核对请求日志和用量。
+              </p>
+            </details>
+            <details>
+              <summary>为什么回复已有文字，在线调试仍要求清空对话？</summary>
+              <p>
+                截断、过滤、工具调用或其他无法完整保留的回复不能作为普通文本历史继续发送。 请查看<a
+                  href="#response-status"
+                  >回复结束原因</a
+                >和请求详情，再清空并明确开始新对话。
+                已有文字、用量和已完成的执行记录不会因清空而撤销；结果不明时不会自动重发。
+              </p>
+            </details>
+            <details>
+              <summary>为什么客户端回传历史时收到 unsupported_parameter？</summary>
+              <p>
+                检查错误指出的字段路径。<code>messages[i].audio</code> 或旧式
+                <code>messages[i].function_call</code> 存在且不为 <code>null</code> 时，会在调用上游前被拒绝。 请按<a
+                  href="#message-history"
+                  >消息历史兼容性</a
+                >调整客户端格式或重新开始对话。
+              </p>
+            </details>
+            <details>
+              <summary>数据库恢复后，如何确认服务可以继续使用？</summary>
+              <p>
+                升级后先重启服务，再明确发起新的健康检查；检查 Worker 是否已由部署重启策略启动，以及 Budget 是否就绪。<a
+                  href="#database-recovery"
+                  >健康探测</a
+                >的连接申请和响应读取分别有两秒上限。 恢复连接不会重放之前的操作，请另行核对其实际状态。
               </p>
             </details>
             <details>
@@ -948,7 +1141,7 @@ npm run dev</code></pre>
       </div>
     </main>
     <footer class="site-footer">
-      <span>NexusAPI · User Guide</span
+      <span>NexusAPI · User Guide · 更新于 2026-10-04</span
       ><span
         >开源项目，功能仍在持续开发 ·
         <a href="https://github.com/Wuysau/NexusAPI/blob/main/LICENSE">MIT License</a></span
