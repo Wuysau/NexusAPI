@@ -1487,6 +1487,20 @@ func parseChatRequest(body []byte, maxTokensEstimate int) (*chatRequest, *APIErr
 	if len(req.Messages) == 0 {
 		return nil, errInvalidParam("messages", "messages must be a non-empty array.")
 	}
+	// Canonical messages do not retain audio-response references. Reject them
+	// before any execution instead of silently changing the supplied history.
+	// Inspect only the envelope; raw multimodal content stays opaque here.
+	var envelopes []struct {
+		Audio *json.RawMessage `json:"audio"`
+	}
+	if err := json.Unmarshal(raw["messages"], &envelopes); err != nil {
+		return nil, errInvalidJSON()
+	}
+	for i, envelope := range envelopes {
+		if envelope.Audio != nil {
+			return nil, errUnsupportedParam(fmt.Sprintf("messages[%d].audio", i))
+		}
+	}
 	for i, message := range req.Messages {
 		switch message.Role {
 		case "system", "user", "assistant", "tool", "developer":
