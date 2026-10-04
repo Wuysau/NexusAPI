@@ -50,7 +50,7 @@ Key、对话和输出保留在当前页面内存。更换项目或 Key、卸载�
 
 Gateway 不支持消息级音频响应引用和旧式函数调用历史：非空 `messages[i].audio` 或 `messages[i].function_call` 返回固定400 `unsupported_parameter`，错误参数标明对应消息和字段，不回显引用或调用内容。检查发生在认证及执行资源申请之前，不派发、不占用幂等键、不生成会计事实。省略这些字段或传入 `null` 保持兼容；现代 `tool_calls`、工具结果、Responses 的函数调用条目以及内容数组里的 `input_audio`、图片和已有拒绝、推理历史沿用现有处理。此行为不扩大 Playground 的文本输入范围。
 
-Anthropic 适配器1.0.9遇到未识别的非空停止原因时返回固定 `upstream_protocol_error`，已开始的执行记录为 unknown，保留此前及该事件中的有效用量，不自动重发或切换供应商。普通响应返回502；已经输出内容的流保留前缀并发送错误，不发送成功结束标记。供应商原始停止原因不会进入错误响应或诊断。已知停止原因沿用现有映射；这不代表较新的暂停、拒绝和上下文上限语义已完整映射。
+Anthropic 适配器1.0.10遇到未识别的非空停止原因时返回固定 `upstream_protocol_error`，已开始的执行记录为 unknown，保留此前及该事件中的有效用量，不自动重发或切换供应商。普通响应返回502；已经输出内容的流保留前缀并发送错误，不发送成功结束标记。供应商原始停止原因不会进入错误响应或诊断。已知 `model_context_window_exceeded` 映射为 `length`，保留部分文本和已完成的执行会计记录，Playground 禁止拼接该次截断历史；Responses 标记输出 `incomplete`，其现有 `max_output_tokens` 分类不区分上下文容量与请求输出上限。其他已知原因沿用现有映射，暂停和拒绝语义尚未完整映射。
 
 Gemini 适配器1.0.6把已知 `SAFETY` 结束原因映射为 `content_filter`，保留已有文本及报告的用量，不自动重试或切换供应商。Chat 返回过滤结束原因，Responses 将输出标记为 `incomplete`，Playground 禁止继续拼接该次历史；Request、Attempt 和会计事件仍记录这次已经完成的执行。其他已知原因沿用现有映射，未知原因继续按协议错误处理。
 
