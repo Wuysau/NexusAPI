@@ -133,6 +133,10 @@ PostgreSQL 17's [transaction-local lock timeout](https://www.postgresql.org/docs
 
 ## External contracts
 
+The [node-postgres Pool API](https://node-postgres.com/apis/pool) documents finite connection acquisition and the full-pool queue. Installed pg8.20.0/pg-pool3.14.0 source confirms that its timeout removes queued requests and destroys stalled startup connections. NexusAPI sets the shared Control Plane pool's native two-second bound, following its existing Budget and Worker health-pool convention. Real-database and synthetic TCP tests prove cleanup, no delayed queued INSERT, healthy recovery and timely single execution. Client-side timeout races, automatic retries and a claim of total SQL/request cancellation are rejected. This is original configuration and tests; no upstream code is copied.
+
+The [Node24 filesystem API](https://nodejs.org/docs/latest-v24.x/api/fs.html#fspromisesrmpath-options) documents finite retries for recursive-removal errors. NexusAPI applies three retries with100ms incremental delay to one Windows-sensitive Connector fixture after owned processes stop. Native file leases prove transient recovery and persistent EBUSY refusal. Resolved temporary-root checks remain; indefinite retries, ignored errors and inference retries are rejected. Recursive entry retries do not establish a universal total duration. No external source code is copied.
+
 - [Stripe Checkout fulfillment](https://docs.stripe.com/checkout/fulfillment): complete orders via verified server callbacks, not browser redirects.
 - [Stripe webhook signatures](https://docs.stripe.com/webhooks/signature): verify the original raw payload and timestamp; keep settlement idempotent.
 - Provider-specific links are retained in `src/lib/subscriptions/catalog.ts` and the subscription coverage document. Source endpoints, product availability and limits may change; no current model prices are hardcoded into payment plans.
