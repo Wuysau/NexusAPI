@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	anthropicAdapterVersion = "1.0.10"
+	anthropicAdapterVersion = "1.0.11"
 	anthropicAPIVersion     = "2023-06-01"
 	// defaultAnthropicMaxTokens is applied when the client omits max_tokens,
 	// which the Messages API rejects. Chosen to match the legacy gateway's
@@ -384,7 +384,9 @@ func mapAnthropicStopReason(reason string) string {
 		return "length"
 	case "tool_use":
 		return "tool_calls"
-	case "end_turn", "stop_sequence", "pause_turn", "refusal":
+	case "refusal":
+		return "content_filter"
+	case "end_turn", "stop_sequence", "pause_turn":
 		return "stop"
 	default:
 		return ""

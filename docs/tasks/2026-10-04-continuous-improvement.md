@@ -1,14 +1,18 @@
 # Continuous autonomous maintenance
 
-User resumed continuous autonomous maintenance in a fresh chat on 2026-10-04 after the earlier C20 pause. Continue verified independent slices under the original authorization below.
+User resumed continuous autonomous maintenance in a fresh chat on 2026-10-04 after the earlier C20 pause. The user subsequently requested ending the overall task after completing C30; stop after its verification and independent submission. Later candidates remain deferred.
 
 Original user authorization: continue inspect → characterize → minimal design → implement → test → review → commit → re-audit until an actual hard stop. Use normal main/post-commit auto-sync. Preserve execution-plane, credential, tenant/project, unknown-value, no-replay and immutable-accounting boundaries. Never operate production accounts/databases to manufacture acceptance.
 
 ## Current state
 
-- C28 submitted topic `e7c8a70`, normal hook main/origin/actual remote `b41b566`, clean matching trees. Exact CI37187339848 and Pages37187338675 SUCCESS. This is the latest complete hosted acceptance, including full Go, four production images, Vault, E2E and SBOM. C27 CI was cancelled normally by the newer push.
-- C29 verified before submission: two runtime-path tracing annotations plus explicit project LICENSE copy. Final Windows artifact33,996,202bytes (-29.14%); Linux `/app`62,520,997bytes (-17.61%). Runtime assets/private-path/pg safeguards retained; actual native OLD/NEW/FINAL health200/closed/clients0, final related81PASS, compiler/lint/format/review clear. Existing build fixtures now supply LICENSE; their initial3FAIL receipt is retained. Detail: `2026-10-04-control-runtime-tracing.md`.
-- A Connection-revocation authorization candidate is source-derived only; platform safety review blocked its requested isolated characterization. No retry, public fix or validated exploit is claimed. Separate classifier-refusal protocol draft remains ignored and unpublished, with5RED/29controls and ordinary-refusal-text compatibility. Continue independently authorized maintenance without bypassing the blocked subtask.
+- C29 submitted topic `a990b0f`, normal hook main/origin/actual remote `2f372a2`, clean matching trees. Exact CI37188618900/Pages37188618594 SUCCESS, now the latest full hosted baseline.
+- C30 verified for independent submission and the user's stopping boundary: native5RED/29controls with213 stable inputs→same34 plus registry2 pass. Anthropic1.0.11, ordinary refusal text stays stop; successful execution/usage/privacy/no replay retained. Final provider672/Linux race446/Playground46 PASS,960 public inputs stable; vet/build/lint0/compiler/format/secrets/review pass. Initial lint failure retained and fixed with an equivalent test switch. Detail `2026-10-04-anthropic-classifier-refusal.md`. This ends the run at30 numbered maintenance rounds, with three additional independent corrections.
+- Deferred candidate: Gemini BLOCKLIST/PROHIBITED_CONTENT/SPII as one documented policy-filter class. Ignored draft18RED/14controls/0skip with211 stable inputs; no public Gemini change. Connection characterization remains platform-blocked and must not be retried through another route. No further round is authorized in this run after C30.
+
+- C28 submitted topic `e7c8a70`, normal hook main/origin/actual remote `b41b566`, clean matching trees. Exact CI37187339848 and Pages37187338675 SUCCESS, including full Go, four production images, Vault, E2E and SBOM. The later C29 run also passed; C27 CI was cancelled normally by the newer push.
+- C29 committed and verified: two runtime-path tracing annotations plus explicit project LICENSE copy. Final Windows artifact33,996,202bytes (-29.14%); Linux `/app`62,520,997bytes (-17.61%). Runtime assets/private-path/pg safeguards retained; actual native OLD/NEW/FINAL health200/closed/clients0, final related81PASS, compiler/lint/format/review clear. Existing build fixtures now supply LICENSE; their initial3FAIL receipt is retained. Detail: `2026-10-04-control-runtime-tracing.md`.
+- A Connection-revocation authorization candidate is source-derived only; platform safety review blocked its requested isolated characterization. No retry, public fix or validated exploit is claimed. Classifier-refusal tests are now published as C30; the later Gemini policy-filter draft remains ignored and unpublished. These deferred candidates are outside the user's requested stopping boundary.
 
 ## Earlier checkpoints
 
