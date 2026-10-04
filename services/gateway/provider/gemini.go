@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	geminiAdapterVersion = "1.0.5"
+	geminiAdapterVersion = "1.0.6"
 	geminiAPIVersion     = "v1beta"
 )
 
@@ -272,6 +272,8 @@ func mapGeminiFinishReason(reason string) string {
 	switch reason {
 	case "MAX_TOKENS":
 		return "length"
+	case "SAFETY":
+		return "content_filter"
 	case "STOP":
 		return "stop"
 	default:
