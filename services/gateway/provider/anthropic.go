@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	anthropicAdapterVersion = "1.0.8"
+	anthropicAdapterVersion = "1.0.9"
 	anthropicAPIVersion     = "2023-06-01"
 	// defaultAnthropicMaxTokens is applied when the client omits max_tokens,
 	// which the Messages API rejects. Chosen to match the legacy gateway's
@@ -356,7 +356,11 @@ func (s *anthropicStream) Next() (CanonicalChunk, error) {
 				s.usage.OutputTokens = wire.Usage.OutputTokens
 			}
 			if wire.Delta != nil && wire.Delta.StopReason != "" {
-				return CanonicalChunk{FinishReason: mapAnthropicStopReason(wire.Delta.StopReason)}, nil
+				finish := mapAnthropicStopReason(wire.Delta.StopReason)
+				if finish == "" {
+					return CanonicalChunk{Usage: s.usage}, fmt.Errorf("anthropic: invalid stop reason")
+				}
+				return CanonicalChunk{FinishReason: finish}, nil
 			}
 			continue
 		case "message_stop":
@@ -380,8 +384,10 @@ func mapAnthropicStopReason(reason string) string {
 		return "length"
 	case "tool_use":
 		return "tool_calls"
-	default:
+	case "end_turn", "stop_sequence", "pause_turn", "refusal", "model_context_window_exceeded":
 		return "stop"
+	default:
+		return ""
 	}
 }
 
