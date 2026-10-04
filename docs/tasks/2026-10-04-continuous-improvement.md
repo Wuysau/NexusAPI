@@ -1,10 +1,13 @@
 # Continuous autonomous maintenance
 
-User update: after current C20 verification/commit, stop and provide a concise handoff for a new chat. Do not begin C21 production work.
+User resumed continuous autonomous maintenance in a fresh chat on 2026-10-04 after the earlier C20 pause. Continue verified independent slices under the original authorization below.
 
 Original user authorization: continue inspect → characterize → minimal design → implement → test → review → commit → re-audit until an actual hard stop. Use normal main/post-commit auto-sync. Preserve execution-plane, credential, tenant/project, unknown-value, no-replay and immutable-accounting boundaries. Never operate production accounts/databases to manufacture acceptance.
 
 ## Current state
+
+- Resumed at clean topic `923e161`, main/origin `cf10bb7`; old Observer/Connector CI issues are fixed. Exact C20 CI37180625494 passed through Integration/security/build/services/Compose; later gates remain in progress at this update.
+- C21 idle shared-pool recovery implemented: native frozen OLD2RED/1control→same3GREEN; root-config formal5PASS/0skip, actual idle loss and active-query error, static private diagnostics, cached module reload, canonical28/stable inputs/clients0. Prior prototype newline-generation failure retained. Compiler, CP/Worker/Budget builds and related acquisition5PASS; scoped lint/style passed. Review found fixture table ownership cleanup, corrected to drop only a table successfully created by this run. Final compiler/lint/style/secrets/diff checks pass and independent review is clear; submitting this slice. Detail: `2026-10-04-control-plane-pool-recovery.md`.
 
 - Starting HEAD/main/origin: `5e73d1b5588f420a6c0d5b816c4c3f6c7f920724`; checkout initially clean. Prior project diagnostics and published manual are complete.
 - Hosted CI `37152432079`: **FAIL**, Integration now **PASS**. Install/format/lint/typecheck/unit/contract/migration/integration/security/audit/secrets/Control Plane/services/Compose passed. Go gate failed before race during the actual health fixture executable build: `error obtaining VCS status: exit status 128`. Later images/Vault/E2E/SBOM were skipped.
@@ -39,7 +42,7 @@ Original user authorization: continue inspect → characterize → minimal desig
 | P1 committed | Recent authentication becomes stale while Key DELETE waits | C18 exact81 real-clock OLD twice1RED/2controls→same3GREEN. Formal4 plus related145:149PASS/0skip,425 stable inputs/clients0/canonical28 restored. Reuse existing freshness helper with locked creation time/current age after scope locks; ordinary PATCH/creation unchanged. Compiler/lint/format/contracts3/secrets PASS. |
 | P1 committed | Bound resource lock waiting while actor/session authority is retained | C19 preserved6s and aligned12s OLD twice3RED/3controls→aligned6GREEN. Finalformal12+related149:161PASS/0skip,423 common inputs stable/426 each phase,clients0/canonical28 restored. Per-lock10s cap retains shorter operator limit,503 before write, actual session revocation unblocks; hidden PATCH scope1RED→404 via existing precheck. Compiler/lint/format/contracts3/secrets PASS. |
 | P1 completed, paused by user | Bound CP database connection acquisition | C20 actual shared-pool OLD twice4RED/1control→same5GREEN and root-config formal5PASS. Native2s queue/startup timeout removes queued SQL, preserves timely single execution/recovery. No query/request cancellation or retries. First Integration suite cleanup failure retained; independent correction1dd0479. Fresh unit754/contract391/Integration799/security49 PASS939 stable public inputs,E2E15,builds/compiler/lint/format/secrets PASS; independent review clear. Submit and pause at explicit user request. |
-| P1 next chat | Idle shared-pool connection errors | Source candidate only. Ignored round84 prototype SQL-error control failed child exit1 before OLD freeze; diagnose fixture first, no accepted reproduction or production change. User requests pause after C20. |
+| P1 implemented | Idle shared-pool connection errors | C21 native OLD2RED/1control→3GREEN and formal5PASS. Fixed static handler only on pool creation; query errors/no-replay/cache preserved. Compiler/builds/related5/style/lint/secrets and final independent review pass. |
 | P2 | Gateway semantic loss | Pure HTTP OLD: nested assistant audio silently dispatches, Anthropic unknown finish becomes completed, Gemini filtered/malformed finish becomes stop. Implement independent protocol fixes after higher-priority security. |
 
 ## Completed rounds
