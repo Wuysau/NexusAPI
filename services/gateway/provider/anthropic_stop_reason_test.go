@@ -52,7 +52,7 @@ func TestAnthropicUnknownStopReasonPreservesUsage(t *testing.T) {
 
 func TestAnthropicKnownStopReasonsRemainCompatible(t *testing.T) {
 	// All seven documented reasons remain accepted. Context-window exhaustion
-	// is valid truncation; refusal/pause and the other projections stay unchanged.
+	// is valid truncation; classifier refusals are filtered, while pause stays compatible.
 	// https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons
 	for _, tc := range []struct{ reason, finish string }{
 		{"end_turn", "stop"},
@@ -60,7 +60,7 @@ func TestAnthropicKnownStopReasonsRemainCompatible(t *testing.T) {
 		{"max_tokens", "length"},
 		{"tool_use", "tool_calls"},
 		{"pause_turn", "stop"},
-		{"refusal", "stop"},
+		{"refusal", "content_filter"},
 		{"model_context_window_exceeded", "length"},
 	} {
 		t.Run(tc.reason, func(t *testing.T) {

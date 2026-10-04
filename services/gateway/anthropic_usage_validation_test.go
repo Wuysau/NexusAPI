@@ -160,8 +160,13 @@ func anthropicGatewayCounter(field, value string) string {
 	return `{"type":"message_delta","delta":{},"usage":` + usage + `}`
 }
 
-func newAnthropicUsageHarness(t *testing.T, initial, later string, recovery bool) (*testHarness, *atomic.Int32, *atomic.Int32) {
+func newAnthropicUsageHarness(t *testing.T, initial, later string, recovery bool, messageText ...string) (*testHarness, *atomic.Int32, *atomic.Int32) {
 	t.Helper()
+	text := "private-anthropic-content"
+	if len(messageText) > 0 {
+		text = messageText[0]
+	}
+	encodedText, _ := json.Marshal(text)
 	var calls, fallbackCalls atomic.Int32
 	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fallbackCalls.Add(1)
@@ -178,7 +183,7 @@ func newAnthropicUsageHarness(t *testing.T, initial, later string, recovery bool
 			frames := []string{
 				`{"type":"message_start","message":{"id":"msg_usage_fixture","type":"message","role":"assistant","model":"gpt-4o","content":[],"stop_reason":null,"stop_sequence":null,"usage":` + initial + `}}`,
 				`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
-				`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"private-anthropic-content"}}`,
+				`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":` + string(encodedText) + `}}`,
 				`{"type":"content_block_stop","index":0}`,
 			}
 			if later != "" {
@@ -238,12 +243,12 @@ func assertAnthropicGatewayPrivacy(t *testing.T, h *testHarness, response *http.
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, private := range []string{"private-anthropic-prompt", "private-anthropic-content", "private-invalid-anthropic-usage", testAPIKey, "upstream-test-secret"} {
+	for _, private := range []string{"private-anthropic-prompt", "private-anthropic-content", "private-anthropic-stop-explanation", "private-invalid-anthropic-usage", testAPIKey, "upstream-test-secret"} {
 		if bytes.Contains(facts, []byte(private)) || strings.Contains(logs, private) {
 			t.Error("provider/request content or credentials entered durable facts or logs")
 		}
 	}
-	for _, private := range []string{"private-invalid-anthropic-usage", testAPIKey, "upstream-test-secret"} {
+	for _, private := range []string{"private-invalid-anthropic-usage", "private-anthropic-stop-explanation", testAPIKey, "upstream-test-secret"} {
 		if strings.Contains(body, private) || strings.Contains(fmt.Sprint(response.Header), private) {
 			t.Error("provider details or credentials entered downstream response")
 		}
