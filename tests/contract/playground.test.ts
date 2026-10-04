@@ -138,6 +138,7 @@ describe('Playground transient contract', () => {
     })
     expect(projectPlaygroundChat(reply({ role: 'assistant', content: '' }), null).canContinue).toBe(false)
     expect(projectPlaygroundChat(reply(undefined, 'length'), null).canContinue).toBe(false)
+    expect(projectPlaygroundChat(reply(undefined, 'content_filter'), null).canContinue).toBe(false)
     expect(projectPlaygroundChat(reply(undefined, 'future_finish_reason'), null).canContinue).toBe(false)
   })
   it('shows tool-only/refusal-only replies with omitted visible content and prevents continuation', () => {
