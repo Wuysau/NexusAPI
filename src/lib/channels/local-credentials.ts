@@ -62,7 +62,9 @@ export function assertLocalKeyInput(req: Request) {
 }
 export function localCredentialDirectory() {
   if (process.env.NODE_ENV === 'production') throw denied()
-  return resolve(process.env.NEXUS_LOCAL_CREDENTIAL_DIR || join(homedir(), '.nexusapi', 'credentials'))
+  return resolve(
+    /* turbopackIgnore: true */ process.env.NEXUS_LOCAL_CREDENTIAL_DIR || join(homedir(), '.nexusapi', 'credentials'),
+  )
 }
 export function normalizeLocalEndpoint(value: unknown): string {
   if (typeof value !== 'string' || value.length > 2048)

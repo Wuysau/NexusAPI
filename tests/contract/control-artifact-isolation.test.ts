@@ -127,6 +127,7 @@ describe('Control Plane artifact isolation', () => {
         await mkdir(join(directory, path), { recursive: true })
       await copyFile('src/lib/config.ts', join(directory, 'src/lib/config.ts'))
       await copyFile('scripts/start-control.cjs', join(directory, 'scripts/start-control.cjs'))
+      await copyFile('LICENSE', join(directory, 'LICENSE'))
       await writeFile(
         join(directory, 'node_modules/next/dist/bin/next'),
         `

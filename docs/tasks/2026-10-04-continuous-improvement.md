@@ -6,6 +6,12 @@ Original user authorization: continue inspect → characterize → minimal desig
 
 ## Current state
 
+- C28 submitted topic `e7c8a70`, normal hook main/origin/actual remote `b41b566`, clean matching trees. Exact CI37187339848 and Pages37187338675 SUCCESS. This is the latest complete hosted acceptance, including full Go, four production images, Vault, E2E and SBOM. C27 CI was cancelled normally by the newer push.
+- C29 verified before submission: two runtime-path tracing annotations plus explicit project LICENSE copy. Final Windows artifact33,996,202bytes (-29.14%); Linux `/app`62,520,997bytes (-17.61%). Runtime assets/private-path/pg safeguards retained; actual native OLD/NEW/FINAL health200/closed/clients0, final related81PASS, compiler/lint/format/review clear. Existing build fixtures now supply LICENSE; their initial3FAIL receipt is retained. Detail: `2026-10-04-control-runtime-tracing.md`.
+- A Connection-revocation authorization candidate is source-derived only; platform safety review blocked its requested isolated characterization. No retry, public fix or validated exploit is claimed. Separate classifier-refusal protocol draft remains ignored and unpublished, with5RED/29controls and ordinary-refusal-text compatibility. Continue independently authorized maintenance without bypassing the blocked subtask.
+
+## Earlier checkpoints
+
 - C27 submitted topic `acd715a`, normal hook main/origin/actual remote `a1acb06`. Exact CI37186676522 in progress; Pages37186676167 SUCCESS. C26 CI37186172178 cancelled by the subsequent normal push; its Pages37186171493 succeeded. Latest complete hosted acceptance remains C21.
 - C28 context-window truncation ready for independent submission: native OLD5RED/21controls with208 stable inputs→same26 plus registry2 GREEN. Only that known Anthropic reason maps to length; adapter1.0.10, completed execution/nullable usage/privacy/no replay retained. Existing Responses metadata is coarse; detail `2026-10-04-anthropic-context-window.md`. Provider672/related Linux race436/Playground46 PASS,958 public inputs stable; vet/build/compiler/lint/format/secrets/independent review clear. C29 runtime-path artifact tracing remains the next measured candidate.
 
@@ -72,9 +78,12 @@ Original user authorization: continue inspect → characterize → minimal desig
 | P1 committed | Idle shared-pool connection errors | C21 topicbe06e3d/maina3033ad; native OLD2RED/1control→3GREEN and formal5PASS. Fixed static handler only on pool creation; query errors/no-replay/cache preserved. Compiler/builds/related5/style/lint/secrets and final independent review pass. |
 | P1 committed | Budget idle-pool connection loss | C23 actual OLD exits1→formal2GREEN, final2/authorization6/project3/contracts6 PASS. Static Budget diagnostic, explicit readiness recovery,401/400/no-accounting-mutation controls. Compiler/build/review PASS,423/425 stable inputs, canonical28/clients0. C23a separately corrects shared fixture schema inheritance. |
 | P2 committed | Anthropic unknown stop reason | C22 topicc90264e/maincbb70a1, provider/HTTP22 GREEN and full Go/TS/E2E checkpoint above. Known seven mappings and absent compatibility preserved. |
-| P2 verified, submitting | Audio message history | C24 non-null audio rejected before execution;20 formal cases and full Go/Integration/E2E pass above. |
-| P1 characterized | Health response read stall | C25 actual unchanged route retains an established client beyond3429ms; owned transparent proxy release restores200. Bound only probe reads after acquisition. |
-| P2 | Remaining Gateway semantic loss | Nested assistant legacy function_call silently disappears; local buffered/SSE dispatch proof retained. Known Anthropic refusal/context/pause and Gemini finish projections need separate characterization. |
+| P2 committed | Audio and legacy function message history | C24 audio and C26 function_call non-null envelopes rejected before execution; omitted/null/modern history preserved. Full C26 checkpoint above. |
+| P1 committed | Health response read stall | C25 native probe-only2s response bound verified, separate acquisition budget and ordinary SQL semantics retained. |
+| P2 committed | Known terminal output completeness | C27 Gemini SAFETY→content_filter; C28 Anthropic context exhaustion→length. Completed execution/usage retained, scoped verification above. |
+| P2 verified | Runtime-path artifact tracing | C29 measured Windows/Linux reduction with actual native production health and retained LICENSE/runtime assets. |
+| P1 deferred | Connection revocation authority candidate | Source-only finding; characterization blocked by platform safety review, no validated reproduction or production fix. |
+| P2 characterized | Classifier-refusal projection | Ignored Anthropic5RED/29controls; ordinary model refusal text remains normal stop. No public changes yet. |
 
 ## Completed rounds
 
