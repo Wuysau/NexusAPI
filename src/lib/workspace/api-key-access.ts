@@ -8,6 +8,22 @@ const notFound = (): never => {
   throw new AuthzError('not_found', '密钥不存在或已撤销', 404)
 }
 
+/** Server-side cancellation aborts the transaction; preserve stricter operator deadlines. */
+async function withKeyLockDeadline(client: PoolClient, authorize: () => Promise<void>): Promise<void> {
+  try {
+    await client.query(`SELECT set_config('lock_timeout', CASE
+      WHEN current_setting('lock_timeout')::interval = interval '0'
+        OR current_setting('lock_timeout')::interval > interval '10 seconds'
+      THEN '10s' ELSE current_setting('lock_timeout') END, true)`)
+    await authorize()
+  } catch (error) {
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === '55P03') {
+      throw new AuthzError('key_resource_busy', '密钥管理资源暂忙，请稍后再试', 503)
+    }
+    throw error
+  }
+}
+
 function requireUnexpiredSession(expiresAt: Date): void {
   if (expiresAt.getTime() <= Date.now()) throw new AuthzError('unauthenticated', '请先登录')
 }
@@ -85,9 +101,11 @@ export async function lockApiKeyCreation(
   ctx: ControlPlaneContext,
   projectId: string | null,
 ): Promise<void> {
-  const session = await lockActiveKeyActorAndSession(client, ctx)
-  await lockKeyAuthority(client, ctx, projectId, 'apikey:create')
-  requireUnexpiredSession(session.expires_at)
+  return withKeyLockDeadline(client, async () => {
+    const session = await lockActiveKeyActorAndSession(client, ctx)
+    await lockKeyAuthority(client, ctx, projectId, 'apikey:create')
+    requireUnexpiredSession(session.expires_at)
+  })
 }
 
 /** Keep one transaction through the mutation; management includes archived projects. */
@@ -97,26 +115,28 @@ export async function lockManagedApiKey(
   id: string,
   options: { recentAuth?: boolean } = {},
 ): Promise<void> {
-  const session = await lockActiveKeyActorAndSession(client, ctx)
-  const key = (
-    await client.query<{ project_id: string | null; created_by: string | null }>(
-      `SELECT project_id,created_by FROM downstream_api_keys
-       WHERE id=$1 AND tenant_id=$2 AND organization_id=$3 AND deleted_at IS NULL FOR UPDATE`,
-      [id, ctx.tenantId, ctx.organizationId],
-    )
-  ).rows[0]
-  if (!key) notFound()
-  const role = await lockKeyAuthority(client, ctx, key.project_id, 'apikey:revoke')
-  if (!key.project_id && !['owner', 'admin'].includes(role) && key.created_by !== ctx.session.userId) notFound()
-  requireUnexpiredSession(session.expires_at)
-  if (options.recentAuth) {
-    requireRecentAuth({
-      ...ctx.session,
-      createdAt: session.created_at,
-      expiresAt: session.expires_at,
-      ageSeconds: Math.max(0, Math.floor((Date.now() - session.created_at.getTime()) / 1000)),
-    })
-  }
+  return withKeyLockDeadline(client, async () => {
+    const session = await lockActiveKeyActorAndSession(client, ctx)
+    const key = (
+      await client.query<{ project_id: string | null; created_by: string | null }>(
+        `SELECT project_id,created_by FROM downstream_api_keys
+         WHERE id=$1 AND tenant_id=$2 AND organization_id=$3 AND deleted_at IS NULL FOR UPDATE`,
+        [id, ctx.tenantId, ctx.organizationId],
+      )
+    ).rows[0]
+    if (!key) notFound()
+    const role = await lockKeyAuthority(client, ctx, key.project_id, 'apikey:revoke')
+    if (!key.project_id && !['owner', 'admin'].includes(role) && key.created_by !== ctx.session.userId) notFound()
+    requireUnexpiredSession(session.expires_at)
+    if (options.recentAuth) {
+      requireRecentAuth({
+        ...ctx.session,
+        createdAt: session.created_at,
+        expiresAt: session.expires_at,
+        ageSeconds: Math.max(0, Math.floor((Date.now() - session.created_at.getTime()) / 1000)),
+      })
+    }
+  })
 }
 
 export async function withManagedApiKeyWrite<T>(
