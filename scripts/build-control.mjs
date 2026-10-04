@@ -21,6 +21,7 @@ await build({
   format: 'cjs',
 })
 await copyFile('scripts/start-control.cjs', '.next/standalone/start-control.cjs')
+await copyFile('LICENSE', '.next/standalone/LICENSE')
 await cp('.next/static', '.next/standalone/.next/static', { recursive: true })
 await materializeControlRuntime()
 await checkControlArtifact('.next/standalone')

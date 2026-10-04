@@ -26,7 +26,7 @@ function executable() {
       path.join(root, 'node_modules', '@openai', `codex-win32-${arch}`, 'vendor', triple, 'bin', 'codex.exe'),
       path.join(root, 'vendor', triple, 'bin', 'codex.exe'),
     ]) {
-      if (existsSync(candidate)) return candidate
+      if (existsSync(/* turbopackIgnore: true */ candidate)) return candidate
     }
   }
   throw new CodexClientError('app_server_unavailable')

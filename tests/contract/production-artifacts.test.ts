@@ -60,12 +60,13 @@ describe('Control Plane production artifact', () => {
     )
   })
 
-  it('copies emitted static assets into the runnable standalone artifact', () => {
+  it('copies emitted static assets and the license into the runnable standalone artifact', () => {
     fixture((directory) => {
       for (const path of ['node_modules/next/dist/bin', 'src/lib', 'scripts'])
         mkdirSync(join(directory, path), { recursive: true })
       copyFileSync('src/lib/config.ts', join(directory, 'src/lib/config.ts'))
       copyFileSync('scripts/start-control.cjs', join(directory, 'scripts/start-control.cjs'))
+      copyFileSync('LICENSE', join(directory, 'LICENSE'))
       writeFileSync(
         join(directory, 'node_modules/next/dist/bin/next'),
         `
@@ -84,6 +85,7 @@ describe('Control Plane production artifact', () => {
       expect(readFileSync(join(directory, '.next/standalone/.next/static/chunks/fixture.js'), 'utf8')).toBe(
         'static-build-fixture',
       )
+      expect(readFileSync(join(directory, '.next/standalone/LICENSE'), 'utf8')).toBe(readFileSync('LICENSE', 'utf8'))
     })
   })
   it('emits standalone output and copies only files produced by the build', () => {
