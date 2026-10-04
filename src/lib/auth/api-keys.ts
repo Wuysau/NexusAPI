@@ -13,6 +13,7 @@
 //   - The presented key never appears in an audit row, log or error message.
 
 import { pool } from '@/db'
+import type { PoolClient } from 'pg'
 import { constantTimeEqual, newApiKey, sha256hex } from '@/lib/crypto'
 import { createApiKey, findApiKeyByHash, revokeApiKey, insertOutboxEvent } from '@/lib/db/repositories'
 import type { ApiKeyRow } from '@/lib/db/repositories'
@@ -286,8 +287,33 @@ export async function verifyDownstreamKey(
 
 // ── Revoke ────────────────────────────────────────────────────────────
 
-export async function revokeDownstreamKey(input: RevokeDownstreamKeyInput): Promise<boolean> {
-  const revoked = await revokeApiKey(input.tenantId, input.keyId)
+export async function revokeDownstreamKey(
+  input: RevokeDownstreamKeyInput,
+  authorize?: (client: PoolClient) => Promise<void>,
+): Promise<boolean> {
+  let revoked: boolean
+  if (authorize) {
+    // A trusted Control Plane guard and revoke share the same transaction/client.
+    const client = await pool.connect()
+    let discardClient = false
+    try {
+      await client.query('BEGIN')
+      await authorize(client)
+      revoked = await revokeApiKey(input.tenantId, input.keyId, client)
+      await client.query('COMMIT')
+    } catch (error) {
+      try {
+        await client.query('ROLLBACK')
+      } catch {
+        discardClient = true
+      }
+      throw error
+    } finally {
+      client.release(discardClient)
+    }
+  } else {
+    revoked = await revokeApiKey(input.tenantId, input.keyId)
+  }
   if (!revoked) return false
 
   // Propagate to gateway snapshots. The outbox row is written after the
