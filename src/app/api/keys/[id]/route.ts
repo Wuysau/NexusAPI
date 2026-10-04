@@ -3,6 +3,7 @@
 
 import { pool } from '@/db'
 import { apiKeyVisibility, workspaceParams } from '@/lib/workspace/management'
+import { lockManagedApiKey, withManagedApiKeyWrite } from '@/lib/workspace/api-key-access'
 import { ApiKeyError, invalidateDownstreamKeyCache, revokeDownstreamKey } from '@/lib/auth/api-keys'
 import {
   apiError,
@@ -29,11 +30,14 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const ctx = await requireContext(req, 'apikey:revoke')
     if (typeof body?.enabled !== 'boolean') return apiError(400, 'invalid_request', '缺少 enabled 字段')
 
-    const updated = await pool.query(
-      `UPDATE downstream_api_keys k SET enabled = $6
-        WHERE ${apiKeyVisibility} AND k.id=$5 AND k.revoked_at IS NULL AND k.deleted_at IS NULL
+    const updated = await withManagedApiKeyWrite(ctx, id, (client) =>
+      client.query(
+        `UPDATE downstream_api_keys k SET enabled = $4
+        WHERE k.id=$1 AND k.tenant_id=$2 AND k.organization_id=$3
+        AND k.revoked_at IS NULL AND k.deleted_at IS NULL
         RETURNING k.id`,
-      [...workspaceParams(ctx), id, body.enabled],
+        [id, ctx.tenantId, ctx.organizationId, body.enabled],
+      ),
     )
     if (!updated.rowCount) return apiError(404, 'not_found', '密钥不存在或已撤销')
     if (!body.enabled) invalidateDownstreamKeyCache(id)
@@ -62,12 +66,15 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     )
     if (!visible.rows.length) return apiError(404, 'not_found', '密钥不存在或已撤销')
     try {
-      const revoked = await revokeDownstreamKey({
-        tenantId: ctx.tenantId,
-        keyId: id,
-        actorUserId: ctx.principal.userId,
-        ip: clientIp(req),
-      })
+      const revoked = await revokeDownstreamKey(
+        {
+          tenantId: ctx.tenantId,
+          keyId: id,
+          actorUserId: ctx.principal.userId,
+          ip: clientIp(req),
+        },
+        (client) => lockManagedApiKey(client, ctx, id),
+      )
       if (!revoked) return apiError(404, 'not_found', '密钥不存在或已撤销')
       return jsonOk({ id, revoked: true })
     } catch (error) {
