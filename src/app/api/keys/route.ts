@@ -9,6 +9,7 @@ import { pool } from '@/db'
 import { listApiKeys } from '@/lib/db/repositories'
 import { API_KEY_SCOPES } from '@/lib/auth/api-keys'
 import { apiKeyVisibility, resolveManagedProject, workspaceParams } from '@/lib/workspace/management'
+import { lockApiKeyCreation } from '@/lib/workspace/api-key-access'
 import { apiError, clientIp, jsonOk, readJsonBody, requireContext, routeError } from '../_lib/control-plane'
 
 export const dynamic = 'force-dynamic'
@@ -88,15 +89,18 @@ export async function POST(req: Request) {
         )
         if (!project.rows[0]) return apiError(404, 'project_not_found', '项目不存在')
       }
-      const { plaintext, key } = await createDownstreamKey({
-        tenantId: ctx.tenantId,
-        name,
-        projectId,
-        scopes,
-        expiresAt,
-        actorUserId: ctx.principal.userId,
-        ip: clientIp(req),
-      })
+      const { plaintext, key } = await createDownstreamKey(
+        {
+          tenantId: ctx.tenantId,
+          name,
+          projectId,
+          scopes,
+          expiresAt,
+          actorUserId: ctx.principal.userId,
+          ip: clientIp(req),
+        },
+        (client) => lockApiKeyCreation(client, ctx, projectId),
+      )
       return jsonOk({ token: plaintext, key: { ...safeKey(key), projectId } }, 201)
     } catch (error) {
       if (error instanceof ApiKeyError) return apiError(400, error.code, error.message)
