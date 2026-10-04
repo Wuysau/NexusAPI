@@ -2,6 +2,7 @@ import { pool } from '@/db'
 import type { PoolClient } from 'pg'
 import type { ControlPlaneContext } from '@/app/api/_lib/control-plane'
 import { AuthzError, hasCapability, type Role } from '@/lib/auth/capabilities'
+import { requireRecentAuth } from '@/lib/auth/sessions'
 
 const notFound = (): never => {
   throw new AuthzError('not_found', '密钥不存在或已撤销', 404)
@@ -12,21 +13,24 @@ function requireUnexpiredSession(expiresAt: Date): void {
 }
 
 /** Lock user, then current session before resource locks; retain both through commit. */
-async function lockActiveKeyActorAndSession(client: PoolClient, ctx: ControlPlaneContext): Promise<Date> {
+async function lockActiveKeyActorAndSession(
+  client: PoolClient,
+  ctx: ControlPlaneContext,
+): Promise<{ expires_at: Date; created_at: Date }> {
   const actor = await client.query(
     "SELECT id FROM users WHERE id=$1 AND status='active' AND deleted_at IS NULL FOR SHARE",
     [ctx.session.userId],
   )
   if (!actor.rows.length) throw new AuthzError('unauthenticated', '请先登录')
   const session = (
-    await client.query<{ expires_at: Date }>(
-      'SELECT expires_at FROM sessions WHERE id=$1 AND user_id=$2 AND revoked_at IS NULL FOR SHARE',
+    await client.query<{ expires_at: Date; created_at: Date }>(
+      'SELECT expires_at,created_at FROM sessions WHERE id=$1 AND user_id=$2 AND revoked_at IS NULL FOR SHARE',
       [ctx.session.id, ctx.session.userId],
     )
   ).rows[0]
   if (!session) throw new AuthzError('unauthenticated', '请先登录')
   requireUnexpiredSession(session.expires_at)
-  return session.expires_at
+  return session
 }
 
 async function lockKeyAuthority(
@@ -81,14 +85,19 @@ export async function lockApiKeyCreation(
   ctx: ControlPlaneContext,
   projectId: string | null,
 ): Promise<void> {
-  const expiresAt = await lockActiveKeyActorAndSession(client, ctx)
+  const session = await lockActiveKeyActorAndSession(client, ctx)
   await lockKeyAuthority(client, ctx, projectId, 'apikey:create')
-  requireUnexpiredSession(expiresAt)
+  requireUnexpiredSession(session.expires_at)
 }
 
 /** Keep one transaction through the mutation; management includes archived projects. */
-export async function lockManagedApiKey(client: PoolClient, ctx: ControlPlaneContext, id: string): Promise<void> {
-  const expiresAt = await lockActiveKeyActorAndSession(client, ctx)
+export async function lockManagedApiKey(
+  client: PoolClient,
+  ctx: ControlPlaneContext,
+  id: string,
+  options: { recentAuth?: boolean } = {},
+): Promise<void> {
+  const session = await lockActiveKeyActorAndSession(client, ctx)
   const key = (
     await client.query<{ project_id: string | null; created_by: string | null }>(
       `SELECT project_id,created_by FROM downstream_api_keys
@@ -99,7 +108,15 @@ export async function lockManagedApiKey(client: PoolClient, ctx: ControlPlaneCon
   if (!key) notFound()
   const role = await lockKeyAuthority(client, ctx, key.project_id, 'apikey:revoke')
   if (!key.project_id && !['owner', 'admin'].includes(role) && key.created_by !== ctx.session.userId) notFound()
-  requireUnexpiredSession(expiresAt)
+  requireUnexpiredSession(session.expires_at)
+  if (options.recentAuth) {
+    requireRecentAuth({
+      ...ctx.session,
+      createdAt: session.created_at,
+      expiresAt: session.expires_at,
+      ageSeconds: Math.max(0, Math.floor((Date.now() - session.created_at.getTime()) / 1000)),
+    })
+  }
 }
 
 export async function withManagedApiKeyWrite<T>(

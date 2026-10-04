@@ -73,7 +73,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
           actorUserId: ctx.principal.userId,
           ip: clientIp(req),
         },
-        (client) => lockManagedApiKey(client, ctx, id),
+        (client) => lockManagedApiKey(client, ctx, id, { recentAuth: true }),
       )
       if (!revoked) return apiError(404, 'not_found', '密钥不存在或已撤销')
       return jsonOk({ id, revoked: true })
