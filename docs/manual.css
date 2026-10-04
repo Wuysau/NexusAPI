@@ -245,6 +245,8 @@ summary:focus-visible {
 .toc {
   position: sticky;
   top: 105px;
+  max-height: calc(100dvh - 125px);
+  overflow-y: auto;
   align-self: start;
   display: flex;
   flex-direction: column;
@@ -532,6 +534,8 @@ details p {
     gap: 25px;
   }
   .toc {
+    max-height: none;
+    overflow-y: hidden;
     position: static;
     flex-direction: row;
     overflow-x: auto;
